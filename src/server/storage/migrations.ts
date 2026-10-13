@@ -13,6 +13,10 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
     version: 2,
     url: new URL("./migrations/002_ledger_issues.sql", import.meta.url),
   },
+  {
+    version: 3,
+    url: new URL("./migrations/003_decision_idempotency.sql", import.meta.url),
+  },
 ];
 
 const CURRENT_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
