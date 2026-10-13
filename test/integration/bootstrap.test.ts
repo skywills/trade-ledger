@@ -54,6 +54,7 @@ describe("standalone app bootstrap", () => {
       "assignment",
       "partialFills",
       "reduced",
+      "roll",
       "spread",
     ]);
     for (const bytes of Object.values(fixtures)) {
@@ -70,5 +71,46 @@ describe("standalone app bootstrap", () => {
     expect(new TextDecoder().decode(fixtures.reduced)).not.toContain(
       "PositionActionID",
     );
+  });
+
+  it("includes both supporting lot rows with their source opening time", () => {
+    const rows = new TextDecoder()
+      .decode(fixtures.spread)
+      .trim()
+      .split("\n")
+      .filter((row) => row.endsWith(",lot"));
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("2418.647637");
+    expect(rows[1]).toContain("-2870.308382");
+    expect(rows.every((row) => row.includes("2026-09-03 10:00:00"))).toBe(true);
+  });
+
+  it("keeps the two equal partial fills separate from a mixed-role roll order", () => {
+    const partialFillRows = new TextDecoder()
+      .decode(fixtures.partialFills)
+      .trim()
+      .split("\n");
+    const roll = new TextDecoder().decode(
+      (fixtures as Record<string, Uint8Array>).roll,
+    );
+    const rollRows = roll.trim().split("\n").slice(1);
+
+    expect(partialFillRows).toHaveLength(3);
+    expect(rollRows).toHaveLength(2);
+    expect(rollRows.filter((row) => row.includes("ORDER-ROLL"))).toHaveLength(
+      2,
+    );
+    expect(rollRows.some((row) => row.includes(",C,ORDER-ROLL,"))).toBe(true);
+    expect(rollRows.some((row) => row.includes(",O,ORDER-ROLL,"))).toBe(true);
+  });
+
+  it("removes lifecycle IDs and event codes from the reduced export", () => {
+    const reduced = new TextDecoder().decode(fixtures.reduced);
+
+    expect(reduced).not.toContain("PositionActionID");
+    expect(reduced).not.toContain("A;C");
+    expect(reduced).not.toContain("A;O");
+    expect(reduced).not.toContain("C;Ex");
   });
 });
