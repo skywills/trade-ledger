@@ -33,7 +33,11 @@ const executionHeaders = [
 ] as const;
 
 type Header = (typeof executionHeaders)[number];
-type Fields = Partial<Record<Header | "PositionActionID", string>>;
+type Fields = Partial<
+  Record<Header | "PositionActionID" | "OrigTradeID", string>
+>;
+
+export type ExecutionFields = Fields;
 
 function row(headers: readonly string[], fields: Fields): string {
   return headers.map((header) => fields[header as Header] ?? "").join(",");
@@ -49,6 +53,16 @@ function table(headers: readonly string[], rows: Fields[]): Uint8Array {
 
 function execution(fields: Fields): Fields {
   return { LevelOfDetail: "EXECUTION", ...fields };
+}
+
+/** Builds an execution row tagged with LevelOfDetail EXECUTION. */
+export function executionRow(fields: Fields): Fields {
+  return execution(fields);
+}
+
+/** Serializes execution rows into a header-first Flex CSV. */
+export function buildExecutionTable(rows: Fields[]): Uint8Array {
+  return table([...executionHeaders, "OrigTradeID"], rows);
 }
 
 export const fixtures = {

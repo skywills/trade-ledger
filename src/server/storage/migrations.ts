@@ -2,11 +2,20 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
 
-const CURRENT_SCHEMA_VERSION = 1;
-const INITIAL_MIGRATION = new URL(
-  "./migrations/001_initial.sql",
-  import.meta.url,
-);
+interface Migration {
+  version: number;
+  url: URL;
+}
+
+const MIGRATIONS: ReadonlyArray<Migration> = [
+  { version: 1, url: new URL("./migrations/001_initial.sql", import.meta.url) },
+  {
+    version: 2,
+    url: new URL("./migrations/002_ledger_issues.sql", import.meta.url),
+  },
+];
+
+const CURRENT_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
 
 export function applyMigrations(db: Database.Database): void {
   db.exec(`
@@ -26,16 +35,19 @@ export function applyMigrations(db: Database.Database): void {
   }
   if ((latest.version ?? 0) === CURRENT_SCHEMA_VERSION) return;
 
-  const sql = readFileSync(fileURLToPath(INITIAL_MIGRATION), "utf8");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.exec(sql);
-    db.prepare(
-      "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-    ).run(CURRENT_SCHEMA_VERSION, new Date().toISOString());
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+  for (const migration of MIGRATIONS) {
+    if ((latest.version ?? 0) >= migration.version) continue;
+    const sql = readFileSync(fileURLToPath(migration.url), "utf8");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(sql);
+      db.prepare(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+      ).run(migration.version, new Date().toISOString());
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }
