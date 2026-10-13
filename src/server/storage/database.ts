@@ -12,6 +12,8 @@ export interface Store {
   closed: boolean;
 }
 
+type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : unknown;
+
 export function openStore(dataDir: string): Store {
   mkdirSync(dataDir, { recursive: true });
   const sourceRoot = join(dataDir, "originals");
@@ -44,12 +46,28 @@ export async function closeStore(store: Store): Promise<void> {
   store.db.close();
 }
 
-export function write<T>(store: Store, operation: () => T): Promise<T> {
+/**
+ * Runs a synchronous callback in the serialized SQLite transaction queue.
+ * Async functions are rejected before invocation. Runtime checks also reject
+ * thenables returned by untyped callers, but cannot undo asynchronous work
+ * that an arbitrary non-async callback schedules before it returns.
+ */
+export function write<T>(
+  store: Store,
+  operation: () => T & SynchronousResult<T>,
+): Promise<T> {
   if (store.closed)
     return Promise.reject(new Error("The storage store is closed."));
+  if (Object.prototype.toString.call(operation) === "[object AsyncFunction]") {
+    return Promise.reject(
+      new Error(
+        "Storage write callbacks must not return a promise or hold a transaction across awaits.",
+      ),
+    );
+  }
 
   const transaction = store.db.transaction(() => {
-    const result = operation();
+    const result = operation() as T;
     if (
       result !== null &&
       (typeof result === "object" || typeof result === "function") &&

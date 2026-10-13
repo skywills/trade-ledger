@@ -6,10 +6,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   closeStore,
   openStore,
+  type Store,
   write,
 } from "../../src/server/storage/database.js";
 import { applyMigrations } from "../../src/server/storage/migrations.js";
 import { createTestStore } from "../helpers/store.js";
+
+function compileOnlyAsyncWriteTypeCheck(store: Store): void {
+  // @ts-expect-error write callbacks must be synchronous
+  void write(store, async () => "not allowed");
+}
+void compileOnlyAsyncWriteTypeCheck;
 
 const stores: Array<{
   store: Awaited<ReturnType<typeof openStore>>;
@@ -282,9 +289,27 @@ describe("SQLite storage", () => {
         .map((row) => (row as { id: string }).id),
     ).toEqual(["first", "second", "third"]);
 
-    await expect(write(store, async () => "not allowed")).rejects.toThrow(
-      "Storage write callbacks must not return a promise",
-    );
+    let callbackInvoked = false;
+    await expect(
+      write(store, (async () => {
+        callbackInvoked = true;
+        await Promise.resolve();
+        store.db
+          .prepare(
+            "INSERT INTO jobs (id, kind, input_snapshot, status, created_at) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run("after-await", "test", "{}", "complete", "2026-10-13T00:00:00Z");
+      }) as unknown as () => void),
+    ).rejects.toThrow("Storage write callbacks must not return a promise");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(callbackInvoked).toBe(false);
+    expect(
+      store.db.prepare("SELECT id FROM jobs WHERE id = ?").get("after-await"),
+    ).toBeUndefined();
+    await expect(
+      write(store, (() =>
+        Promise.resolve("unsafe JS result")) as unknown as () => string),
+    ).rejects.toThrow("Storage write callbacks must not return a promise");
   });
 
   it("persists rows across reopen and refuses a newer schema version", async () => {
