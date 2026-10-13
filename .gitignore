@@ -5,6 +5,6 @@ dist/
 .env.*
 !.env.example
 coverage/
-.superpowers/
 playwright-report/
 test-results/
+.superpowers/
