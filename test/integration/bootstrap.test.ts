@@ -251,4 +251,24 @@ describe("standalone app bootstrap", () => {
     expect(closedLots.map((row) => row.Quantity)).toEqual(["+1", "-1"]);
     expect(closedLots.every((row) => row.NetCash === "")).toBe(true);
   });
+
+  it("gives every execution a valid NetCash value while lot rows remain non-cash", () => {
+    for (const [name, bytes] of Object.entries(fixtures)) {
+      const executions = records(bytes).filter(
+        (row) => row.LevelOfDetail === "EXECUTION",
+      );
+
+      expect(executions.length, name).toBeGreaterThan(0);
+      for (const row of executions) {
+        expect(row.NetCash, `${name}: ${row.TradeID}`).toMatch(
+          /^-?\d+(?:\.\d+)?$/,
+        );
+      }
+    }
+
+    const closedLots = records(fixtures.spread).filter(
+      (row) => row.LevelOfDetail === "CLOSED_LOT",
+    );
+    expect(closedLots.every((row) => row.NetCash === "")).toBe(true);
+  });
 });
