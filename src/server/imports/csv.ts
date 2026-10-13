@@ -27,6 +27,9 @@ const SECTION_MARKER_PATTERN = /^(?:BOF|BOA|BOS)\b/;
  * capability diagnostics instead of guesses. Recognized row kinds are counted
  * as parsed; no sums are inferred. Whole-file issue keys use an empty
  * importId placeholder until the store assigns the import identity.
+ *
+ * ParsedImport.issues collects only error-severity issues; warnings ride on
+ * the RawRow they belong to.
  */
 export function parseFlex(
   bytes: Uint8Array,
@@ -91,7 +94,9 @@ export function parseFlex(
 
     const nonEmptyCells = record.filter((cell) => cell.trim() !== "");
     if (nonEmptyCells.length <= 1) {
-      const token = (nonEmptyCells[0] ?? "").trim();
+      // Strip a leading BOM so the first record's section marker (e.g. "BOF")
+      // is recognized even when a decoder leaves it in place.
+      const token = (nonEmptyCells[0] ?? "").replace(/^\uFEFF/, "").trim();
       if (token === "") {
         rows.push({
           rowNumber,

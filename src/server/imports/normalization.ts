@@ -40,7 +40,11 @@ const BROKER_ID_FIELDS = [
   "RelatedTradeID",
 ] as const;
 
-const NET_CASH_OPERANDS = ["Proceeds", "IBCommission", "Taxes"] as const;
+const DERIVATIVE_ASSET_CLASSES: ReadonlySet<string> = new Set([
+  "OPT",
+  "WAR",
+  "FUT",
+]);
 
 const EVENT_CODES: ReadonlyArray<readonly [string, Execution["event"]]> = [
   ["A", "assignment"],
@@ -91,6 +95,12 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
 function isoDate(
   year: string,
   month: string,
@@ -98,8 +108,11 @@ function isoDate(
 ): { date: string } | null {
   const monthNumber = Number(month);
   const dayNumber = Number(day);
+  const yearNumber = Number(year);
   if (monthNumber < 1 || monthNumber > 12) return null;
-  if (dayNumber < 1 || dayNumber > 31) return null;
+  let maxDay = DAYS_IN_MONTH[monthNumber - 1] ?? 31;
+  if (monthNumber === 2 && isLeapYear(yearNumber)) maxDay = 29;
+  if (dayNumber < 1 || dayNumber > maxDay) return null;
   return { date: `${year}-${pad2(monthNumber)}-${pad2(dayNumber)}` };
 }
 
@@ -202,14 +215,18 @@ export function normalizeExecution(
     }
     return value;
   };
-  const optionalDecimal = (name: string): DecimalText | null => {
-    const parsed = canonicalDecimal(fields[name]);
+  const decimalFrom = (
+    name: string,
+    parsed: DecimalParse,
+  ): DecimalText | null => {
     if (parsed.status === "invalid") {
       fail(`invalid_decimal.${name}`);
       return null;
     }
     return parsed.status === "ok" ? parsed.value : null;
   };
+  const optionalDecimal = (name: string): DecimalText | null =>
+    decimalFrom(name, canonicalDecimal(fields[name]));
 
   const account = requireText("ClientAccountID");
   const assetClass = requireText("AssetClass");
@@ -236,6 +253,19 @@ export function normalizeExecution(
     rawDateTime = timestamp.timestamp;
   }
 
+  // Proceeds/IBCommission/Taxes are parsed exactly once; the conversion below
+  // is the only place their invalid_decimal issues are raised, and the NetCash
+  // derivation reuses the same parse results so keys stay unique.
+  const proceedsParse = canonicalDecimal(fields["Proceeds"]);
+  const proceeds = decimalFrom("Proceeds", proceedsParse);
+  const commissionParse = canonicalDecimal(fields["IBCommission"]);
+  const commission = decimalFrom("IBCommission", commissionParse);
+  const taxesParse = canonicalDecimal(fields["Taxes"]);
+  const taxes = decimalFrom("Taxes", taxesParse);
+  const price = optionalDecimal("TradePrice");
+  const basis = optionalDecimal("CostBasis");
+  const brokerPnl = optionalDecimal("FifoPnlRealized");
+
   let netCash: DecimalText | null = null;
   const parsedNetCash = canonicalDecimal(fields["NetCash"]);
   if (parsedNetCash.status === "ok") netCash = parsedNetCash.value;
@@ -244,24 +274,14 @@ export function normalizeExecution(
     let complete = true;
     let sawInvalidOperand = false;
     let sum = new Decimal(0);
-    for (const name of NET_CASH_OPERANDS) {
-      const parsed = canonicalDecimal(fields[name]);
+    for (const parsed of [proceedsParse, commissionParse, taxesParse]) {
       if (parsed.status === "ok") sum = sum.plus(parsed.value);
-      else if (parsed.status === "invalid") {
-        fail(`invalid_decimal.${name}`);
-        sawInvalidOperand = true;
-      } else complete = false;
+      else if (parsed.status === "invalid") sawInvalidOperand = true;
+      else complete = false;
     }
     if (complete) netCash = sum.toString();
     else if (!sawInvalidOperand) fail("missing_net_cash");
   }
-
-  const price = optionalDecimal("TradePrice");
-  const proceeds = optionalDecimal("Proceeds");
-  const commission = optionalDecimal("IBCommission");
-  const taxes = optionalDecimal("Taxes");
-  const basis = optionalDecimal("CostBasis");
-  const brokerPnl = optionalDecimal("FifoPnlRealized");
 
   let expiry: string | null = null;
   const rawExpiry = (fields["Expiry"] ?? "").trim();
@@ -272,7 +292,10 @@ export function normalizeExecution(
   }
   const strike = optionalDecimal("Strike");
   const multiplier = optionalDecimal("Multiplier");
-  if (multiplier === null) {
+  if (
+    multiplier === null &&
+    DERIVATIVE_ASSET_CLASSES.has((assetClass ?? "").toUpperCase())
+  ) {
     issues.push(makeIssue("missing_multiplier", source, "warning"));
   }
   const rawPutCall = (fields["Put/Call"] ?? "").trim().toUpperCase();

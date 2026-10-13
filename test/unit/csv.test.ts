@@ -433,6 +433,39 @@ describe("parseFlex", () => {
     expect(parsed.capabilities).toContain("unknown_columns:preserved");
   });
 
+  it("recognizes a BOM-prefixed BOF line as a flex section marker", () => {
+    const bomSectioned = csvFile([
+      `\uFEFFBOF`,
+      csvLine([
+        "ClientAccountID",
+        "Symbol",
+        "CurrencyPrimary",
+        "DateTime",
+        "Quantity",
+        "NetCash",
+        "TradeID",
+        "LevelOfDetail",
+      ]),
+      csvLine([
+        "SIM-A",
+        "AXON",
+        "USD",
+        "2026-09-03 10:00:00",
+        "+1",
+        "-1402.23006",
+        "TRADE-S",
+        "EXECUTION",
+      ]),
+    ]);
+    const parsed = parseFlex(bomSectioned);
+    expect(parsed.capabilities).toContain("layout:flex-sectioned");
+    expect(
+      parsed.capabilities.some((capability) =>
+        capability.startsWith("unknown_section:"),
+      ),
+    ).toBe(false);
+  });
+
   it("reports unknown sections as capability diagnostics and quarantines unknown rows", () => {
     const sectioned = csvFile([
       "BOF",
@@ -549,6 +582,80 @@ describe("normalizeExecution", () => {
     expect(missingSymbol.execution).toBeNull();
     expect(missingSymbol.issues.map((issue) => issue.code)).toEqual([
       "missing_field.Symbol",
+    ]);
+  });
+
+  it("raises each operand issue once when NetCash is absent and an operand is malformed", () => {
+    const malformedOperand = normalizeExecution(
+      rawRow(
+        validExecutionFields({
+          NetCash: "",
+          Proceeds: "abc",
+        }),
+      ),
+      ref,
+      null,
+    );
+    expect(malformedOperand.execution).toBeNull();
+    expect(malformedOperand.issues.map((issue) => issue.code)).toEqual([
+      "invalid_decimal.Proceeds",
+    ]);
+    const keys = malformedOperand.issues.map((issue) => issue.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("rejects impossible calendar dates", () => {
+    const impossible = normalizeExecution(
+      rawRow(validExecutionFields({ Expiry: "2026-02-30" })),
+      ref,
+      null,
+    );
+    expect(impossible.execution).toBeNull();
+    expect(impossible.issues.map((issue) => issue.code)).toEqual([
+      "invalid_date.Expiry",
+    ]);
+
+    const leapDay = normalizeExecution(
+      rawRow(validExecutionFields({ Expiry: "2024-02-29" })),
+      ref,
+      null,
+    ).execution;
+    expect(leapDay?.instrument.expiry).toBe("2024-02-29");
+  });
+
+  it("warns on missing multipliers only for derivative asset classes", () => {
+    const stock = normalizeExecution(
+      rawRow(
+        validExecutionFields({
+          AssetClass: "STK",
+          Multiplier: "",
+          Expiry: "",
+          Strike: "",
+          "Put/Call": "",
+        }),
+      ),
+      ref,
+      null,
+    );
+    expect(stock.execution).not.toBeNull();
+    expect(stock.issues).toHaveLength(0);
+
+    const warrant = normalizeExecution(
+      rawRow(
+        validExecutionFields({
+          AssetClass: "WAR",
+          Multiplier: "",
+          Expiry: "",
+          Strike: "",
+          "Put/Call": "",
+        }),
+      ),
+      ref,
+      null,
+    );
+    expect(warrant.execution).not.toBeNull();
+    expect(warrant.issues.map((issue) => issue.code)).toEqual([
+      "missing_multiplier",
     ]);
   });
 
