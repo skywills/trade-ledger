@@ -1,0 +1,13 @@
+{
+  "name": "ibkr-trade-journal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@nathapp/nax-ai": "0.87.1",
+    "@nathapp/nax-agent": "0.87.1"
+  }
+}
