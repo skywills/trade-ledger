@@ -11,6 +11,23 @@ import { fixtures } from "../fixtures/scenarios.js";
 const apps: Array<{ close: () => Promise<void> }> = [];
 const appDataDirs: string[] = [];
 
+function headers(bytes: Uint8Array): string[] {
+  const line = new TextDecoder().decode(bytes).trim().split("\n").at(0);
+  if (line === undefined) throw new Error("CSV fixture must include a header.");
+  return line.split(",");
+}
+
+function records(bytes: Uint8Array): Array<Record<string, string>> {
+  const [, ...lines] = new TextDecoder().decode(bytes).trim().split("\n");
+  const fixtureHeaders = headers(bytes);
+  return lines.map((line) => {
+    const values = line.split(",");
+    return Object.fromEntries(
+      fixtureHeaders.map((header, index) => [header, values[index] ?? ""]),
+    );
+  });
+}
+
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
   await Promise.all(
@@ -74,16 +91,18 @@ describe("standalone app bootstrap", () => {
   });
 
   it("includes both supporting lot rows with their source opening time", () => {
-    const rows = new TextDecoder()
-      .decode(fixtures.spread)
-      .trim()
-      .split("\n")
-      .filter((row) => row.endsWith(",lot"));
+    const rows = records(fixtures.spread).filter(
+      (row) => row.LevelOfDetail === "CLOSED_LOT",
+    );
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain("2418.647637");
-    expect(rows[1]).toContain("-2870.308382");
-    expect(rows.every((row) => row.includes("2026-09-03 10:00:00"))).toBe(true);
+    expect(rows.map((row) => row.FifoPnlRealized)).toEqual([
+      "2418.647637",
+      "-2870.308382",
+    ]);
+    expect(
+      rows.every((row) => row.OpenDateTime === "2026-09-03 10:00:00"),
+    ).toBe(true);
   });
 
   it("keeps the two equal partial fills separate from a mixed-role roll order", () => {
@@ -112,5 +131,124 @@ describe("standalone app bootstrap", () => {
     expect(reduced).not.toContain("A;C");
     expect(reduced).not.toContain("A;O");
     expect(reduced).not.toContain("C;Ex");
+  });
+
+  it("uses IBKR account, currency, date, and detail headers with explicit source values", () => {
+    for (const [name, bytes] of Object.entries(fixtures)) {
+      const fixtureHeaders = headers(bytes);
+
+      for (const requiredHeader of [
+        "ClientAccountID",
+        "AssetClass",
+        "Symbol",
+        "UnderlyingSymbol",
+        "Conid",
+        "CurrencyPrimary",
+        "TradeDate",
+        "DateTime",
+        "Quantity",
+        "TradePrice",
+        "NetCash",
+        "IBOrderID",
+        "BrokerageOrderID",
+        "IBExecID",
+        "TradeID",
+        "LevelOfDetail",
+      ]) {
+        expect(fixtureHeaders, `${name}: ${requiredHeader}`).toContain(
+          requiredHeader,
+        );
+      }
+      expect(fixtureHeaders, name).not.toContain("Account");
+      for (const row of records(bytes)) {
+        expect(row.ClientAccountID, name).toMatch(/^SIM-/);
+        expect(row.CurrencyPrimary, name).toBe("USD");
+        expect(row.TradeDate, name).toMatch(/^2026-09-\d{2}$/);
+        expect(row.DateTime, name).toMatch(/^2026-09-\d{2} /);
+        expect(["EXECUTION", "CLOSED_LOT"], name).toContain(row.LevelOfDetail);
+      }
+    }
+  });
+
+  it("retains shared BrokerageOrderIDs and distinct underlying contract IDs", () => {
+    const executions = records(fixtures.spread).filter(
+      (row) => row.LevelOfDetail === "EXECUTION",
+    );
+    const openingOrderIds = executions
+      .filter((row) => row.TradeDate === "2026-09-03")
+      .map((row) => row.BrokerageOrderID);
+    const closingOrderIds = executions
+      .filter((row) => row.TradeDate === "2026-09-25")
+      .map((row) => row.BrokerageOrderID);
+
+    expect(openingOrderIds).toEqual([
+      "BROKER-OPEN-SPREAD",
+      "BROKER-OPEN-SPREAD",
+    ]);
+    expect(closingOrderIds).toEqual([
+      "BROKER-CLOSE-SPREAD",
+      "BROKER-CLOSE-SPREAD",
+    ]);
+    expect(executions.every((row) => row.IBOrderID !== "")).toBe(true);
+    expect(executions.every((row) => row.UnderlyingSymbol === "AXON")).toBe(
+      true,
+    );
+    expect(new Set(executions.map((row) => row.Conid))).toEqual(
+      new Set(["9000470", "9000480"]),
+    );
+    expect(executions.map((row) => row.Quantity)).toEqual([
+      "+1",
+      "-1",
+      "-1",
+      "+1",
+    ]);
+    expect(executions.map((row) => row.NetCash)).toEqual([
+      "-1402.23006",
+      "1686.7318978",
+      "3820.8776968",
+      "-4557.04028",
+    ]);
+    expect(executions.map((row) => row.FifoPnlRealized)).toEqual([
+      "",
+      "",
+      "2418.647637",
+      "-2870.308382",
+    ]);
+  });
+
+  it("uses VIX for the isolated equal partial-fill fixture", () => {
+    const partialFills = records(fixtures.partialFills);
+
+    expect(partialFills).toHaveLength(2);
+    expect(partialFills.every((row) => row.UnderlyingSymbol === "VIX")).toBe(
+      true,
+    );
+    expect(partialFills.map((row) => row.Quantity)).toEqual(["+2", "+2"]);
+    expect(partialFills.map((row) => row.TradePrice)).toEqual(["1.25", "1.25"]);
+    expect(new Set(partialFills.map((row) => row.IBExecID)).size).toBe(2);
+  });
+
+  it("keeps stock Put/Call blank and closed lots distinct from cash executions", () => {
+    const assignmentRows = records(fixtures.assignment);
+    const stockRows = assignmentRows.filter((row) => row.AssetClass === "STK");
+    const closedLots = records(fixtures.spread).filter(
+      (row) => row.LevelOfDetail === "CLOSED_LOT",
+    );
+
+    expect(stockRows.length).toBeGreaterThan(0);
+    expect(stockRows.every((row) => row["Put/Call"] === "")).toBe(true);
+    expect(stockRows.map((row) => row.NetCash)).toEqual([
+      "-10500",
+      "9999.7745",
+    ]);
+    expect(assignmentRows.map((row) => row.PositionActionID)).toEqual([
+      "119280546",
+      "119280546",
+      "119326170",
+      "119326170",
+    ]);
+    expect(closedLots).toHaveLength(2);
+    expect(closedLots.map((row) => row.Quantity)).toEqual(["+1", "-1"]);
+    expect(closedLots.every((row) => row.NetCash === "")).toBe(true);
   });
 });
