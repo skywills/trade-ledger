@@ -807,7 +807,7 @@ describe("retained decisions and stable strategy identities", () => {
         author: "user",
       } as unknown as DecisionInput;
       await expect(appendDecision(store, input, 0)).rejects.toMatchObject({
-        code: "INVALID_INPUT",
+        code: "INVALID_KIND",
       });
     }));
 });

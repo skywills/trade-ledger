@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { Id, SourceRef } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { type Store, write } from "../storage/database.js";
-import { type DecisionInput, DecisionInputSchema } from "./schemas.js";
+import {
+  DECISION_KINDS,
+  type DecisionInput,
+  DecisionInputSchema,
+} from "./schemas.js";
 
 export interface Decision {
   id: Id;
@@ -345,6 +349,19 @@ export async function appendDecision(
   rawInput: unknown,
   expectedWatermark: number,
 ): Promise<Decision> {
+  if (
+    typeof rawInput === "object" &&
+    rawInput !== null &&
+    "kind" in rawInput &&
+    typeof rawInput.kind === "string" &&
+    !(DECISION_KINDS as readonly string[]).includes(rawInput.kind)
+  ) {
+    throw new AppError(
+      "INVALID_KIND",
+      `Unknown decision kind: ${rawInput.kind}`,
+      400,
+    );
+  }
   const parsed = DecisionInputSchema.safeParse(rawInput);
   if (!parsed.success) {
     throw new AppError(

@@ -126,6 +126,22 @@ const RejectionSchema = z.object({
   }),
 });
 
+export const DECISION_KINDS = [
+  "notes",
+  "stop_loss",
+  "manual_allocation",
+  "identity_binding",
+  "group_explicit",
+  "group_merge",
+  "group_split",
+  "lifecycle",
+  "exclusion",
+  "reinclusion",
+  "rejection",
+] as const;
+
+export type DecisionKind = (typeof DECISION_KINDS)[number];
+
 export const DecisionInputSchema = z.discriminatedUnion("kind", [
   NotesSchema,
   StopLossSchema,
@@ -395,5 +411,3 @@ function parseOrThrow<S extends z.ZodTypeAny>(
   }
   return result.data as z.infer<S>;
 }
-
-void DecisionInputSchema;
