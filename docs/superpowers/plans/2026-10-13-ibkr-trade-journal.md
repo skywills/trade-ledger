@@ -108,7 +108,7 @@ Additional named service inputs/results must be exported beside their producing 
 
 **Interfaces:** Produces `readConfig(env: NodeJS.ProcessEnv): AppConfig` with dataDir, port, allowedOrigin, uploadLimitBytes; `createApp(config: AppConfig): Promise<FastifyInstance>` initially exposing health; `fixtures: {spread: Uint8Array; assignment: Uint8Array; partialFills: Uint8Array; reduced: Uint8Array}` encoding spec scenarios A–C; shared domain types above. Later tasks extend app dependencies, not its externally used factory signature.
 
-- [ ] **Step 1: Write the failing bootstrap and consumer tests.**
+- [x] **Step 1: Write the failing bootstrap and consumer tests.**
 
 ```ts
 expect(readConfig({ DATA_DIR: '/tmp/journal' }).port).toBe(3000);
@@ -122,10 +122,10 @@ await app.close();
 
 Generate only synthetic fixture bytes with explicit signed quantities, IDs and accounting values from scenarios A–C. Require runtime config to reject malformed port/origin/size rather than silently default; default development dataDir is `.data`, not the user's home.
 
-- [ ] **Step 2: Run `npm test -- test/integration/bootstrap.test.ts`; expect FAIL for missing app/config exports.**
-- [ ] **Step 3: Implement the factory and setup.** Install exact stack versions above with `npm install --save-exact`, configure scripts `dev`, `build`, `start`, `test` (`vitest run`), `typecheck`, `check:all` (Biome + typecheck), `test:e2e`, `test:docker`. Use `tsx` for dev only and pin its resolved version. Use React Testing Library only if a component requires unit tests; browser flows are the UI acceptance gate. `build` runs server tsc plus Vite; `start` runs `node dist/server/main.js`. Public library imports must work from installed npm packages on Node, not source path aliases. Ignore `.data/`, test outputs, credentials and `.env`, retaining `.env.example`.
-- [ ] **Step 4: Run the targeted test, `npm run typecheck`, and `npm run build`; expect successful Node import and clean output.**
-- [ ] **Step 5: Commit only this task's files: `git commit -m "feat(journal): bootstrap standalone Node and React app"`.**
+- [x] **Step 2: Run `npm test -- test/integration/bootstrap.test.ts`; expect FAIL for missing app/config exports.**
+- [x] **Step 3: Implement the factory and setup.** Install exact stack versions above with `npm install --save-exact`, configure scripts `dev`, `build`, `start`, `test` (`vitest run`), `typecheck`, `check:all` (Biome + typecheck), `test:e2e`, `test:docker`. Use `tsx` for dev only and pin its resolved version. Use React Testing Library only if a component requires unit tests; browser flows are the UI acceptance gate. `build` runs server tsc plus Vite; `start` runs `node dist/server/main.js`. Public library imports must work from installed npm packages on Node, not source path aliases. Ignore `.data/`, test outputs, credentials and `.env`, retaining `.env.example`.
+- [x] **Step 4: Run the targeted test, `npm run typecheck`, and `npm run build`; expect successful Node import and clean output.**
+- [x] **Step 5: Commit only this task's files: `git commit -m "feat(journal): bootstrap standalone Node and React app"`.**
 
 ### Task 2: SQLite schema, retained evidence and writer serialization
 
@@ -133,7 +133,7 @@ Generate only synthetic fixture bytes with explicit signed quantities, IDs and a
 
 **Interfaces:** Produces `openStore(dataDir: string): Store`, `closeStore(store: Store): Promise<void>`, `write<T>(store: Store, operation: () => T): Promise<T>`, `createTestStore(): Promise<{store: Store; dataDir: string; dispose(): Promise<void>}>`. Store owns SQLite handle, source root and queue; only storage/services access SQL. Add `schema_migrations`, all spec tables, import previews, profile-check records and app default-profile pointer. Keys/FKs include generation IDs; raw evidence and decisions cannot cascade-delete with builds.
 
-- [ ] **Step 1: Write failing storage tests.**
+- [x] **Step 1: Write failing storage tests.**
 
 ```ts
 expect(store.db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -144,10 +144,10 @@ expect(tableNames(store.db)).toEqual(expect.arrayContaining(['imports','import_r
 
 Also assert invalid cross-generation allocation FK rejection, rollback on failed write, ordered concurrent writes, reopen persistence, newer-schema refusal, and migration rerun idempotence. `tableNames` is a test-local SQL helper.
 
-- [ ] **Step 2: Run `npm test -- test/integration/storage.test.ts`; expect FAIL for missing database/migration.**
-- [ ] **Step 3: Implement schema and queue.** Use better-sqlite3 transactions, WAL, foreign keys and 5000 ms busy timeout; columnize filter/identity fields while retaining unknown source JSON. Queue operations cannot hold SQL transactions across awaits. Use a persisted `jobs` row for long operations; mark previously running jobs interrupted on startup. Task 9 owns candidate-build recovery.
-- [ ] **Step 4: Run the storage tests and `npm run typecheck`; expect all persistence, FK and queue assertions PASS.**
-- [ ] **Step 5: Commit `git commit -m "feat(journal): add versioned SQLite storage and writer queue"`.**
+- [x] **Step 2: Run `npm test -- test/integration/storage.test.ts`; expect FAIL for missing database/migration.**
+- [x] **Step 3: Implement schema and queue.** Use better-sqlite3 transactions, WAL, foreign keys and 5000 ms busy timeout; columnize filter/identity fields while retaining unknown source JSON. Queue operations cannot hold SQL transactions across awaits. Use a persisted `jobs` row for long operations; mark previously running jobs interrupted on startup. Task 9 owns candidate-build recovery.
+- [x] **Step 4: Run the storage tests and `npm run typecheck`; expect all persistence, FK and queue assertions PASS.**
+- [x] **Step 5: Commit `git commit -m "feat(journal): add versioned SQLite storage and writer queue"`.**
 
 ### Task 3: Flex CSV parsing, row classification and capability reporting
 
