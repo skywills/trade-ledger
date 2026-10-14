@@ -610,6 +610,102 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       ).toHaveLength(1);
     }));
 
+  it("emits a manual allocation row's own partial quantity and auto-matches only the residual", () =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable([
+        optionLeg("OPEN", "T-O", { Quantity: "+2", NetCash: "-400" }),
+      ]);
+      const ledger = await ledgerFrom(store, "manual-partial.csv", rows);
+      const open = exec(ledger, "T-O");
+      const decisions: Decision[] = [
+        decision(
+          "manual_allocation",
+          {
+            strategyId: "manual-strat",
+            source: sourceOf(open),
+            allocations: [
+              {
+                executionKey: open.key,
+                quantity: "1",
+                netCash: "-100",
+                brokerPnl: null,
+              },
+            ],
+          },
+          { id: "m1", sequence: 1, strategyIds: ["manual-strat"] },
+        ),
+      ];
+
+      const projection = groupStrategies(ledger, decisions, resolveId);
+
+      const manualAllocation = projection.allocations.find(
+        (a) => a.strategyId === "manual-strat",
+      );
+      // (a) the emitted allocation equals the decision row, not the full +2.
+      expect(manualAllocation?.quantity).toBe("1");
+      expect(manualAllocation?.netCash).toBe("-100");
+      // (b) the residual +1 is the only thing auto-matched by later grouping.
+      const residual = projection.allocations.filter(
+        (a) => a.executionKey === open.key && a.strategyId !== "manual-strat",
+      );
+      expect(residual).toHaveLength(1);
+      expect(residual[0]?.quantity).toBe("1");
+      expect(projection.strategies).toHaveLength(2);
+    }));
+
+  it("partitions one execution across two strategies", () =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable([
+        optionLeg("OPEN", "T-O", { Quantity: "+2", NetCash: "-400" }),
+      ]);
+      const ledger = await ledgerFrom(store, "manual-split.csv", rows);
+      const open = exec(ledger, "T-O");
+      const decisions: Decision[] = [
+        decision(
+          "manual_allocation",
+          {
+            strategyId: "strat-a",
+            source: sourceOf(open),
+            allocations: [
+              {
+                executionKey: open.key,
+                quantity: "1",
+                netCash: "-200",
+                brokerPnl: null,
+              },
+            ],
+          },
+          { id: "m1", sequence: 1, strategyIds: ["strat-a"] },
+        ),
+        decision(
+          "manual_allocation",
+          {
+            strategyId: "strat-b",
+            source: sourceOf(open),
+            allocations: [
+              {
+                executionKey: open.key,
+                quantity: "1",
+                netCash: "-200",
+                brokerPnl: null,
+              },
+            ],
+          },
+          { id: "m2", sequence: 2, strategyIds: ["strat-b"] },
+        ),
+      ];
+
+      const projection = groupStrategies(ledger, decisions, resolveId);
+
+      const allocationFor = (strategyId: string) =>
+        projection.allocations.find((a) => a.strategyId === strategyId);
+      expect(allocationFor("strat-a")?.quantity).toBe("1");
+      expect(allocationFor("strat-b")?.quantity).toBe("1");
+      // Fully partitioned manually: no residual auto-group remains.
+      expect(projection.allocations).toHaveLength(2);
+      expect(projection.strategies).toHaveLength(2);
+    }));
+
   it("records a roll link without merging allocations", () =>
     withStore(async (store) => {
       const rows = buildExecutionTable([

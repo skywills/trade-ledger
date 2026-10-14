@@ -81,17 +81,30 @@ export function emptyDraft(id: Id): StrategyDraft {
   };
 }
 
-export function legOf(execution: Execution, role: "open" | "close"): LegRecord {
+export interface LegOverrides {
+  quantity?: string;
+  netCash?: string;
+  brokerPnl?: string | null;
+}
+
+export function legOf(
+  execution: Execution,
+  role: "open" | "close",
+  overrides: LegOverrides = {},
+): LegRecord {
   return {
     executionKey: execution.key,
     instrument: execution.instrument,
-    quantity: execution.quantity,
+    quantity: overrides.quantity ?? execution.quantity,
     date: execution.date,
     role,
     event: execution.event,
     multiplier: execution.instrument.multiplier,
-    netCash: execution.netCash,
-    brokerPnl: execution.brokerPnl,
+    netCash: overrides.netCash ?? execution.netCash,
+    brokerPnl:
+      overrides.brokerPnl !== undefined
+        ? overrides.brokerPnl
+        : execution.brokerPnl,
     sources: execution.sources,
   };
 }

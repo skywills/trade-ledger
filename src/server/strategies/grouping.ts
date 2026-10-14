@@ -157,8 +157,59 @@ export function groupStrategies(
     return draft;
   };
 
-  const allocated = new Set<Id>();
-  const explicitlyAllocated = new Map<Id, Id>();
+  interface Consumption {
+    quantity: Decimal;
+    netCash: Decimal;
+    brokerPnl: Decimal;
+  }
+  const consumed = new Map<Id, Consumption>();
+  const consumptionOf = (key: Id): Consumption =>
+    consumed.get(key) ?? {
+      quantity: new Decimal(0),
+      netCash: new Decimal(0),
+      brokerPnl: new Decimal(0),
+    };
+  const recordConsumption = (
+    execution: Execution,
+    quantity: string,
+    netCash: string,
+    brokerPnl: string | null,
+  ): void => {
+    const current = consumptionOf(execution.key);
+    consumed.set(execution.key, {
+      quantity: current.quantity.plus(quantity),
+      netCash: current.netCash.plus(netCash),
+      brokerPnl: current.brokerPnl.plus(brokerPnl ?? 0),
+    });
+  };
+  /** Signed units of an execution still available for automatic matching. */
+  const availableOf = (execution: Execution): Decimal => {
+    const total = new Decimal(execution.quantity);
+    const residual = total.minus(consumptionOf(execution.key).quantity);
+    if (total.isZero() || residual.isZero()) return new Decimal(0);
+    if (residual.isNegative() !== total.isNegative()) return new Decimal(0);
+    return residual;
+  };
+  const residualNetCash = (execution: Execution): string =>
+    new Decimal(execution.netCash)
+      .minus(consumptionOf(execution.key).netCash)
+      .toFixed();
+  const residualBrokerPnl = (execution: Execution): string | null => {
+    if (execution.brokerPnl === null) return null;
+    return new Decimal(execution.brokerPnl)
+      .minus(consumptionOf(execution.key).brokerPnl)
+      .toFixed();
+  };
+
+  interface Binding {
+    strategyId: Id;
+    execution: Execution;
+    /** Null quantity means bind the execution's whole remaining units. */
+    quantity: string | null;
+    netCash: string | null;
+    brokerPnl: string | null;
+  }
+  const bindings: Binding[] = [];
   const merges: MergeInstruction[] = [];
   const lifecycles: LifecycleInstruction[] = [];
 
@@ -187,9 +238,25 @@ export function groupStrategies(
             (source !== undefined
               ? executionBySource.get(sourceKey(source))
               : undefined);
-          if (execution !== undefined) {
-            explicitlyAllocated.set(execution.key, strategyId);
-          }
+          if (execution === undefined) continue;
+          bindings.push({
+            strategyId,
+            execution,
+            quantity:
+              typeof entry.quantity === "string"
+                ? entry.quantity
+                : execution.quantity,
+            netCash:
+              typeof entry.netCash === "string"
+                ? entry.netCash
+                : execution.netCash,
+            brokerPnl:
+              entry.brokerPnl === null
+                ? null
+                : typeof entry.brokerPnl === "string"
+                  ? entry.brokerPnl
+                  : execution.brokerPnl,
+          });
         }
         break;
       }
@@ -201,9 +268,14 @@ export function groupStrategies(
         const source = payload.source as SourceRef | undefined;
         if (strategyId === undefined || source === undefined) continue;
         const execution = executionBySource.get(sourceKey(source));
-        if (execution !== undefined) {
-          explicitlyAllocated.set(execution.key, strategyId);
-        }
+        if (execution === undefined) continue;
+        bindings.push({
+          strategyId,
+          execution,
+          quantity: null,
+          netCash: null,
+          brokerPnl: null,
+        });
         break;
       }
       case "group_merge": {
@@ -246,21 +318,51 @@ export function groupStrategies(
   }
 
   // 1. Retained manual/explicit allocations are applied before automatic
-  //    matching, and each execution is reserved so it is never grouped twice.
-  for (const execution of ledger.executions) {
-    const strategyId = explicitlyAllocated.get(execution.key);
-    if (strategyId === undefined) continue;
-    const draft = draftFor(strategyId, execution.account, execution.currency);
-    addLeg(draft, legOf(execution, roleOf(execution)));
-    allocated.add(execution.key);
+  //    matching. Each decision row contributes its own signed quantity and
+  //    cash, so a partial row reserves only its share and the execution's
+  //    remainder stays available for automatic matching.
+  for (const binding of bindings) {
+    const { execution } = binding;
+    const role = roleOf(execution);
+    if (binding.quantity === null) {
+      const residualQuantity = availableOf(execution);
+      if (residualQuantity.isZero()) continue;
+      const quantity = residualQuantity.toFixed();
+      const netCash = residualNetCash(execution);
+      const brokerPnl = residualBrokerPnl(execution);
+      const draft = draftFor(
+        binding.strategyId,
+        execution.account,
+        execution.currency,
+      );
+      addLeg(draft, legOf(execution, role, { quantity, netCash, brokerPnl }));
+      recordConsumption(execution, quantity, netCash, brokerPnl);
+      continue;
+    }
+    const netCash = binding.netCash ?? execution.netCash;
+    const draft = draftFor(
+      binding.strategyId,
+      execution.account,
+      execution.currency,
+    );
+    addLeg(
+      draft,
+      legOf(execution, role, {
+        quantity: binding.quantity,
+        netCash,
+        brokerPnl: binding.brokerPnl,
+      }),
+    );
+    recordConsumption(execution, binding.quantity, netCash, binding.brokerPnl);
   }
 
-  // 2. Opening groups proposed by the broker order identity.
+  // 2. Opening groups proposed by the broker order identity. A partially
+  //    allocated execution contributes only its residual units.
   const openingGroups = new Map<string, Execution[]>();
   for (const execution of sortedByKey(ledger.executions)) {
-    if (allocated.has(execution.key)) continue;
     if (execution.event === "unsupported") continue;
     if (roleOf(execution) !== "open") continue;
+    if (availableOf(execution).isZero()) continue;
     const key = groupKeyOf(execution);
     const group = openingGroups.get(key) ?? [];
     group.push(execution);
@@ -277,8 +379,11 @@ export function groupStrategies(
     );
     const draft = draftFor(id, first.account, first.currency);
     for (const execution of group) {
-      addLeg(draft, legOf(execution, "open"));
-      allocated.add(execution.key);
+      const quantity = availableOf(execution).toFixed();
+      const netCash = residualNetCash(execution);
+      const brokerPnl = residualBrokerPnl(execution);
+      addLeg(draft, legOf(execution, "open", { quantity, netCash, brokerPnl }));
+      recordConsumption(execution, quantity, netCash, brokerPnl);
     }
     orderOpenings.set(groupKeyOf(first), id);
   }
@@ -313,6 +418,12 @@ export function groupStrategies(
       const id = resolveId(execution.account, [execution.key]);
       const draft = draftFor(id, execution.account, execution.currency);
       addLeg(draft, legOf(execution, "close"));
+      recordConsumption(
+        execution,
+        execution.quantity,
+        execution.netCash,
+        execution.brokerPnl,
+      );
       draft.unresolved = true;
       draft.blocking = true;
       draft.complete = false;
@@ -325,22 +436,23 @@ export function groupStrategies(
           execution.key,
         ),
       );
-      allocated.add(execution.key);
     }
   }
 
   // 4. Closes are matched to known openings by contract, lot evidence, and
-  //    a unique compatible remaining position. Ambiguity or a missing opening
-  //    becomes an unresolved review item rather than an invented match.
+  //    a unique compatible remaining position. Only the residual of a
+  //    partially allocated execution is auto-matched; ambiguity or a missing
+  //    opening becomes an unresolved review item rather than an invented match.
   const closeExecutions = sortedByKey(
     ledger.executions.filter(
       (execution) =>
-        !allocated.has(execution.key) &&
         execution.event !== "unsupported" &&
-        roleOf(execution) === "close",
+        roleOf(execution) === "close" &&
+        !availableOf(execution).isZero(),
     ),
   );
   for (const close of closeExecutions) {
+    const closeQuantity = availableOf(close).toFixed();
     let candidates = [...drafts.values()].filter(
       (draft) =>
         draft.account === close.account &&
@@ -350,7 +462,7 @@ export function groupStrategies(
             sameInstrument(leg.instrument, close.instrument) &&
             remainingCompatible(
               remainingFor(draft, close.instrument),
-              close.quantity,
+              closeQuantity,
             ),
         ),
     );
@@ -374,8 +486,17 @@ export function groupStrategies(
     if (candidates.length === 1) {
       const target = candidates[0];
       if (target !== undefined) {
-        addLeg(target, legOf(close, "close"));
-        allocated.add(close.key);
+        const netCash = residualNetCash(close);
+        const brokerPnl = residualBrokerPnl(close);
+        addLeg(
+          target,
+          legOf(close, "close", {
+            quantity: closeQuantity,
+            netCash,
+            brokerPnl,
+          }),
+        );
+        recordConsumption(close, closeQuantity, netCash, brokerPnl);
         continue;
       }
     }
@@ -391,7 +512,13 @@ export function groupStrategies(
     }
     const id = resolveId(close.account, [close.key]);
     const draft = draftFor(id, close.account, close.currency);
-    addLeg(draft, legOf(close, "close"));
+    const netCash = residualNetCash(close);
+    const brokerPnl = residualBrokerPnl(close);
+    addLeg(
+      draft,
+      legOf(close, "close", { quantity: closeQuantity, netCash, brokerPnl }),
+    );
+    recordConsumption(close, closeQuantity, netCash, brokerPnl);
     draft.unresolved = true;
     draft.complete = false;
     if (
@@ -404,7 +531,6 @@ export function groupStrategies(
         makeIssue("LIFECYCLE_UNRESOLVED", close.sources, "warning", close.key),
       );
     }
-    allocated.add(close.key);
   }
 
   const strategyOfExecution = new Map<Id, Id>();
