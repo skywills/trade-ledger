@@ -1,6 +1,7 @@
 import { ReviewEnvelope, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { Link } from "../navigation.js";
+import { AnalysisPanel } from "./AnalysisPanel.js";
 import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
 
 /** Review queue plus the manual reconciliation editor and revision history. */
@@ -55,6 +56,8 @@ export function ReviewPage() {
       )}
 
       <DecisionEditor />
+
+      <AnalysisPanel />
 
       <section data-testid="revision-history">
         <h3>Revision history (this session)</h3>

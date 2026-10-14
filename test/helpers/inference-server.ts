@@ -16,6 +16,21 @@ export type InferenceMode =
   | "malformed-arguments"
   | "no-tool-call";
 
+/**
+ * One scripted assistant reply. A plan is consumed one step per chat-completion
+ * request, in order, so a test can drive a real multi-round agent turn: a
+ * `tool-call` step then a `text` step makes the loop run the tool and then end.
+ */
+export interface InferencePlanStep {
+  readonly kind: "tool-call" | "text";
+  readonly toolName?: string;
+  /** Parsed arguments object; serialized as the function-call arguments string. */
+  readonly arguments?: unknown;
+  readonly text?: string;
+  /** Include a `usage` block (defaults to true) so token accounting is exercised. */
+  readonly usage?: boolean;
+}
+
 export interface InferenceServerOptions {
   readonly mode?: InferenceMode;
   readonly modelId?: string;
@@ -27,6 +42,19 @@ export interface InferenceServerOptions {
   readonly redirectTo?: string;
   /** Answer every request with this HTTP status instead of streaming. */
   readonly failStatus?: number;
+  /**
+   * Scripted replies, consumed one per chat-completion request. When present,
+   * takes precedence over `mode`; once exhausted the server answers with a
+   * closing text reply.
+   */
+  readonly plan?: readonly InferencePlanStep[];
+  /**
+   * When set, the `plan` advances only for requests whose advertised tools
+   * include this name; other requests fall back to `mode` (so a compatibility
+   * probe and an analysis turn can share one endpoint).
+   */
+  readonly planGateTool?: string;
+  /** When true, a request whose messages contain no tool result answers with a question first. */
 }
 
 export interface RecordedInferenceRequest {
@@ -76,6 +104,7 @@ export async function startInferenceServer(
   const mode = options.mode ?? "tool-call";
   const modelId = options.modelId ?? "test-local-a";
   const toolName = options.toolName ?? "journal_probe";
+  let planIndex = 0;
 
   const server = createServer((request, response) => {
     void (async () => {
@@ -159,7 +188,47 @@ export async function startInferenceServer(
       const effectiveMode: InferenceMode =
         mode === "no-tool-call" ? "text" : mode;
 
-      if (effectiveMode === "text") {
+      const requestJson = parseJson(body) as {
+        tools?: Array<{ function?: { name?: unknown } }>;
+      } | null;
+      const requestToolNames = (requestJson?.tools ?? [])
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => typeof name === "string");
+      const gate = options.planGateTool;
+      const planActive =
+        options.plan !== undefined &&
+        (gate === undefined || requestToolNames.includes(gate));
+
+      let planStep: InferencePlanStep | undefined;
+      if (planActive && options.plan !== undefined) {
+        planStep = options.plan[planIndex];
+        planIndex += 1;
+      }
+
+      if (planStep !== undefined) {
+        if (planStep.kind === "tool-call") {
+          sendChunk({
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_plan_${planIndex}`,
+                type: "function",
+                function: {
+                  name: planStep.toolName ?? toolName,
+                  arguments: JSON.stringify(planStep.arguments ?? {}),
+                },
+              },
+            ],
+          });
+          sendChunk({}, "tool_calls");
+        } else {
+          sendChunk({ content: planStep.text ?? "synthetic plan text" });
+          sendChunk({}, "stop");
+        }
+      } else if (planActive) {
+        sendChunk({ content: "synthetic plan complete" });
+        sendChunk({}, "stop");
+      } else if (effectiveMode === "text") {
         sendChunk({ content: options.text ?? "synthetic text reply" });
         sendChunk({}, "stop");
       } else if (effectiveMode === "tool-call") {
@@ -190,6 +259,12 @@ export async function startInferenceServer(
           ],
         });
         sendChunk({}, "tool_calls");
+      }
+
+      if (planStep?.usage === false) {
+        response.write("data: [DONE]\n\n");
+        response.end();
+        return;
       }
 
       response.write(

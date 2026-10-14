@@ -16,6 +16,7 @@ import {
 } from "./builds/service.js";
 import type { AppConfig } from "./config.js";
 import { createOriginGuard } from "./http/origin.js";
+import { registerAnalysisRoutes } from "./http/routes-analysis.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
@@ -206,6 +207,7 @@ export async function createApp(
     await registerReviewRoutes(app, store);
     await registerJobRoutes(app, store, jobs, scheduler);
     await registerModelRoutes(app, store, secrets);
+    await registerAnalysisRoutes(app, store);
 
     return app;
   } catch (error) {

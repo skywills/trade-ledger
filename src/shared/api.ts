@@ -171,6 +171,93 @@ export type CompatibilityResultDto = z.infer<
   typeof TestProfileSchema
 >["result"];
 
+export const AnalysisStatusSchema = z.enum([
+  "running",
+  "proposal_ready",
+  "failed",
+  "cancelled",
+  "accepted",
+]);
+
+export const ProposalDraftSchema = z.object({
+  kind: z.string(),
+  rationale: z.string().optional(),
+  sources: z
+    .array(z.object({ importId: z.string(), rowNumber: z.number().int() }))
+    .optional(),
+  strategyIds: z.array(z.string()).optional(),
+  payload: z.record(z.string(), z.unknown()),
+});
+
+export const SubmittedProposalSchema = z.object({
+  id: z.string(),
+  proposal: ProposalDraftSchema,
+  submittedAt: z.string(),
+  accepted: z.boolean(),
+});
+
+export const AnalysisRunSchema = z.object({
+  id: z.string(),
+  status: AnalysisStatusSchema,
+  profileSnapshot: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      mode: z.string(),
+      provider: z.string(),
+      modelId: z.string(),
+      revision: z.number().int(),
+    })
+    .loose(),
+  evidence: z.object({
+    buildId: z.string(),
+    ledgerId: z.string(),
+    contentHash: z.string(),
+    watermark: z.number().int(),
+    issueKeys: z.array(z.string()),
+    rows: z.array(z.unknown()),
+    rejected: z.array(z.unknown()),
+  }),
+  proposals: z.array(SubmittedProposalSchema),
+  acceptedDecisionIds: z.array(z.string()),
+  usage: z.record(z.string(), z.number()).nullable(),
+  cost: z.number().nullable(),
+  costSource: z.string().nullable(),
+  error: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  createdAt: z.string(),
+  finishedAt: z.string().nullable(),
+});
+
+export type AnalysisRunDto = z.infer<typeof AnalysisRunSchema>;
+export type SubmittedProposalDto = z.infer<typeof SubmittedProposalSchema>;
+
+export const AnalysisEnvelopeSchema = z.object({ run: AnalysisRunSchema });
+
+export const StartAnalysisResponseSchema = z.object({ runId: z.string() });
+
+export const AnswerAnalysisResponseSchema = z.object({
+  status: z.enum(["accepted", "expired", "cancelled", "unknown"]),
+});
+
+export const AcceptAnalysisResponseSchema = z.object({
+  decisions: z.array(
+    z.object({
+      id: z.string(),
+      sequence: z.number().int(),
+      kind: z.string(),
+    }),
+  ),
+});
+
+export const RejectAnalysisResponseSchema = z.object({
+  decision: z.object({
+    id: z.string(),
+    sequence: z.number().int(),
+    kind: z.string(),
+  }),
+});
+
 export function listEnvelopeSchema<T extends z.ZodTypeAny>(item: T) {
   return z.object({
     items: z.array(item),
