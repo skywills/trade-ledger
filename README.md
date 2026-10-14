@@ -7,6 +7,10 @@ volume. Inference is optional: the journal imports, rebuilds, reviews and
 displays without any model server, and a model service is never required for
 readiness.
 
+For a step-by-step install, configuration and first-run walkthrough, see
+[`docs/SETUP.md`](docs/SETUP.md). For how the project is tested and how the
+acceptance checks map to tests, see [`docs/TEST-PLAN.md`](docs/TEST-PLAN.md).
+
 ## Requirements
 
 - Node.js `22.19.0` (the app pins `>=22.19.0`). Docker is optional but is how
