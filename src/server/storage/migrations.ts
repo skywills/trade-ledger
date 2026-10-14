@@ -17,6 +17,10 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
     version: 3,
     url: new URL("./migrations/003_decision_idempotency.sql", import.meta.url),
   },
+  {
+    version: 4,
+    url: new URL("./migrations/004_build_projection.sql", import.meta.url),
+  },
 ];
 
 const CURRENT_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
