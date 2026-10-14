@@ -45,6 +45,24 @@ import {
 
 export const ALGORITHM_VERSION = "strategies-v1";
 
+/**
+ * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
+ * controllers so a build observed mid-flight is cancelled before it can
+ * activate, then awaits them so the store is never closed mid-write.
+ */
+const BUILD_CONTROLLERS = new Set<AbortController>();
+const IN_FLIGHT_BUILDS = new Set<Promise<unknown>>();
+
+/** Aborts every in-flight rebuild without activating a partial generation. */
+export function cancelActiveBuilds(): void {
+  for (const controller of [...BUILD_CONTROLLERS]) controller.abort();
+}
+
+/** Waits for every in-flight rebuild to settle. */
+export async function drainActiveBuilds(): Promise<void> {
+  await Promise.allSettled([...IN_FLIGHT_BUILDS]);
+}
+
 export interface RebuildInput {
   mode: "full" | "projection";
   parserVersion: string;
@@ -422,7 +440,23 @@ export class BuildScheduler {
     }
   }
 
-  private async runBatch(batch: PendingRequest[]): Promise<BuildResult> {
+  private runBatch(batch: PendingRequest[]): Promise<BuildResult> {
+    const controller = new AbortController();
+    const run = this.executeBatch(batch, controller);
+    BUILD_CONTROLLERS.add(controller);
+    IN_FLIGHT_BUILDS.add(run);
+    const cleanup = () => {
+      BUILD_CONTROLLERS.delete(controller);
+      IN_FLIGHT_BUILDS.delete(run);
+    };
+    run.then(cleanup, cleanup);
+    return run;
+  }
+
+  private async executeBatch(
+    batch: PendingRequest[],
+    controller: AbortController,
+  ): Promise<BuildResult> {
     const first = batch[0];
     if (first === undefined) {
       throw new AppError("EMPTY_BATCH", "No rebuild requests to run.", 500);
@@ -430,7 +464,6 @@ export class BuildScheduler {
     const mode = batch.some((entry) => entry.input.mode === "full")
       ? "full"
       : "projection";
-    const controller = new AbortController();
     const merged: RebuildInput = {
       mode,
       parserVersion: first.input.parserVersion,

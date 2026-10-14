@@ -133,6 +133,9 @@ interface ActiveAnalysis {
 
 const ACTIVE = new Map<Id, ActiveAnalysis>();
 
+/** Detached turn promises, tracked so graceful shutdown can await them. */
+const IN_FLIGHT = new Set<Promise<void>>();
+
 function emit(active: ActiveAnalysis, event: AnalysisEvent): void {
   active.events.push(event);
   if (active.events.length > 2000) {
@@ -275,9 +278,42 @@ export async function startAnalysis(
   ACTIVE.set(runId, active);
 
   const secrets = deps.secrets ?? createDefaultSecretResolver();
-  void executeTurn(active, profile, evidence, limits, signal, secrets, now);
+  const turn = executeTurn(
+    active,
+    profile,
+    evidence,
+    limits,
+    signal,
+    secrets,
+    now,
+  );
+  IN_FLIGHT.add(turn);
+  turn.then(
+    () => IN_FLIGHT.delete(turn),
+    () => IN_FLIGHT.delete(turn),
+  );
 
   return runId;
+}
+
+/**
+ * Cancels every active analysis session. Each cancelled turn still runs its
+ * own finalization, so no proposal is half-recorded and the terminal status is
+ * persisted by the turn's own exit path.
+ */
+export function cancelActiveAnalyses(): void {
+  for (const active of ACTIVE.values()) {
+    try {
+      active.session?.cancel("cancelled");
+    } catch {
+      // A session that is already closed needs no cancellation.
+    }
+  }
+}
+
+/** Waits for every detached analysis turn to settle. */
+export async function drainActiveAnalyses(): Promise<void> {
+  await Promise.allSettled([...IN_FLIGHT]);
 }
 
 async function executeTurn(

@@ -15,6 +15,15 @@ export class WriterQueue {
     return result;
   }
 
+  /**
+   * Resolves once every operation currently enqueued has settled. Unlike
+   * `close` this keeps accepting new work, so callers can drain in-flight
+   * writes without permanently sealing the queue.
+   */
+  drain(): Promise<void> {
+    return this.tail;
+  }
+
   async close(): Promise<void> {
     this.accepting = false;
     await this.tail;

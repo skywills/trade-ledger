@@ -23,7 +23,8 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
   },
 ];
 
-const CURRENT_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
+export const CURRENT_SCHEMA_VERSION =
+  MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
 
 export function applyMigrations(db: Database.Database): void {
   db.exec(`

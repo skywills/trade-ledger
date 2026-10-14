@@ -1,11 +1,13 @@
 import { useState } from "react";
 import {
   ApiError,
+  BackupStartResponseSchema,
   BuildResponseSchema,
   type Job,
   JobEnvelopeSchema,
   JournalEnvelope,
   pollJob,
+  RestoreInstructionsSchema,
   RollbackResponseSchema,
   requestJson,
   useJson,
@@ -25,6 +27,12 @@ export function MaintenancePage() {
   const [error, setError] = useState<string | null>(null);
   const [rollbackId, setRollbackId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [backupJob, setBackupJob] = useState<Job | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const restore = useJson(
+    "/api/maintenance/restore",
+    RestoreInstructionsSchema,
+  );
 
   async function startBuild(mode: "full" | "projection") {
     setBusy(true);
@@ -59,6 +67,25 @@ export function MaintenancePage() {
       setJob(cancelled);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function startBackup() {
+    setBackupBusy(true);
+    setError(null);
+    setBackupJob(null);
+    try {
+      const { jobId } = await requestJson(
+        "/api/maintenance/backups",
+        BackupStartResponseSchema,
+        "POST",
+      );
+      const finished = await pollJob(jobId, setBackupJob);
+      setBackupJob(finished);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBackupBusy(false);
     }
   }
 
@@ -142,6 +169,44 @@ export function MaintenancePage() {
           {notice}
         </p>
       ) : null}
+
+      <h3>Backup</h3>
+      <p>
+        <button
+          type="button"
+          onClick={() => void startBackup()}
+          disabled={backupBusy}
+        >
+          Create backup
+        </button>
+      </p>
+      {backupJob !== null ? (
+        <p>
+          <span data-testid="backup-status">Backup {backupJob.status}</span>
+          {backupJob.status === "complete" ? (
+            <>
+              {" "}
+              <a
+                data-testid="backup-download"
+                href={`/api/maintenance/backups/${backupJob.id}/download`}
+              >
+                Download archive
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      <h3>Restore</h3>
+      <p>
+        Restore is an offline operation; this page never performs one. Follow
+        these steps on the host:
+      </p>
+      <ol data-testid="restore-instructions">
+        {(restore.data?.instructions ?? []).map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
 
       {error !== null ? <ErrorPanel message={error} /> : null}
 

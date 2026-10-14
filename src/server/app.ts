@@ -20,15 +20,31 @@ import { registerAnalysisRoutes } from "./http/routes-analysis.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
+import { registerMaintenanceRoutes } from "./http/routes-maintenance.js";
 import { registerModelRoutes } from "./http/routes-models.js";
 import { registerReviewRoutes } from "./http/routes-review.js";
 import { recoverImportFiles } from "./imports/service.js";
 import { JobService } from "./jobs/service.js";
-import { checkDataAccess, closeStore, openStore } from "./storage/database.js";
+import { acquireDataDirLock } from "./maintenance/lock.js";
+import {
+  checkDataAccess,
+  closeStore,
+  openStore,
+  type Store,
+} from "./storage/database.js";
+
+/** The composed server components exposed to the process entry point. */
+export interface AppContext {
+  readonly store: Store;
+  readonly jobs: JobService;
+  readonly scheduler: BuildScheduler;
+}
 
 export interface AppOptions {
   /** Test seam forwarded to the build scheduler (faults, clock). */
   buildOptions?: BuildServiceOptions;
+  /** Called once the store and services are composed, before listening. */
+  onReady?: (context: AppContext) => void;
 }
 
 interface MappedError {
@@ -132,7 +148,16 @@ export async function createApp(
   options: AppOptions = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  const store = openStore(config.dataDir);
+  // The single-process data-directory lock is held for the life of the server
+  // so the backup/restore CLI can never race a live writer.
+  const lock = acquireDataDirLock(config.dataDir);
+  let store: Store;
+  try {
+    store = openStore(config.dataDir);
+  } catch (error) {
+    lock.release();
+    throw error;
+  }
   try {
     // Startup recovery runs once here, before any request is served: builds
     // left non-terminal by a dead process are failed so they can never be
@@ -150,6 +175,7 @@ export async function createApp(
 
     app.addHook("onClose", async () => {
       await closeStore(store);
+      lock.release();
     });
     app.addHook("onRequest", createOriginGuard(config.allowedOrigin));
     app.setErrorHandler(
@@ -208,10 +234,14 @@ export async function createApp(
     await registerJobRoutes(app, store, jobs, scheduler);
     await registerModelRoutes(app, store, secrets);
     await registerAnalysisRoutes(app, store);
+    await registerMaintenanceRoutes(app, store, jobs);
+
+    options.onReady?.({ store, jobs, scheduler });
 
     return app;
   } catch (error) {
     await closeStore(store);
+    lock.release();
     throw error;
   }
 }

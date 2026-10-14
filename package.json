@@ -37,6 +37,8 @@
     "dev": "tsx watch src/server/main.ts",
     "build": "tsc -p tsconfig.server.json && node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('src/server/storage/migrations', 'dist/src/server/storage/migrations', { recursive: true })\" && vite build",
     "start": "node dist/src/server/main.js",
+    "backup": "tsx src/server/maintenance/cli.ts backup",
+    "restore": "tsx src/server/maintenance/cli.ts restore",
     "test": "vitest run",
     "test:build-smoke": "npm run build && node scripts/smoke-built-server.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",

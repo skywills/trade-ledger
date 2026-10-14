@@ -204,6 +204,11 @@ export const RollbackResponseSchema = z.object({
   buildId: z.string().nullable(),
   stale: z.boolean(),
 });
+export const BackupStartResponseSchema = z.object({ jobId: z.string() });
+export const RestoreInstructionsSchema = z.object({
+  offline: z.boolean(),
+  instructions: z.array(z.string()),
+});
 export const DecisionResponseSchema = z.object({
   decision: z.object({
     id: z.string(),
