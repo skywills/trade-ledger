@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { testProfile } from "../../src/server/ai/compatibility.js";
 import {
   createSecretResolver,
+  isValidCredentialRef,
   LOCAL_PLACEHOLDER_API_KEY,
   redactHeaders,
   redactSecrets,
@@ -14,6 +15,7 @@ import {
   listProfiles,
   type ProfileInput,
   readCompatibility,
+  readProfile,
   saveProfile,
   selectDefaultProfile,
   snapshotProfile,
@@ -73,6 +75,24 @@ async function server(
   const started = await startInferenceServer(options);
   servers.push(started);
   return started;
+}
+
+async function routeApp(
+  env: Record<string, string> = {},
+): Promise<FastifyInstance> {
+  const dataDir = await mkdtemp(join(tmpdir(), "ibkr-models-http-"));
+  dataDirs.push(dataDir);
+  const app = await createApp(
+    readConfig({ DATA_DIR: dataDir, ALLOWED_ORIGIN: ORIGIN, ...env }),
+  );
+  apps.push(app);
+  return app;
+}
+
+async function secretsRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "ibkr-secrets-"));
+  dataDirs.push(root);
+  return root;
 }
 
 afterEach(async () => {
@@ -504,16 +524,6 @@ describe("local model profiles and guarded transport", () => {
 });
 
 describe("model profile HTTP routes", () => {
-  async function routeApp(): Promise<FastifyInstance> {
-    const dataDir = await mkdtemp(join(tmpdir(), "ibkr-models-http-"));
-    dataDirs.push(dataDir);
-    const app = await createApp(
-      readConfig({ DATA_DIR: dataDir, ALLOWED_ORIGIN: ORIGIN }),
-    );
-    apps.push(app);
-    return app;
-  }
-
   it("creates, lists, tests and defaults a profile without leaking secrets", async () => {
     const localServer = await server({ mode: "tool-call" });
     const cloudServer = await server({ mode: "tool-call" });
@@ -602,6 +612,201 @@ describe("model profile HTTP routes", () => {
     });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ code: "CROSS_ORIGIN_REJECTED" });
+  });
+});
+
+describe("mounted file credential references", () => {
+  it("resolves a secret inside the allowlisted root without exposing its value", async () => {
+    const root = await secretsRoot();
+    const secretValue = "sk-mounted-secret-value-123";
+    await writeFile(join(root, "key"), secretValue, "utf8");
+
+    const resolver = createSecretResolver({
+      env: {},
+      allowedFileRoots: [root],
+    });
+    const ref = `file:${join(root, "key")}`;
+
+    await expect(resolver.resolve(ref, "cloud")).resolves.toBe(secretValue);
+
+    const status = await resolver.status(ref, "cloud");
+    expect(status).toMatchObject({ kind: "file", configured: true });
+    expect(JSON.stringify(status)).not.toContain(secretValue);
+
+    const inference = await server({ mode: "tool-call" });
+    const store = await testStore();
+    const profile = await saveProfile(
+      store,
+      baseInput({
+        name: "file-cred",
+        endpoint: inference.url,
+        mode: "cloud",
+        credentialRef: ref,
+      }),
+      null,
+    );
+    expect(JSON.stringify(snapshotProfile(store, profile.id))).not.toContain(
+      secretValue,
+    );
+
+    const connection = await openModelConnection(
+      snapshotProfile(store, profile.id),
+      resolver,
+    );
+    try {
+      const response = await fetch(`${connection.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ model: "test-local-a", messages: [] }),
+      });
+      expect(response.status).toBe(200);
+    } finally {
+      await connection.close();
+    }
+
+    const received = inference.receivedRequests();
+    expect(received).toHaveLength(1);
+    expect(received[0]?.headers.authorization).toBe(`Bearer ${secretValue}`);
+  });
+
+  it("leaks no secret value through the HTTP API", async () => {
+    const root = await secretsRoot();
+    const secretValue = "sk-http-must-not-leak";
+    await writeFile(join(root, "key"), secretValue, "utf8");
+    const app = await routeApp({ JOURNAL_SECRETS_DIR: root });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/models",
+      headers: { origin: ORIGIN },
+      payload: baseInput({
+        name: "http-file",
+        endpoint: "http://127.0.0.1:9/v1",
+        mode: "cloud",
+        credentialRef: `file:${join(root, "key")}`,
+      }),
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(JSON.stringify(created.json())).not.toContain(secretValue);
+    // The allowlisted file is reported configured, but only its status.
+    expect(
+      (created.json() as { profile: { credential: { configured: boolean } } })
+        .profile.credential.configured,
+    ).toBe(true);
+
+    const list = await app.inject("/api/models");
+    expect(JSON.stringify(list.json())).not.toContain(secretValue);
+  });
+
+  it("rejects a file reference outside the allowlisted root", async () => {
+    const root = await secretsRoot();
+    const outside = await secretsRoot();
+    await writeFile(join(outside, "key"), "sk-outside-secret", "utf8");
+    const resolver = createSecretResolver({
+      env: {},
+      allowedFileRoots: [root],
+    });
+
+    await expect(
+      resolver.resolve(`file:${join(outside, "key")}`, "cloud"),
+    ).rejects.toMatchObject({ code: "CREDENTIAL_REF_NOT_ALLOWED" });
+
+    // Path traversal out of the root is contained too.
+    await expect(
+      resolver.resolve(`file:${join(root, "..", "escape")}`, "cloud"),
+    ).rejects.toMatchObject({ code: "CREDENTIAL_REF_NOT_ALLOWED" });
+
+    const status = await resolver.status(
+      `file:${join(outside, "key")}`,
+      "cloud",
+    );
+    expect(status.configured).toBe(false);
+  });
+
+  it("reports a missing-but-allowed file as unconfigured and fails closed", async () => {
+    const root = await secretsRoot();
+    const resolver = createSecretResolver({
+      env: {},
+      allowedFileRoots: [root],
+    });
+    const ref = `file:${join(root, "absent.key")}`;
+
+    const status = await resolver.status(ref, "cloud");
+    expect(status).toMatchObject({ kind: "file", configured: false });
+    // A missing-but-allowed file must not be reported as a disallowed ref.
+    await expect(resolver.resolve(ref, "cloud")).resolves.toBeNull();
+  });
+
+  it("rejects a credential reference carrying URL userinfo", async () => {
+    const root = await secretsRoot();
+    const resolver = createSecretResolver({
+      env: {},
+      allowedFileRoots: [root],
+    });
+    await expect(
+      resolver.resolve("file://user:pass@host/key", "cloud"),
+    ).rejects.toMatchObject({ code: "INVALID_CREDENTIAL_REF" });
+    expect(isValidCredentialRef("file://user:pass@host/key")).toBe(false);
+
+    const store = await testStore();
+    await expect(
+      saveProfile(
+        store,
+        baseInput({
+          name: "userinfo",
+          endpoint: "http://127.0.0.1:9/v1",
+          mode: "cloud",
+          credentialRef: "file://user:pass@host/key",
+        }),
+        null,
+      ),
+    ).rejects.toThrow();
+  });
+});
+
+describe("disabled profile provenance", () => {
+  it("retains a disabled profile row and revision without deletion", async () => {
+    const store = await testStore();
+    const created = await saveProfile(
+      store,
+      baseInput({
+        name: "disabled",
+        endpoint: "http://127.0.0.1:9/v1",
+        enabled: false,
+      }),
+      null,
+    );
+    expect(created.enabled).toBe(false);
+    expect(created.revision).toBe(1);
+
+    const listed = listProfiles(store).find((entry) => entry.id === created.id);
+    expect(listed).toBeDefined();
+    expect(listed?.enabled).toBe(false);
+    expect(listed?.revision).toBe(1);
+
+    const read = readProfile(store, created.id);
+    expect(read).not.toBeNull();
+    expect(read?.revision).toBe(1);
+
+    // A later toggle does not delete the row; it bumps the revision.
+    const enabled = await saveProfile(
+      store,
+      baseInput({
+        id: created.id,
+        name: "disabled",
+        endpoint: "http://127.0.0.1:9/v1",
+        enabled: true,
+      }),
+      created.revision,
+    );
+    expect(enabled.enabled).toBe(true);
+    expect(enabled.revision).toBe(2);
+    expect(
+      listProfiles(store).filter((entry) => entry.id === created.id),
+    ).toHaveLength(1);
   });
 });
 

@@ -1,5 +1,13 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { AppError } from "../../shared/errors.js";
 import type { ProfileMode } from "./profiles.js";
 
@@ -100,17 +108,41 @@ export function isValidCredentialRef(ref: unknown): boolean {
   }
 }
 
+/**
+ * Resolves a path to its real location even when the leaf does not exist yet:
+ * walk up to the nearest existing ancestor, realpath that (following any
+ * symlinks), then re-append the missing tail. Returns null when no ancestor
+ * can be resolved. This keeps containment meaningful for a missing-but-allowed
+ * file instead of misreporting it as outside the allowlist.
+ */
+function canonicalPath(path: string): string | null {
+  let current = resolve(path);
+  const tail: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return null;
+    tail.unshift(basename(current));
+    current = parent;
+  }
+  try {
+    const real = realpathSync(current);
+    return tail.length === 0 ? real : join(real, ...tail);
+  } catch {
+    return null;
+  }
+}
+
 function isUnderRoot(path: string, root: string): boolean {
   let realRoot: string;
-  let realPath: string;
   try {
     realRoot = realpathSync(resolve(root));
-    realPath = realpathSync(resolve(path));
   } catch {
     return false;
   }
-  if (realPath === realRoot) return true;
-  const rel = relative(realRoot, realPath);
+  const canonical = canonicalPath(path);
+  if (canonical === null) return false;
+  if (canonical === realRoot) return true;
+  const rel = relative(realRoot, canonical);
   return rel !== "" && !rel.startsWith("..") && !rel.startsWith(`..${sep}`);
 }
 
