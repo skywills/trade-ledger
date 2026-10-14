@@ -125,6 +125,7 @@ export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
     netCash: leg.netCash,
     brokerPnl: leg.brokerPnl,
     pnlEstimated: false,
+    role: leg.role,
   });
   if (leg.multiplier === null && isDerivative(leg.instrument)) {
     pushDraftIssue(

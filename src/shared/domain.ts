@@ -95,6 +95,7 @@ export interface Allocation {
   netCash: DecimalText;
   brokerPnl: DecimalText | null;
   pnlEstimated: boolean;
+  role: "open" | "close";
 }
 
 export interface Strategy {
