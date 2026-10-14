@@ -12,6 +12,7 @@ import type {
   Allocation,
   Execution,
   Instrument,
+  Issue,
   LedgerSnapshot,
   Projection,
   Strategy,
@@ -94,13 +95,17 @@ function strategy(overrides: Partial<Strategy> & { id: string }): Strategy {
   };
 }
 
-function ledger(executions: Execution[], conflicts = 0): LedgerSnapshot {
+function ledger(
+  executions: Execution[],
+  conflicts = 0,
+  issues: Issue[] = [],
+): LedgerSnapshot {
   return {
     id: "ledger-1",
     inputHash: "hash",
     executions,
     lots: [],
-    issues: [],
+    issues,
     conflicts,
   };
 }
@@ -299,6 +304,56 @@ describe("accountProjection", () => {
 
     expect(accounted.strategies[0]?.cashflow).toBe("0");
     expect(accounted.strategies[0]?.reconstructedPnl).toBeNull();
+  });
+
+  it("suppresses reconstructed P/L when ledger evidence is quarantined", () => {
+    const open = execution({ key: "exec:imp:1", netCash: "-1000" });
+    const close = execution({
+      key: "exec:imp:2",
+      quantity: "-1",
+      netCash: "1010",
+      action: "close",
+      brokerPnl: "10",
+    });
+    const accounted = projection(
+      [strategy({ id: "s1", status: "closed", complete: true })],
+      [
+        allocation({
+          strategyId: "s1",
+          executionKey: open.key,
+          quantity: "1",
+          netCash: "-1000",
+          role: "open",
+        }),
+        allocation({
+          strategyId: "s1",
+          executionKey: close.key,
+          quantity: "-1",
+          netCash: "1010",
+          brokerPnl: "10",
+          role: "close",
+        }),
+      ],
+    );
+
+    const quarantined = accountProjection(
+      ledger([open, close], 0, [
+        {
+          key: "ledger:PARSE_ERROR:1",
+          code: "PARSE_ERROR",
+          sources: [],
+          severity: "error",
+        },
+      ]),
+      accounted,
+    );
+    expect(quarantined.strategies[0]?.cashflow).toBe("10");
+    expect(quarantined.strategies[0]?.brokerPnl).toBe("10");
+    expect(quarantined.strategies[0]?.reconstructedPnl).toBeNull();
+
+    // Clean evidence still reconstructs the same closed strategy's P/L.
+    const clean = accountProjection(ledger([open, close]), accounted);
+    expect(clean.strategies[0]?.reconstructedPnl).toBe("10");
   });
 
   it("flags reconciliation differences beyond one minor unit", () => {

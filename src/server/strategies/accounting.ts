@@ -107,6 +107,14 @@ function hasBasisTransfer(executions: readonly Execution[]): boolean {
   );
 }
 
+/** Quarantined or conflicting evidence prevents any definitive combined total. */
+function hasQuarantinedEvidence(ledger: LedgerSnapshot): boolean {
+  return (
+    ledger.conflicts > 0 ||
+    ledger.issues.some((issue) => issue.severity === "error")
+  );
+}
+
 interface StrategyAmounts {
   openingAmount: DecimalText | null;
   cashflow: DecimalText | null;
@@ -170,7 +178,7 @@ function amountsFor(
     strategy.complete &&
     strategy.status === "closed" &&
     !hasBasisTransfer(executions) &&
-    ledger.conflicts === 0;
+    !hasQuarantinedEvidence(ledger);
   const reconstructedPnl = definitive && cashflow !== null ? cashflow : null;
 
   const reconciliation =
