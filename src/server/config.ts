@@ -5,6 +5,12 @@ export interface AppConfig {
   port: number;
   allowedOrigin: string;
   uploadLimitBytes: number;
+  /**
+   * Optional directory of built web assets to serve. Unset by default so the
+   * API-only test composition is unaffected; Task 15 finalizes the production
+   * default and Task 11's e2e harness sets it explicitly.
+   */
+  staticDir?: string;
 }
 
 const DEFAULT_UPLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
@@ -76,10 +82,14 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
   if (dataDir.trim() === "")
     throw new ConfigurationError("DATA_DIR must not be empty.");
   const port = readPort(env.PORT);
+  const staticDir = env.STATIC_DIR;
   return {
     dataDir,
     port,
     allowedOrigin: readAllowedOrigin(env.ALLOWED_ORIGIN, port, env.NODE_ENV),
     uploadLimitBytes: readUploadLimit(env.UPLOAD_LIMIT_BYTES),
+    ...(staticDir === undefined || staticDir.trim() === ""
+      ? {}
+      : { staticDir }),
   };
 }

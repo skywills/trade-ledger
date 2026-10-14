@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.app-header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.app-header nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.app-header nav a {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.app-header nav a:hover,
+.app-header nav a:focus {
+  text-decoration: underline;
+}
+
+.app-main {
+  padding: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  border: 1px solid #e2e8f0;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: #f1f5f9;
+}
+
+.build-badge {
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.loading {
+  color: #475569;
+}
+
+.error-panel,
+.error-summary {
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+}
+
+.error-summary:focus {
+  outline: 2px solid #991b1b;
+}
+
+.preview,
+.row-detail,
+.candidates {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.muted {
+  color: #64748b;
+}
+
+.check-row {
+  display: block;
+  margin: 0.25rem 0;
+}
+
+[role="tablist"] {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+[role="tab"][aria-selected="true"] {
+  font-weight: 700;
+}

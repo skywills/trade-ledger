@@ -1,4 +1,6 @@
+import { resolve } from "node:path";
 import multipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -99,6 +101,25 @@ function sendError(reply: FastifyReply, mapped: MappedError): void {
 }
 
 /**
+ * True only for GET paths that belong to the single-page frontend: not an
+ * `/api/*` route and with no file extension on the last segment. Missing
+ * assets (which have extensions) and unknown API routes stay 404s so the SPA
+ * fallback can never mask an API error as HTML.
+ */
+function isFrontendPath(method: string, rawUrl: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  let pathname: string;
+  try {
+    pathname = new URL(rawUrl, "http://localhost").pathname;
+  } catch {
+    return false;
+  }
+  if (pathname === "/api" || pathname.startsWith("/api/")) return false;
+  const lastSegment = pathname.slice(pathname.lastIndexOf("/") + 1);
+  return lastSegment === "" || !lastSegment.includes(".");
+}
+
+/**
  * Composes the storage store, the shared job service, the coalescing build
  * scheduler and every HTTP route. Listening is the caller's responsibility so
  * tests can drive the app with `inject`.
@@ -134,6 +155,13 @@ export async function createApp(
       },
     );
     app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
+      if (
+        config.staticDir !== undefined &&
+        isFrontendPath(request.method, request.url)
+      ) {
+        reply.type("text/html; charset=utf-8");
+        return reply.sendFile("index.html");
+      }
       reply.code(404).send({
         code: "NOT_FOUND",
         message: `No route for ${request.method} ${request.url}.`,
@@ -143,6 +171,15 @@ export async function createApp(
     await app.register(multipart, {
       limits: { fileSize: config.uploadLimitBytes, files: 20, fields: 20 },
     });
+    if (config.staticDir !== undefined) {
+      // Exact-file routes only; the SPA fallback above owns every other
+      // frontend path and unknown `/api/*` stays a JSON 404.
+      await app.register(fastifyStatic, {
+        root: resolve(config.staticDir),
+        wildcard: false,
+        index: false,
+      });
+    }
     // The API accepts JSON (and multipart for imports) only; drop Fastify's
     // default text/plain parser so stray bodies fail with a uniform 415.
     app.removeContentTypeParser("text/plain");
