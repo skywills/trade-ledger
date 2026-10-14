@@ -57,6 +57,84 @@ export interface ImportSummary {
   status: string;
 }
 
+export interface ImportRowView {
+  id: Id;
+  rowNumber: number;
+  section: string | null;
+  fields: Record<string, string>;
+  kind: string;
+  issues: Issue[];
+}
+
+export interface ImportRowQuery {
+  orderBy: "rowNumber" | "section" | "kind";
+  direction: "asc" | "desc";
+  limit: number;
+  offset: number;
+}
+
+interface ImportRowRecord {
+  id: string;
+  row_number: number;
+  section: string | null;
+  raw_fields_json: string;
+  row_kind: string;
+  parse_errors_json: string;
+}
+
+/**
+ * Fixed column allowlist for one import's retained rows. User sort keys select
+ * an entry here; they are never interpolated into SQL, and LIMIT/OFFSET remain
+ * bound parameters. Quarantined rows are returned like any other so no raw
+ * evidence is ever hidden.
+ */
+const IMPORT_ROW_COLUMN: Record<ImportRowQuery["orderBy"], string> = {
+  rowNumber: "row_number",
+  section: "section",
+  kind: "row_kind",
+};
+
+export function listImportRows(
+  store: Store,
+  importId: Id,
+  query: ImportRowQuery,
+): { items: ImportRowView[]; total: number } {
+  const exists = store.db
+    .prepare("SELECT 1 FROM imports WHERE id = ?")
+    .get(importId);
+  if (exists === undefined) {
+    throw new AppError(
+      "IMPORT_NOT_FOUND",
+      `No import exists for id ${importId}.`,
+      404,
+    );
+  }
+  const total = (
+    store.db
+      .prepare("SELECT COUNT(*) AS count FROM import_rows WHERE import_id = ?")
+      .get(importId) as { count: number }
+  ).count;
+  const column = IMPORT_ROW_COLUMN[query.orderBy];
+  const direction = query.direction === "desc" ? "DESC" : "ASC";
+  const rows = store.db
+    .prepare(
+      `SELECT id, row_number, section, raw_fields_json, row_kind, parse_errors_json
+       FROM import_rows WHERE import_id = ?
+       ORDER BY ${column} ${direction}, id ASC
+       LIMIT ? OFFSET ?`,
+    )
+    .all(importId, query.limit, query.offset) as ImportRowRecord[];
+  const items = rows.map((row) => ({
+    id: row.id,
+    rowNumber: row.row_number,
+    section: row.section,
+    fields: JSON.parse(row.raw_fields_json) as Record<string, string>,
+    kind: row.row_kind,
+    issues: JSON.parse(row.parse_errors_json) as Issue[],
+  }));
+  return { items, total };
+}
+
 /**
  * Crash points simulated only through this test seam. Each hook, when set,
  * throws before the named step completes so tests can verify recovery of the

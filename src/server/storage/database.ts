@@ -39,6 +39,22 @@ export function openStore(dataDir: string): Store {
   return { db, dataDir, sourceRoot, queue: new WriterQueue(), closed: false };
 }
 
+/**
+ * Cheap readiness probe: confirms the connection is open and migrations have
+ * been applied. Deliberately touches no model or network resource.
+ */
+export function checkDataAccess(store: Store): boolean {
+  if (store.closed) return false;
+  try {
+    const row = store.db
+      .prepare("SELECT MAX(version) AS version FROM schema_migrations")
+      .get() as { version: number | null } | undefined;
+    return row !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function closeStore(store: Store): Promise<void> {
   if (store.closed) return;
   store.closed = true;

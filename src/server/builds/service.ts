@@ -13,12 +13,14 @@ import {
   strategyId,
 } from "../decisions/registry.js";
 import { effectiveDecisions, readDecisions } from "../decisions/service.js";
+import { JobService } from "../jobs/service.js";
 import {
   LEDGER_PARSER_VERSION,
   normalizeLedger,
   readLedger,
 } from "../ledger/normalize.js";
-import { type Store, write } from "../storage/database.js";
+import type { Store } from "../storage/database.js";
+import { loadLedgerSnapshot } from "../storage/ledger.js";
 import {
   accountProjection,
   validateProjection,
@@ -272,6 +274,30 @@ export function activeProjection(store: Store): ActiveProjection {
 }
 
 /**
+ * Lightweight active-build identity for list envelopes. Unlike
+ * `activeProjection`, this never reconstructs the projection, so read-only
+ * listing endpoints stay cheap.
+ */
+export function activeBuildMeta(store: Store): {
+  buildId: Id | null;
+  stale: boolean;
+} {
+  const build = readActiveBuild(store.db);
+  if (build === null) return { buildId: null, stale: false };
+  return { buildId: build.id, stale: inputsChanged(store, build) };
+}
+
+/**
+ * The ledger generation referenced by the active build, reconstructed from
+ * retained evidence. Returns null when no generation is active.
+ */
+export function activeLedgerSnapshot(store: Store): LedgerSnapshot | null {
+  const build = readActiveBuild(store.db);
+  if (build === null) return null;
+  return loadLedgerSnapshot(store.db, build.ledger_build_id);
+}
+
+/**
  * Switches the active pointer to a retained successful generation. Failed or
  * cancelled candidates cannot be restored. A generation whose inputs no longer
  * match is marked stale; raw imports, decisions, and identities are untouched.
@@ -313,13 +339,28 @@ interface PendingRequest {
   input: RebuildInput;
   resolve: (result: BuildResult) => void;
   reject: (error: unknown) => void;
+  onJob?: (jobId: Id) => void;
+}
+
+/** Combines several abort signals without relying on AbortSignal.any. */
+function combineSignals(signals: readonly AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return controller.signal;
 }
 
 /**
  * Minimal coalescing scheduler. Rebuild requests that arrive in the same tick
  * batch into one rebuild; the batch picks full mode when any request is full.
- * One persisted job row is emitted per batch with stage progress updates. Task
- * 10 observes the persisted rows; no HTTP concerns live here.
+ * One persisted job row is emitted per batch with stage progress updates. Each
+ * batch gets its own abort controller, registered with the shared JobService,
+ * so cancelling the job stops the build before it can activate.
  */
 export class BuildScheduler {
   private pending: PendingRequest[] = [];
@@ -329,18 +370,33 @@ export class BuildScheduler {
   constructor(
     private readonly store: Store,
     private readonly options: BuildServiceOptions = {},
+    private readonly jobs: JobService = new JobService(store),
   ) {}
 
   request(input: RebuildInput): Promise<BuildResult> {
     return new Promise<BuildResult>((resolve, reject) => {
-      this.pending.push({ input, resolve, reject });
-      if (!this.scheduled) {
-        this.scheduled = true;
-        queueMicrotask(() => {
-          void this.flush();
-        });
-      }
+      this.enqueue({ input, resolve, reject });
     });
+  }
+
+  /**
+   * Enqueues a rebuild and resolves with the persisted job id as soon as the
+   * batch starts, before the build finishes. Callers poll the job for progress.
+   */
+  submit(input: RebuildInput): Promise<Id> {
+    return new Promise<Id>((resolve, reject) => {
+      this.enqueue({ input, resolve: () => {}, reject, onJob: resolve });
+    });
+  }
+
+  private enqueue(entry: PendingRequest): void {
+    this.pending.push(entry);
+    if (!this.scheduled) {
+      this.scheduled = true;
+      queueMicrotask(() => {
+        void this.flush();
+      });
+    }
   }
 
   private async flush(): Promise<void> {
@@ -374,85 +430,39 @@ export class BuildScheduler {
     const mode = batch.some((entry) => entry.input.mode === "full")
       ? "full"
       : "projection";
+    const controller = new AbortController();
     const merged: RebuildInput = {
       mode,
       parserVersion: first.input.parserVersion,
       algorithmVersion: first.input.algorithmVersion,
-      signal: first.input.signal,
+      signal: combineSignals([
+        controller.signal,
+        ...batch.map((entry) => entry.input.signal),
+      ]),
     };
-    const now = functionNow(this.options);
-    const jobId = await this.createJob(
-      merged,
-      batch.length,
-      now().toISOString(),
-    );
-    await this.updateJob(jobId, "computing");
+    const jobId = await this.jobs.create("rebuild", {
+      mode: merged.mode,
+      parserVersion: merged.parserVersion,
+      algorithmVersion: merged.algorithmVersion,
+      requests: batch.length,
+    });
+    this.jobs.register(jobId, controller);
+    for (const entry of batch) entry.onJob?.(jobId);
+    await this.jobs.progress(jobId, "computing");
     try {
       const result = await rebuild(this.store, merged, this.options);
-      await this.finishJob(
+      await this.jobs.finish(
         jobId,
         result.status === "active" ? "complete" : result.status,
-        now().toISOString(),
       );
       return result;
     } catch (error) {
-      await this.finishJob(
+      await this.jobs.finish(
         jobId,
         "failed",
-        now().toISOString(),
         error instanceof Error ? error.message : String(error),
       );
       throw error;
     }
-  }
-
-  private createJob(
-    input: RebuildInput,
-    requests: number,
-    at: string,
-  ): Promise<Id> {
-    return write(this.store, () => {
-      const id = randomUUID();
-      this.store.db
-        .prepare(
-          `INSERT INTO jobs (id, kind, input_snapshot, status, progress, created_at)
-           VALUES (?, 'rebuild', ?, 'running', 'queued', ?)`,
-        )
-        .run(
-          id,
-          JSON.stringify({
-            mode: input.mode,
-            parserVersion: input.parserVersion,
-            algorithmVersion: input.algorithmVersion,
-            requests,
-          }),
-          at,
-        );
-      return id;
-    });
-  }
-
-  private updateJob(jobId: Id, progress: string): Promise<void> {
-    return write(this.store, () => {
-      this.store.db
-        .prepare(`UPDATE jobs SET progress = ? WHERE id = ?`)
-        .run(progress, jobId);
-    });
-  }
-
-  private finishJob(
-    jobId: Id,
-    status: string,
-    at: string,
-    error?: string,
-  ): Promise<void> {
-    return write(this.store, () => {
-      this.store.db
-        .prepare(
-          `UPDATE jobs SET status = ?, progress = ?, finished_at = ?, error = ?
-           WHERE id = ?`,
-        )
-        .run(status, status, at, error ?? null, jobId);
-    });
   }
 }
