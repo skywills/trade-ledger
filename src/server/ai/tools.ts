@@ -198,15 +198,19 @@ export function createAnalysisTools(ctx: AnalysisToolContext): EmbedderTool[] {
       if (strategy === null) {
         return error(`No strategy "${strategyId}" exists in the active build.`);
       }
-      ctx.counters.readRows += strategy.positions.length;
-      return {
-        content: JSON.stringify({
-          strategyId,
-          status: strategy.status,
-          currency: strategy.currency,
-          positions: strategy.positions,
-        }),
+      const payload = {
+        strategyId,
+        status: strategy.status,
+        currency: strategy.currency,
+        positions: strategy.positions,
       };
+      ctx.counters.readRows += strategy.positions.length;
+      const bytes = byteLength(payload);
+      ctx.counters.readBytes += bytes;
+      if (bytes > MAX_READ_PAYLOAD_BYTES) {
+        return error("The requested positions exceed the read payload cap.");
+      }
+      return { content: JSON.stringify(payload) };
     },
   };
 

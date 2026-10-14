@@ -13,6 +13,7 @@ import {
 import { testProfile } from "../../src/server/ai/compatibility.js";
 import {
   buildEvidenceSnapshot,
+  MAX_READ_PAYLOAD_BYTES,
   selectEvidenceBatch,
 } from "../../src/server/ai/evidence.js";
 import {
@@ -28,6 +29,7 @@ import {
 } from "../../src/server/ai/proposals.js";
 import {
   ANALYSIS_TOOL_NAMES,
+  createAnalysisTools,
   FORBIDDEN_TOOL_NAMES,
   PROFILE_NONE_BUILTIN_TOOLS,
 } from "../../src/server/ai/tools.js";
@@ -50,7 +52,12 @@ import {
   openStore,
   type Store,
 } from "../../src/server/storage/database.js";
-import type { Execution, LedgerSnapshot } from "../../src/shared/domain.js";
+import type {
+  Execution,
+  LedgerSnapshot,
+  Projection,
+  Strategy,
+} from "../../src/shared/domain.js";
 import {
   buildExecutionTable,
   executionRow,
@@ -373,6 +380,104 @@ describe("bounded analysis produces review proposals", () => {
     expect(snapshot.rows).toHaveLength(0);
     expect(snapshot.rejected.length).toBeGreaterThan(0);
     expect(snapshot.rejected[0]?.reason).toBe("ROW_TOO_LARGE");
+  });
+
+  it("bounds inspect_positions payloads to the read cap", async () => {
+    const bigPositions = Array.from({ length: 2000 }, (_, index) => ({
+      instrumentKey: `${"K".repeat(40)}-${index}`,
+      quantity: "1",
+    }));
+    const smallPositions = [
+      { instrumentKey: "SPY", quantity: "100" },
+      { instrumentKey: "SPY-241220C", quantity: "-1" },
+      { instrumentKey: "QQQ", quantity: "50" },
+    ];
+    const strategy = (
+      id: string,
+      positions: Strategy["positions"],
+    ): Strategy => ({
+      id,
+      type: "stock",
+      currency: "USD",
+      description: id,
+      openingDate: null,
+      closeDate: null,
+      expiry: null,
+      expiryYear: null,
+      status: "open",
+      complete: true,
+      openingAmount: null,
+      cashflow: null,
+      brokerPnl: null,
+      reconstructedPnl: null,
+      positions,
+      reasons: [],
+    });
+    const projection: Projection = {
+      ledgerId: "ledger",
+      watermark: 0,
+      strategies: [
+        strategy("big", bigPositions),
+        strategy("small", smallPositions),
+      ],
+      allocations: [],
+      links: [],
+      issues: [],
+    };
+    const ledger: LedgerSnapshot = {
+      id: "ledger",
+      inputHash: "hash",
+      executions: [],
+      lots: [],
+      issues: [],
+      conflicts: 0,
+    };
+    const counters = {
+      readRows: 0,
+      readBytes: 0,
+      submitCalls: 0,
+      rejectedProposals: 0,
+    };
+    const tools = createAnalysisTools({
+      snapshot: {
+        buildId: "b",
+        ledgerId: "ledger",
+        watermark: 0,
+        issueKeys: [],
+        rows: [],
+        rejected: [],
+        contentHash: "h",
+        producedAt: new Date().toISOString(),
+      },
+      ledger,
+      projection,
+      proposals: [],
+      counters,
+    });
+    const positionsTool = tools.find(
+      (tool) => tool.name === "inspect_positions",
+    );
+    if (positionsTool === undefined)
+      throw new Error("inspect_positions missing");
+    const toolCtx = {
+      sessionId: "s",
+      toolCallId: "c",
+      signal: new AbortController().signal,
+    };
+
+    const before = counters.readBytes;
+    const oversized = await positionsTool.run({ strategyId: "big" }, toolCtx);
+    expect(oversized.isError).toBe(true);
+    expect(oversized.content).toContain("read payload cap");
+    expect(counters.readBytes - before).toBeGreaterThan(MAX_READ_PAYLOAD_BYTES);
+
+    const afterBig = counters.readBytes;
+    const normal = await positionsTool.run({ strategyId: "small" }, toolCtx);
+    expect(normal.isError).toBeFalsy();
+    const parsed = JSON.parse(normal.content) as { positions: unknown[] };
+    expect(parsed.positions).toHaveLength(3);
+    expect(counters.readBytes).toBeGreaterThan(afterBig);
+    expect(counters.readRows).toBeGreaterThanOrEqual(2003);
   });
 
   it("flags an over-allocated proposal as OVER_ALLOCATION", async () => {
@@ -849,7 +954,7 @@ describe("analysis HTTP routes", () => {
 
   it("starts, reads, accepts and answers through the API", async () => {
     const store = await testStore();
-    const { buildId, ledger } = await seedFrom(store, fixtures.spread);
+    const { ledger } = await seedFrom(store, fixtures.spread);
     const execution = ledger.executions[0] as Execution;
     const inference = await server({
       mode: "tool-call",
@@ -910,7 +1015,7 @@ describe("analysis HTTP routes", () => {
 
   it("answers a question, mapping accepted, expired and unknown", async () => {
     const store = await testStore();
-    const { buildId } = await seedFrom(store, fixtures.spread);
+    await seedFrom(store, fixtures.spread);
     const inference = await server({
       mode: "tool-call",
       plan: [
