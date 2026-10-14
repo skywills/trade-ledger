@@ -6,13 +6,18 @@ import Fastify, {
 } from "fastify";
 import type { ApiErrorBody } from "../shared/api.js";
 import { AppError } from "../shared/errors.js";
-import { BuildScheduler, type BuildServiceOptions } from "./builds/service.js";
+import {
+  BuildScheduler,
+  type BuildServiceOptions,
+  recoverBuilds,
+} from "./builds/service.js";
 import type { AppConfig } from "./config.js";
 import { createOriginGuard } from "./http/origin.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
 import { registerReviewRoutes } from "./http/routes-review.js";
+import { recoverImportFiles } from "./imports/service.js";
 import { JobService } from "./jobs/service.js";
 import { checkDataAccess, closeStore, openStore } from "./storage/database.js";
 
@@ -105,6 +110,13 @@ export async function createApp(
   const app = Fastify({ logger: false });
   const store = openStore(config.dataDir);
   try {
+    // Startup recovery runs once here, before any request is served: builds
+    // left non-terminal by a dead process are failed so they can never be
+    // rolled back, and orphaned import staging bytes are reclaimed. Both are
+    // idempotent and safe on a fresh store.
+    await recoverBuilds(store);
+    await recoverImportFiles(store);
+
     const jobs = new JobService(store);
     const scheduler = new BuildScheduler(
       store,

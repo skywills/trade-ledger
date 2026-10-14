@@ -1,11 +1,23 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/server/app.js";
-import type { BuildServiceOptions } from "../../src/server/builds/service.js";
+import {
+  ALGORITHM_VERSION,
+  type BuildServiceOptions,
+  rebuild,
+} from "../../src/server/builds/service.js";
 import { readConfig } from "../../src/server/config.js";
+import { stageOriginalBytes } from "../../src/server/imports/files.js";
+import {
+  commitImport,
+  previewImport,
+} from "../../src/server/imports/service.js";
+import { LEDGER_PARSER_VERSION } from "../../src/server/ledger/normalize.js";
+import { closeStore, openStore } from "../../src/server/storage/database.js";
 import { fixtures } from "../fixtures/scenarios.js";
 
 const ORIGIN = "http://localhost:3000";
@@ -164,6 +176,58 @@ async function startBuild(
   });
   expect(response.statusCode, response.body).toBe(202);
   return (response.json() as { jobId: string }).jobId;
+}
+
+/**
+ * Seeds a store that looks like a process died mid-build: a valid active
+ * generation plus a non-terminal candidate row, and an orphan staging file no
+ * preview references.
+ */
+async function seedInterruptedStartup(dataDir: string): Promise<{
+  interruptedId: string;
+  activeId: string;
+}> {
+  const store = openStore(dataDir);
+  try {
+    const preview = await previewImport(store, {
+      filename: "spread.csv",
+      bytes: fixtures.spread,
+      timezone: "UTC",
+    });
+    await commitImport(store, preview.id);
+    const result = await rebuild(store, {
+      mode: "full",
+      parserVersion: LEDGER_PARSER_VERSION,
+      algorithmVersion: ALGORITHM_VERSION,
+      signal: new AbortController().signal,
+    });
+    expect(result.status).toBe("active");
+    const activeId = (
+      store.db
+        .prepare(
+          "SELECT active_build_id AS id FROM app_state WHERE singleton = 1",
+        )
+        .get() as { id: string }
+    ).id;
+    const ledgerId = (
+      store.db
+        .prepare("SELECT ledger_build_id AS id FROM builds WHERE id = ?")
+        .get(activeId) as { id: string }
+    ).id;
+    const interruptedId = "interrupted-build";
+    store.db
+      .prepare(
+        `INSERT INTO builds (
+           id, ledger_build_id, decision_watermark, algorithm_version,
+           input_hash, status, validation_json
+         ) VALUES (?, ?, 0, ?, 'interrupted-hash', 'running', '[]')`,
+      )
+      .run(interruptedId, ledgerId, ALGORITHM_VERSION);
+    stageOriginalBytes(store.sourceRoot, "orphan-preview", fixtures.roll);
+    return { interruptedId, activeId };
+  } finally {
+    await closeStore(store);
+  }
 }
 
 function collectSecretKeys(value: unknown, found: string[] = []): string[] {
@@ -489,5 +553,36 @@ describe("validated HTTP API", () => {
       const response = await app.inject(url);
       expect(collectSecretKeys(response.json()), url).toEqual([]);
     }
+  });
+
+  it("runs startup recovery when composing the app", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "ibkr-http-recovery-"));
+    dataDirs.push(dataDir);
+    const { interruptedId, activeId } = await seedInterruptedStartup(dataDir);
+    const orphanStaging = join(
+      dataDir,
+      "originals",
+      ".staging",
+      "orphan-preview.part",
+    );
+    expect(existsSync(orphanStaging)).toBe(true);
+
+    const app = await createApp(
+      readConfig({ DATA_DIR: dataDir, ALLOWED_ORIGIN: ORIGIN }),
+    );
+    openApps.push(app);
+
+    expect(existsSync(orphanStaging)).toBe(false);
+
+    const rollback = await app.inject({
+      method: "POST",
+      url: `/api/builds/${interruptedId}/rollback`,
+      headers: { origin: ORIGIN },
+    });
+    expect(rollback.statusCode).toBe(409);
+    expect(rollback.json()).toMatchObject({ code: "BUILD_NOT_ROLLBACKABLE" });
+
+    const journal = await app.inject("/api/journal");
+    expect((journal.json() as { buildId: string }).buildId).toBe(activeId);
   });
 });
