@@ -27,6 +27,31 @@ export interface DataDirLock {
 interface LockRecord {
   pid: number;
   startedAt: string;
+  /**
+   * The owner's OS start time (Linux `/proc/<pid>/stat` field 22), captured to
+   * detect a reused pid. Inside a container the app is always pid 1, so a lock
+   * left by an uncleanly killed process would otherwise look "alive" forever.
+   * Null when the platform does not expose it.
+   */
+  pidStart: string | null;
+}
+
+/**
+ * Reads the Linux process start time for a pid, or null when unavailable (for
+ * example on macOS/Windows). Two different processes can never share both a pid
+ * and a start time, so a mismatch proves the recorded owner is gone.
+ */
+function readProcessStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    if (close < 0) return null;
+    // Fields after ") " begin at state (field 3); starttime is field 22.
+    const fields = stat.slice(close + 2).split(" ");
+    return fields[19] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function readLockRecord(lockPath: string): LockRecord | null {
@@ -34,6 +59,7 @@ function readLockRecord(lockPath: string): LockRecord | null {
     const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as {
       pid?: unknown;
       startedAt?: unknown;
+      pidStart?: unknown;
     };
     if (typeof parsed.pid !== "number" || !Number.isSafeInteger(parsed.pid)) {
       return null;
@@ -42,6 +68,7 @@ function readLockRecord(lockPath: string): LockRecord | null {
       pid: parsed.pid,
       startedAt:
         typeof parsed.startedAt === "string" ? parsed.startedAt : "unknown",
+      pidStart: typeof parsed.pidStart === "string" ? parsed.pidStart : null,
     };
   } catch {
     return null;
@@ -60,6 +87,20 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
+ * Whether the recorded owner is still running. A pid that is alive but whose
+ * recorded start time no longer matches the live process has been reused, so
+ * the lock is stale and the directory is recoverable.
+ */
+function lockOwnerIsLive(record: LockRecord): boolean {
+  if (!isProcessAlive(record.pid)) return false;
+  const actualStart = readProcessStartTime(record.pid);
+  if (record.pidStart !== null && actualStart !== null) {
+    return record.pidStart === actualStart;
+  }
+  return true;
+}
+
+/**
  * Whether a live process holds the lock. A missing, unreadable or stale lock
  * (its recorded pid is gone) reports false so the directory is recoverable.
  */
@@ -67,7 +108,7 @@ export function isDataDirLocked(dataDir: string): boolean {
   const lockPath = join(dataDir, LOCK_FILENAME);
   const record = readLockRecord(lockPath);
   if (record === null) return false;
-  return isProcessAlive(record.pid);
+  return lockOwnerIsLive(record);
 }
 
 function writeLock(lockPath: string, record: LockRecord): void {
@@ -91,6 +132,7 @@ export function acquireDataDirLock(dataDir: string): DataDirLock {
   const record: LockRecord = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
+    pidStart: readProcessStartTime(process.pid),
   };
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -113,7 +155,7 @@ export function acquireDataDirLock(dataDir: string): DataDirLock {
     }
 
     const existing = readLockRecord(lockPath);
-    if (existing !== null && isProcessAlive(existing.pid)) {
+    if (existing !== null && lockOwnerIsLive(existing)) {
       throw new AppError(
         "DATA_DIR_LOCKED",
         `The data directory is in use by running process ${existing.pid}. Stop it before continuing.`,

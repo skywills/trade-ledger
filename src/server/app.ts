@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import Fastify, {
@@ -186,7 +187,10 @@ export async function createApp(
     app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
       if (
         config.staticDir !== undefined &&
-        isFrontendPath(request.method, request.url)
+        isFrontendPath(request.method, request.url) &&
+        // Only a real bundle serves the SPA. A missing index.html must stay a
+        // JSON 404 rather than a 500 from sendFile.
+        existsSync(join(resolve(config.staticDir), "index.html"))
       ) {
         reply.type("text/html; charset=utf-8");
         return reply.sendFile("index.html");

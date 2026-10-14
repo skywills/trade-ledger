@@ -470,6 +470,49 @@ test("keyboard focus reaches the labelled CSV file input", async ({ page }) => {
   await expect(input).toBeFocused();
 });
 
+test("imports same-origin directly from the browser", async ({ page }) => {
+  const csv = Buffer.from(
+    buildExecutionTable([
+      optionLeg("BROWSER-OPEN", "T-BROWSER", {
+        Symbol: "BROWSERX",
+        UnderlyingSymbol: "BROWSERX",
+        Conid: "6550001",
+        Quantity: "+1",
+        NetCash: "-250",
+        TradePrice: "2.5",
+        "Notes/Codes": "O",
+      }),
+    ]),
+  ).toString("utf8");
+
+  await page.goto("/imports");
+  const result = await page.evaluate(async (bytes) => {
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: "text/csv" }), "browser.csv");
+    const preview = await fetch("/api/imports/preview?timezone=UTC", {
+      method: "POST",
+      body: form,
+    });
+    const previewBody = (await preview.json()) as {
+      previews: Array<{ id: string }>;
+    };
+    const commit = await fetch(
+      `/api/imports/${previewBody.previews[0]?.id}/commit`,
+      { method: "POST" },
+    );
+    const commitBody = (await commit.json()) as { duplicate: boolean };
+    return {
+      previewStatus: preview.status,
+      commitStatus: commit.status,
+      duplicate: commitBody.duplicate,
+    };
+  }, csv);
+
+  expect(result.previewStatus).toBe(201);
+  expect(result.commitStatus).toBe(200);
+  expect(result.duplicate).toBe(false);
+});
+
 test("static fallback serves the SPA but leaves unknown API routes as JSON", async ({
   request,
 }) => {

@@ -1,0 +1,33 @@
+# Production-style compose example. It runs ONE application replica on local
+# persistent storage. There is deliberately no model server and no cloud key
+# here: inference is optional and configured per-profile in the UI. See README.
+services:
+  journal:
+    build:
+      context: .
+    image: ibkr-trade-journal:local
+    # Host port is bound to loopback only; put an authenticating reverse proxy
+    # in front before exposing this to a network.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      DATA_DIR: /data
+      PORT: "3000"
+      ALLOWED_ORIGIN: http://localhost:3000
+      UPLOAD_LIMIT_BYTES: "20971520"
+      # Allowlisted directory for mounted secret files (see profile file: refs).
+      # JOURNAL_SECRETS_DIR: /secrets
+    volumes:
+      # SQLite, original imports and transcript state all live under /data.
+      - journal-data:/data
+      # Optional: mount provider credentials as read-only secret files instead
+      # of passing them through the environment.
+      # - ./secrets:/secrets:ro
+      # Never mount a network filesystem here: SQLite WAL requires local storage.
+    # Lets the container reach a host inference server via host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  journal-data:

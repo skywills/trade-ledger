@@ -25,9 +25,19 @@ try {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
-      void graceful().finally(() => {
-        process.exitCode = 0;
-      });
+      // A failed graceful shutdown must not report success: exit non-zero so
+      // orchestrators can see that draining did not complete cleanly.
+      void graceful().then(
+        () => {
+          process.exitCode = 0;
+        },
+        (error: unknown) => {
+          process.stderr.write(
+            `Failed to shut down the journal server cleanly: ${String(error)}\n`,
+          );
+          process.exitCode = 1;
+        },
+      );
     });
   }
 

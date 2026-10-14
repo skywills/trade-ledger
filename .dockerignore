@@ -1,0 +1,23 @@
+# Keep the build context to exactly what the image needs. Never ship private
+# fixtures, local data, secrets, VCS history or the CI/task-planning trees.
+node_modules
+dist
+.data
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+.github
+.superpowers
+coverage
+playwright-report
+test-results
+
+test
+e2e
+docs
+# Keep scripts out of the image but leave the Dockerfile build self-contained.
+scripts
+*.md

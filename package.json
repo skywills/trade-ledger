@@ -45,6 +45,7 @@
     "lint": "biome check .",
     "check:all": "npm run lint && npm run typecheck",
     "test:e2e": "playwright test",
-    "test:docker": "docker compose config --quiet"
+    "test:docker": "docker compose config --quiet && node scripts/docker-smoke.mjs",
+    "smoke:local-model": "node scripts/local-model-smoke.mjs"
   }
 }

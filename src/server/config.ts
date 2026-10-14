@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { ConfigurationError } from "../shared/errors.js";
 
 export interface AppConfig {
@@ -6,9 +7,10 @@ export interface AppConfig {
   allowedOrigin: string;
   uploadLimitBytes: number;
   /**
-   * Optional directory of built web assets to serve. Unset by default so the
-   * API-only test composition is unaffected; Task 15 finalizes the production
-   * default and Task 11's e2e harness sets it explicitly.
+   * Directory of built web assets to serve. Defaults to the compiled Vite
+   * bundle (`dist/web`) in production so one container serves the frontend and
+   * the API on the same origin. Unset elsewhere so the API-only test
+   * composition is unaffected; the e2e harness sets it explicitly.
    */
   staticDir?: string;
   /**
@@ -87,7 +89,9 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
   if (dataDir.trim() === "")
     throw new ConfigurationError("DATA_DIR must not be empty.");
   const port = readPort(env.PORT);
-  const staticDir = env.STATIC_DIR;
+  const staticDir =
+    env.STATIC_DIR ??
+    (env.NODE_ENV === "production" ? resolve("dist/web") : undefined);
   const secretsDir = env.JOURNAL_SECRETS_DIR;
   return {
     dataDir,
