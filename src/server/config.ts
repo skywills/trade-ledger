@@ -11,6 +11,11 @@ export interface AppConfig {
    * default and Task 11's e2e harness sets it explicitly.
    */
   staticDir?: string;
+  /**
+   * Optional allowlisted directory of mounted secret files that a profile's
+   * `file:` credential reference may read. Unset means env-only references.
+   */
+  secretsDir?: string;
 }
 
 const DEFAULT_UPLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
@@ -83,6 +88,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
     throw new ConfigurationError("DATA_DIR must not be empty.");
   const port = readPort(env.PORT);
   const staticDir = env.STATIC_DIR;
+  const secretsDir = env.JOURNAL_SECRETS_DIR;
   return {
     dataDir,
     port,
@@ -91,5 +97,8 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
     ...(staticDir === undefined || staticDir.trim() === ""
       ? {}
       : { staticDir }),
+    ...(secretsDir === undefined || secretsDir.trim() === ""
+      ? {}
+      : { secretsDir }),
   };
 }

@@ -56,6 +56,121 @@ export const JobSchema = z.object({
 
 export type JobDto = z.infer<typeof JobSchema>;
 
+export const THINKING_LEVEL_VALUES = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export const ProfileModeSchema = z.enum(["local", "cloud"]);
+export const ThinkingLevelSchema = z.enum(THINKING_LEVEL_VALUES);
+export type ThinkingLevel = (typeof THINKING_LEVEL_VALUES)[number];
+
+export const ProfilePricingSchema = z.object({
+  input: z.number().min(0),
+  output: z.number().min(0),
+  cacheRead: z.number().min(0),
+  cacheWrite: z.number().min(0),
+});
+
+export const LlmProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  mode: ProfileModeSchema,
+  provider: z.string(),
+  protocol: z.string(),
+  endpoint: z.string(),
+  modelId: z.string(),
+  contextWindow: z.number().int().positive(),
+  maxTokens: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  supportsTools: z.boolean(),
+  thinkingLevels: z.array(ThinkingLevelSchema),
+  credentialRef: z.string().nullable(),
+  enabled: z.boolean(),
+  revision: z.number().int().positive(),
+  pricing: ProfilePricingSchema.nullable(),
+});
+
+export type LlmProfileDto = z.infer<typeof LlmProfileSchema>;
+
+export const CredentialStatusSchema = z.object({
+  ref: z.string().nullable(),
+  kind: z.enum(["none", "env", "file"]),
+  label: z.string(),
+  configured: z.boolean(),
+});
+
+export const ProfileCompatibilitySchema = z.object({
+  status: z.enum(["verified", "failed", "skipped", "unchecked"]),
+  reason: z.string().nullable(),
+  profileRevision: z.number().int().nullable(),
+  checkedAt: z.string().nullable(),
+  endpoint: z.string().nullable(),
+  modelId: z.string().nullable(),
+  durationMs: z.number().int().nullable(),
+});
+
+export const ModelProfileViewSchema = LlmProfileSchema.extend({
+  credential: CredentialStatusSchema,
+  compatibility: ProfileCompatibilitySchema,
+});
+
+export type ModelProfileView = z.infer<typeof ModelProfileViewSchema>;
+
+export const ModelsResponseSchema = z.object({
+  profiles: z.array(ModelProfileViewSchema),
+  defaultProfileId: z.string().nullable(),
+});
+
+export const ProfileInputSchema = z.object({
+  name: z.string().min(1),
+  mode: ProfileModeSchema,
+  provider: z.string().min(1),
+  protocol: z.string().min(1),
+  endpoint: z.string().min(1),
+  modelId: z.string().min(1),
+  contextWindow: z.number().int().positive(),
+  maxTokens: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  supportsTools: z.boolean(),
+  thinkingLevels: z.array(ThinkingLevelSchema),
+  credentialRef: z.string().nullable(),
+  enabled: z.boolean().optional(),
+  pricing: ProfilePricingSchema.nullable().optional(),
+});
+
+export const UpdateProfileSchema = ProfileInputSchema.extend({
+  expectedRevision: z.number().int().positive(),
+});
+
+export const SaveProfileResponseSchema = z.object({
+  profile: ModelProfileViewSchema,
+});
+
+export const SelectDefaultSchema = z.object({
+  id: z.string().min(1),
+  confirmCloud: z.boolean().optional(),
+});
+
+export const SelectDefaultResponseSchema = z.object({
+  defaultProfileId: z.string().nullable(),
+});
+
+export const TestProfileSchema = z.object({
+  result: ProfileCompatibilitySchema.extend({
+    profileId: z.string(),
+  }),
+});
+
+export type CompatibilityResultDto = z.infer<
+  typeof TestProfileSchema
+>["result"];
+
 export function listEnvelopeSchema<T extends z.ZodTypeAny>(item: T) {
   return z.object({
     items: z.array(item),

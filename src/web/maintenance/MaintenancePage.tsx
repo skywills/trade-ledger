@@ -11,6 +11,7 @@ import {
   useJson,
 } from "../api.js";
 import { BuildBadge, ErrorPanel } from "../components.js";
+import { ModelsPanel } from "./ModelsPanel.js";
 
 /**
  * Maintenance owns rebuild/rollback controls. Models (Task 12) and backup
@@ -143,6 +144,8 @@ export function MaintenancePage() {
       ) : null}
 
       {error !== null ? <ErrorPanel message={error} /> : null}
+
+      <ModelsPanel />
     </section>
   );
 }

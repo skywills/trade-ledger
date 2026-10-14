@@ -8,6 +8,7 @@ import Fastify, {
 } from "fastify";
 import type { ApiErrorBody } from "../shared/api.js";
 import { AppError } from "../shared/errors.js";
+import { createSecretResolver } from "./ai/credentials.js";
 import {
   BuildScheduler,
   type BuildServiceOptions,
@@ -18,6 +19,7 @@ import { createOriginGuard } from "./http/origin.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
+import { registerModelRoutes } from "./http/routes-models.js";
 import { registerReviewRoutes } from "./http/routes-review.js";
 import { recoverImportFiles } from "./imports/service.js";
 import { JobService } from "./jobs/service.js";
@@ -193,10 +195,17 @@ export async function createApp(
       return { status: "ok" };
     });
 
+    const secrets = createSecretResolver({
+      env: process.env,
+      allowedFileRoots:
+        config.secretsDir === undefined ? [] : [config.secretsDir],
+    });
+
     await registerImportRoutes(app, store);
     await registerJournalRoutes(app, store);
     await registerReviewRoutes(app, store);
     await registerJobRoutes(app, store, jobs, scheduler);
+    await registerModelRoutes(app, store, secrets);
 
     return app;
   } catch (error) {
