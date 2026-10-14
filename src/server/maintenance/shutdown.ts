@@ -19,13 +19,10 @@ export interface ShutdownOptions {
  */
 export async function shutdown(
   store: Store,
-  signal: AbortSignal,
   options: ShutdownOptions = {},
 ): Promise<void> {
-  // The signal reports the termination request; cancellation is driven through
-  // the process-wide registries so detached work is stopped directly.
-  void signal;
-
+  // Cancellation is driven through the process-wide registries so detached
+  // work is stopped directly; no external signal is threaded through.
   const cancelAnalyses = options.cancelAnalyses ?? cancelActiveAnalyses;
   const drainAnalyses = options.drainAnalyses ?? drainActiveAnalyses;
   const cancelBuilds = options.cancelBuilds ?? cancelActiveBuilds;

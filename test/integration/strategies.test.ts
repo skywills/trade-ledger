@@ -590,6 +590,25 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       );
     }));
 
+  it("surfaces a retained group_split as not applied instead of a silent no-op", () =>
+    withStore(async (store) => {
+      const ledger = await ledgerFrom(store, "spread.csv", fixtures.spread);
+      const decisions: Decision[] = [
+        decision("group_split", {
+          parentStrategyId: "strategy-parent",
+          childStrategyIds: ["strategy-child-a", "strategy-child-b"],
+          notesOwnerStrategyId: "strategy-child-a",
+        }),
+      ];
+      const projection = groupStrategies(ledger, decisions, resolveId);
+
+      const split = projection.issues.find(
+        (issue) => issue.code === "SPLIT_NOT_APPLIED",
+      );
+      expect(split?.severity).toBe("warning");
+      expect(split?.key).toContain("strategy-parent");
+    }));
+
   it("applies manual allocations before automatic matching of the remainder", () =>
     withStore(async (store) => {
       const ledger = await ledgerFrom(store, "spread.csv", fixtures.spread);

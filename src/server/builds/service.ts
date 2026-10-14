@@ -1,6 +1,7 @@
 import type {
   BuildResult,
   Id,
+  Issue,
   LedgerSnapshot,
   Projection,
   Strategy,
@@ -138,7 +139,33 @@ export async function computeProjection(
   for (const [key, anchor] of anchors) {
     remap.set(key, await strategyId(store, anchor));
   }
-  return accountProjection(ledger, remapStrategyIds(provisional, remap));
+  const projection = accountProjection(
+    ledger,
+    remapStrategyIds(provisional, remap),
+  );
+  return withLedgerIssues(projection, ledger.issues);
+}
+
+/**
+ * Adds the ledger's own issues (identity/alias/binding conflicts and
+ * quarantined evidence) to the projection's review items. The Review surface
+ * reads only projection issues, so without this a ledger-level diagnostic such
+ * as a contradictory identity binding would be persisted but never shown.
+ * Deduplicated by stable key and sorted so the result stays deterministic.
+ */
+function withLedgerIssues(
+  projection: Projection,
+  ledgerIssues: readonly Issue[],
+): Projection {
+  const seen = new Set(projection.issues.map((issue) => issue.key));
+  const issues = [...projection.issues];
+  for (const issue of ledgerIssues) {
+    if (seen.has(issue.key)) continue;
+    seen.add(issue.key);
+    issues.push(issue);
+  }
+  issues.sort((left, right) => (left.key < right.key ? -1 : 1));
+  return { ...projection, issues };
 }
 
 function readRetainedLedger(

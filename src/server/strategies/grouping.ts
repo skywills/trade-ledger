@@ -292,6 +292,19 @@ export function groupStrategies(
         }
         break;
       }
+      case "group_split": {
+        // A retained split is never applied to the projection yet: the payload
+        // carries parent/child identities but no parent-to-child allocation
+        // mapping, so a deterministic split is impossible. Surface it as a
+        // review item rather than silently ignoring the decision.
+        const parent =
+          typeof payload.parentStrategyId === "string"
+            ? payload.parentStrategyId
+            : undefined;
+        if (parent === undefined) continue;
+        addIssue(makeIssue("SPLIT_NOT_APPLIED", [], "warning", parent));
+        break;
+      }
       case "lifecycle": {
         const event =
           typeof payload.event === "string" ? payload.event : undefined;

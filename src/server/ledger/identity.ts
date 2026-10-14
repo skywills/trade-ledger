@@ -75,24 +75,26 @@ function bindingKey(account: string, canonicalIdentity: string): string {
  * Maps each retained binding's source row to its canonical identity. Two
  * bindings for one source that disagree on the canonical identity are
  * contradictory: that source is left on its source-based identity rather than
- * silently joining either target.
+ * silently joining either target. Every contested source is also returned so
+ * the contradiction surfaces as a review issue instead of vanishing.
  */
-function bindingTargets(
-  bindings: readonly IdentityBinding[],
-): Map<string, string> {
+function bindingTargets(bindings: readonly IdentityBinding[]): {
+  targets: Map<string, string>;
+  conflicts: SourceRef[];
+} {
   const bySource = new Map<string, string>();
-  const conflicted = new Set<string>();
+  const conflicted = new Map<string, SourceRef>();
   for (const binding of bindings) {
     const key = refKey(binding.source);
     const existing = bySource.get(key);
     if (existing === undefined) {
       bySource.set(key, binding.canonicalIdentity);
     } else if (existing !== binding.canonicalIdentity) {
-      conflicted.add(key);
+      conflicted.set(key, binding.source);
     }
   }
-  for (const key of conflicted) bySource.delete(key);
-  return bySource;
+  for (const key of conflicted.keys()) bySource.delete(key);
+  return { targets: bySource, conflicts: [...conflicted.values()] };
 }
 
 /**
@@ -158,7 +160,8 @@ export function resolveIdentities(
   const ordered = [...candidates].sort((left, right) =>
     compareSources(left.source, right.source),
   );
-  const boundTargets = bindingTargets(bindings);
+  const { targets: boundTargets, conflicts: bindingConflicts } =
+    bindingTargets(bindings);
 
   const aliasToTrade = new Map<string, string>();
   const aliasRegistrations = new Map<string, SourceRef>();
@@ -224,6 +227,17 @@ export function resolveIdentities(
   }
 
   const issues: Issue[] = [];
+  for (const source of bindingConflicts) {
+    issues.push({
+      key: emptyIssueKey(
+        "binding_conflict",
+        `${source.importId}:${source.rowNumber}`,
+      ),
+      code: "binding_conflict",
+      sources: [source],
+      severity: "warning",
+    });
+  }
   for (const [aliasKey, conflictSources] of aliasConflicts) {
     const [account = "", execId = ""] = aliasKey.split("\u0000");
     const registeredBy = aliasRegistrations.get(aliasKey);

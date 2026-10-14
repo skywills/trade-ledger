@@ -4,7 +4,7 @@
 //   - the process does not run as root;
 //   - readiness is green;
 //   - a synthetic import produces exactly one strategy;
-//   - the same volume preserves the import across a container restart;
+//   - the same volume preserves the import across a graceful (SIGTERM) restart;
 //   - a stored local model profile survives the restart.
 // It removes ONLY the containers, volumes and image it created, all tagged with
 // a unique run label, so it is safe to run beside other Docker workloads.
@@ -231,9 +231,21 @@ try {
   await storeLocalModel(origin);
   log("imported one strategy and stored a local model profile");
 
-  // Restart on the same volume and confirm durable state survives.
-  log("restarting on the same volume");
-  docker(["rm", "-f", firstName]);
+  // Restart on the same volume and confirm durable state survives. Use a real
+  // SIGTERM (docker stop) rather than SIGKILL (docker rm -f) so the graceful
+  // shutdown path is exercised and must exit cleanly.
+  log("restarting on the same volume after a graceful SIGTERM");
+  docker(["stop", "-t", "30", firstName]);
+  const exitCode = docker([
+    "inspect",
+    "--format",
+    "{{.State.ExitCode}}",
+    firstName,
+  ]);
+  if (exitCode !== "0") {
+    throw new Error(`container did not exit cleanly on SIGTERM: ${exitCode}`);
+  }
+  docker(["rm", firstName]);
   containers.splice(containers.indexOf(firstName), 1);
   const secondName = `${LABEL}-b`;
   containers.push(secondName);

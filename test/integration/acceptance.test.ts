@@ -531,8 +531,7 @@ describe("final acceptance: scenarios A-D survive rebuild, backup and restore", 
     const { jobId } = buildResponse.json() as { jobId: string };
 
     await entered;
-    const controller = new AbortController();
-    const closing = shutdown(capturedStore as Store, controller.signal);
+    const closing = shutdown(capturedStore as Store);
     releaseGate();
     await closing;
 

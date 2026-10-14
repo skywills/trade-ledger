@@ -10,6 +10,7 @@ import {
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { Link } from "../navigation.js";
 import { DecisionEditor, listDecisions } from "../review/DecisionEditor.js";
+import { collectActualExpiries } from "./expiries.js";
 
 const TABS = ["Summary", "Allocations", "Lots", "History"] as const;
 type Tab = (typeof TABS)[number];
@@ -63,14 +64,10 @@ export function StrategyDetail({ id }: { id: string }) {
 
   // Actual contract expiry dates behind the strategy, so a "Mixed" label in
   // the journal can be understood without leaving the detail view.
-  const actualExpiries = [
-    ...new Set(
-      allocations
-        .map((allocation) => executionByKey.get(allocation.executionKey))
-        .map((execution) => execution?.instrument.expiry)
-        .filter((expiry): expiry is string => expiry !== undefined),
-    ),
-  ].sort();
+  const actualExpiries = collectActualExpiries(
+    allocations.map((allocation) => allocation.executionKey),
+    executionByKey,
+  );
 
   return (
     <section>

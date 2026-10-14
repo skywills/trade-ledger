@@ -11,14 +11,12 @@ try {
     },
   });
 
-  const controller = new AbortController();
   let closing = false;
   const graceful = async (): Promise<void> => {
     if (closing) return;
     closing = true;
-    controller.abort();
     if (context !== undefined) {
-      await shutdown(context.store, controller.signal);
+      await shutdown(context.store);
     }
     await app.close();
   };

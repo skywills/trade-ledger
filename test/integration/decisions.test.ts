@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { computeProjection } from "../../src/server/builds/service.js";
 import { strategyId } from "../../src/server/decisions/registry.js";
 import {
   type DecisionInput,
@@ -698,6 +699,118 @@ describe("retained decisions and stable strategy identities", () => {
       });
       expect(merged.executions).toHaveLength(1);
       expect(merged.executions[0]?.sources).toHaveLength(2);
+    }));
+
+  it("surfaces contradictory identity_binding decisions as a review issue instead of silently dropping them", async () =>
+    withStore(async (store) => {
+      const weakRow: ExecutionFields = {
+        ClientAccountID: "SIM-A",
+        AssetClass: "STK",
+        Symbol: "WEAK",
+        UnderlyingSymbol: "WEAK",
+        Conid: "9900002",
+        CurrencyPrimary: "USD",
+        TradeDate: "2026-09-03",
+        DateTime: "2026-09-03 10:00:00",
+        Quantity: "+1",
+        TradePrice: "10",
+        NetCash: "-10",
+        "Notes/Codes": "O",
+        Multiplier: "1",
+      };
+      await commitBytes(
+        store,
+        "weak-conflict.csv",
+        buildExecutionTable([executionRow(weakRow), executionRow(weakRow)]),
+      );
+      await activateLatestBuild(store);
+      const rows = store.db
+        .prepare(
+          `SELECT import_id AS importId, row_number AS rowNumber
+           FROM import_rows ORDER BY import_id, row_number`,
+        )
+        .all() as Array<{ importId: string; rowNumber: number }>;
+      const first = rows[0];
+      if (first === undefined) throw new Error("expected a weak row");
+
+      await appendDecision(
+        store,
+        identityBindingInput({
+          source: first,
+          canonicalIdentity: "canonical-A",
+          expectedQuantity: "1",
+        }),
+        0,
+      );
+      const second = await appendDecision(
+        store,
+        identityBindingInput({
+          source: first,
+          canonicalIdentity: "canonical-B",
+          expectedQuantity: "1",
+        }),
+        1,
+      );
+
+      const ledger = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: second.sequence,
+      });
+
+      const conflict = ledger.issues.find(
+        (issue) => issue.code === "binding_conflict",
+      );
+      expect(conflict?.severity).toBe("warning");
+      expect(conflict?.sources).toEqual([first]);
+      // The contested source is left on its own identity, never merged into
+      // either target, and the two weak rows stay separate.
+      expect(ledger.executions).toHaveLength(2);
+
+      // The Review surface reads projection issues, so the ledger diagnostic
+      // must also reach the projection rather than being silently persisted.
+      const projection = await computeProjection(
+        store,
+        ledger,
+        second.sequence,
+      );
+      expect(projection.issues.map((issue) => issue.code)).toContain(
+        "binding_conflict",
+      );
+    }));
+
+  it("does not surface a superseded group_split as not applied", async () =>
+    withStore(async (store) => {
+      const split = await appendDecision(
+        store,
+        groupSplitInput({
+          parentStrategyId: "strategy-parent",
+          childStrategyIds: ["strategy-child"],
+          notesOwnerStrategyId: null,
+        }),
+        0,
+      );
+      const resolved = await appendDecision(
+        store,
+        notesInput({
+          strategyId: "strategy-parent",
+          text: "split resolved another way",
+          supersedesId: split.id,
+        }),
+        1,
+      );
+
+      const ledger = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: resolved.sequence,
+      });
+      const projection = await computeProjection(
+        store,
+        ledger,
+        resolved.sequence,
+      );
+      expect(projection.issues.map((issue) => issue.code)).not.toContain(
+        "SPLIT_NOT_APPLIED",
+      );
     }));
 
   it("returns retained notes and stop_loss from the read path across a rebuild", async () =>
