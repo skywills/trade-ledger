@@ -164,28 +164,86 @@ export function resolveIdentities(
     bindingTargets(bindings);
 
   const aliasToTrade = new Map<string, string>();
-  const aliasRegistrations = new Map<string, SourceRef>();
-  const aliasConflicts = new Map<string, SourceRef[]>();
+  const aliasCandidates = new Map<string, Candidate[]>();
+  const conflictedAliases = new Map<string, Candidate[]>();
+  const blockedSources = new Set<string>();
+  const conflictIssues: Issue[] = [];
+  const candidateSourceKey = (candidate: Candidate): string =>
+    `${candidate.source.importId}\u0000${candidate.source.rowNumber}`;
   for (const candidate of ordered) {
-    const tradeId = candidate.execution.brokerIds.TradeID;
     const execId = candidate.execution.brokerIds.IBExecID;
-    if (tradeId === undefined || execId === undefined) continue;
+    if (execId === undefined) continue;
     const aliasKey = `${candidate.execution.account}\u0000${execId}`;
-    const registered = aliasToTrade.get(aliasKey);
-    if (registered === undefined) {
-      aliasToTrade.set(aliasKey, tradeId);
-      aliasRegistrations.set(aliasKey, candidate.source);
-    } else if (registered !== tradeId) {
-      const sources = aliasConflicts.get(aliasKey) ?? [];
-      sources.push(candidate.source);
-      aliasConflicts.set(aliasKey, sources);
+    const candidatesForAlias = aliasCandidates.get(aliasKey) ?? [];
+    candidatesForAlias.push(candidate);
+    aliasCandidates.set(aliasKey, candidatesForAlias);
+  }
+  for (const [aliasKey, aliasRows] of aliasCandidates) {
+    const tradeIds = new Set(
+      aliasRows
+        .map((candidate) => candidate.execution.brokerIds.TradeID)
+        .filter((tradeId): tradeId is string => tradeId !== undefined),
+    );
+    if (tradeIds.size <= 1) {
+      const onlyTradeId = [...tradeIds][0];
+      if (onlyTradeId !== undefined) aliasToTrade.set(aliasKey, onlyTradeId);
+      continue;
     }
+
+    // Explicit OrigTradeID lineage can disambiguate a broker-reused execution
+    // ID. In that case strong-ID corrections remain usable, while an
+    // execution-only occurrence still needs a retained identity decision.
+    const lineage = new Map<string, Set<string>>();
+    for (const candidate of aliasRows) {
+      const tradeId = candidate.execution.brokerIds.TradeID;
+      const originalTradeId = candidate.execution.brokerIds.OrigTradeID;
+      if (tradeId === undefined || originalTradeId === undefined) continue;
+      const from = lineage.get(tradeId) ?? new Set<string>();
+      from.add(originalTradeId);
+      lineage.set(tradeId, from);
+      const to = lineage.get(originalTradeId) ?? new Set<string>();
+      to.add(tradeId);
+      lineage.set(originalTradeId, to);
+    }
+    const reached = new Set<string>();
+    const queue = [[...tradeIds][0]];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      if (current === undefined || reached.has(current)) continue;
+      reached.add(current);
+      for (const related of lineage.get(current) ?? []) queue.push(related);
+    }
+    const explicitlyResolved = [...tradeIds].every((tradeId) =>
+      reached.has(tradeId),
+    );
+    const unresolvedRows = aliasRows.filter(
+      (candidate) =>
+        !(
+          candidate.execution.brokerIds.TradeID === undefined &&
+          boundTargets.has(candidateSourceKey(candidate))
+        ) &&
+        (!explicitlyResolved ||
+          candidate.execution.brokerIds.TradeID === undefined),
+    );
+    if (unresolvedRows.length === 0) continue;
+
+    conflictedAliases.set(aliasKey, aliasRows);
+    for (const candidate of unresolvedRows) {
+      blockedSources.add(candidateSourceKey(candidate));
+    }
+    conflictIssues.push({
+      key: emptyIssueKey("alias_conflict", aliasKey),
+      code: "alias_conflict",
+      sources: unresolvedRows.map((candidate) => candidate.source),
+      severity: "error",
+    });
   }
 
   const groups = new Map<string, Group>();
   const groupOrder: string[] = [];
   for (const candidate of ordered) {
     const { account, brokerIds } = candidate.execution;
+    if (blockedSources.has(candidateSourceKey(candidate))) continue;
     const tradeId = brokerIds.TradeID;
     const execId = brokerIds.IBExecID;
     let key: string;
@@ -193,6 +251,13 @@ export function resolveIdentities(
     if (tradeId !== undefined) {
       key = tradeKey(account, tradeId);
       resolvedTradeId = tradeId;
+    } else if (
+      execId !== undefined &&
+      conflictedAliases.has(`${account}\u0000${execId}`)
+    ) {
+      const bound = boundTargets.get(candidateSourceKey(candidate));
+      if (bound === undefined) continue;
+      key = bindingKey(account, bound);
     } else if (execId !== undefined) {
       const aliasTarget = aliasToTrade.get(`${account}\u0000${execId}`);
       if (aliasTarget !== undefined) {
@@ -238,20 +303,7 @@ export function resolveIdentities(
       severity: "warning",
     });
   }
-  for (const [aliasKey, conflictSources] of aliasConflicts) {
-    const [account = "", execId = ""] = aliasKey.split("\u0000");
-    const registeredBy = aliasRegistrations.get(aliasKey);
-    const sources =
-      registeredBy === undefined
-        ? conflictSources
-        : [registeredBy, ...conflictSources];
-    issues.push({
-      key: emptyIssueKey("alias_conflict", `${account}:${execId}`),
-      code: "alias_conflict",
-      sources,
-      severity: "warning",
-    });
-  }
+  issues.push(...conflictIssues);
 
   const transactions: ResolvedTransaction[] = [];
   for (const key of groupOrder) {

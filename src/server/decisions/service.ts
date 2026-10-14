@@ -290,6 +290,109 @@ function validateAllocationsAgainstExistingDecisions(
   return { ok: true };
 }
 
+interface StrategyDimension {
+  account: string;
+  currency: string;
+}
+
+function strategyDimensions(
+  db: import("better-sqlite3").Database,
+  strategyId: Id,
+): StrategyDimension[] {
+  const buildId = activeLedgerBuildId(db);
+  if (buildId === null) return [];
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT a.broker_account_id AS account, r.currency AS currency
+       FROM strategy_allocations sa
+       JOIN transaction_revisions r
+         ON r.ledger_build_id = sa.ledger_build_id AND r.id = sa.revision_id
+       JOIN accounts a ON a.id = r.account_id
+       WHERE sa.build_id = ? AND sa.strategy_id = ?`,
+    )
+    .all(buildId, strategyId) as StrategyDimension[];
+  return rows;
+}
+
+function sourceDimensions(
+  db: import("better-sqlite3").Database,
+  source: SourceRef,
+): StrategyDimension[] {
+  const rowId = findImportRowId(db, source);
+  const buildId = activeLedgerBuildId(db);
+  if (rowId === null || buildId === null) return [];
+  const ledgerBuildId = resolveLedgerBuildId(db);
+  if (ledgerBuildId === null) return [];
+  return db
+    .prepare(
+      `SELECT DISTINCT a.broker_account_id AS account, r.currency AS currency
+       FROM transaction_sources ts
+       JOIN transaction_revisions r
+         ON r.ledger_build_id = ts.ledger_build_id AND r.id = ts.revision_id
+       JOIN accounts a ON a.id = r.account_id
+       WHERE ts.ledger_build_id = ? AND ts.import_row_id = ?`,
+    )
+    .all(ledgerBuildId, rowId) as StrategyDimension[];
+}
+
+function executionDimensions(
+  db: import("better-sqlite3").Database,
+  executionKey: string,
+): StrategyDimension[] {
+  const ledgerBuildId = resolveLedgerBuildId(db);
+  if (ledgerBuildId === null) return [];
+  return db
+    .prepare(
+      `SELECT DISTINCT a.broker_account_id AS account, r.currency AS currency
+       FROM transaction_revisions r
+       JOIN accounts a ON a.id = r.account_id
+       WHERE r.ledger_build_id = ? AND r.logical_transaction_key = ?`,
+    )
+    .all(ledgerBuildId, executionKey) as StrategyDimension[];
+}
+
+function assertCompatibleStrategyMembership(
+  db: import("better-sqlite3").Database,
+  source: SourceRef,
+  strategyId: Id,
+): void {
+  const sourceRows = sourceDimensions(db, source);
+  const strategyRows = strategyDimensions(db, strategyId);
+  if (sourceRows.length === 0 || strategyRows.length === 0) return;
+  const dimensions = new Set(
+    [...sourceRows, ...strategyRows].map(
+      ({ account, currency }) => `${account}\u0000${currency}`,
+    ),
+  );
+  if (dimensions.size > 1) {
+    throw new AppError(
+      "INCOMPATIBLE_STRATEGY_MEMBERSHIP",
+      `Strategy ${strategyId} cannot include evidence from a different account or currency.`,
+      409,
+    );
+  }
+}
+
+function assertCompatibleStrategyMerge(
+  db: import("better-sqlite3").Database,
+  chosenStrategyId: Id,
+  mergedStrategyIds: readonly Id[],
+): void {
+  const dimensions = new Set<string>();
+  for (const strategyId of [chosenStrategyId, ...mergedStrategyIds]) {
+    for (const { account, currency } of strategyDimensions(db, strategyId)) {
+      dimensions.add(`${account}\u0000${currency}`);
+    }
+  }
+  if (dimensions.size > 1) {
+    throw new AppError(
+      "INCOMPATIBLE_STRATEGY_MERGE",
+      "Strategies from different accounts or currencies cannot be merged.",
+      409,
+    );
+  }
+}
+
 function assertValidSource(
   db: import("better-sqlite3").Database,
   source: SourceRef,
@@ -349,6 +452,27 @@ function validateDecisionInput(
     case "manual_allocation":
       assertValidSource(store.db, input.payload.source);
       {
+        const dimensionRows = [
+          ...sourceDimensions(store.db, input.payload.source),
+          ...strategyDimensions(store.db, input.payload.strategyId),
+          ...input.payload.allocations.flatMap((allocation) =>
+            executionDimensions(store.db, allocation.executionKey),
+          ),
+        ];
+        const dimensions = new Set(
+          dimensionRows.map(
+            ({ account, currency }) => `${account}\u0000${currency}`,
+          ),
+        );
+        if (dimensions.size > 1) {
+          throw new AppError(
+            "INCOMPATIBLE_STRATEGY_MEMBERSHIP",
+            `Strategy ${input.payload.strategyId} cannot include evidence from a different account or currency.`,
+            409,
+          );
+        }
+      }
+      {
         const allocationCheck = validateAllocationsAgainstExistingDecisions(
           store.db,
           input.payload.source,
@@ -366,6 +490,18 @@ function validateDecisionInput(
       break;
     case "group_explicit":
       assertValidSource(store.db, input.payload.source);
+      assertCompatibleStrategyMembership(
+        store.db,
+        input.payload.source,
+        input.payload.strategyId,
+      );
+      break;
+    case "group_merge":
+      assertCompatibleStrategyMerge(
+        store.db,
+        input.payload.chosenStrategyId,
+        input.payload.mergedStrategyIds,
+      );
       break;
     case "lifecycle":
       assertValidSource(store.db, input.payload.sourceRef);

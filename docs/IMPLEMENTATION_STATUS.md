@@ -1,80 +1,74 @@
 # Implementation status — IBKR trade journal
 
-**State:** Paused at the user's request after Task 2. Tasks 1 and 2 passed independent review; Tasks 3–15 have not started.
+Updated: 2026-10-15
 
-**Repository:** `.` (the user-requested `projecs` spelling).
-**Branch:** `feat/ibkr-trade-journal`.
-**Last implementation commit:** `f819853`.
-**Execution method:** Subagent-driven, using `gpt-6-luna` with high effort for all dispatched implementers and reviewers.
-**Remote/deployment:** None configured or performed.
+**State:** All 15 planned areas have implementation artifacts in the repository. All 17 review findings were independently verified. The six P1 issues are fixed with regression tests and approved independent reviews; eleven P2 issues remain open. Implementation presence must not be treated as completed acceptance or release readiness.
+
+**Repository:** `.`.
+**Branch at original review:** `main`.
+**Current fix branch:** `fix/review-p1-2026-10-14`.
+**Reviewed HEAD:** `812427c` — `docs: add setup and test-plan guides`.
+**Latest implementation change at review:** `2af5d66` — `fix(journal): surface retained-decision review diagnostics and harden packaging`.
+**Deployment:** Not verified by this review.
 
 ## Authoritative documents
 
 - [Design specification](superpowers/specs/2026-10-13-ibkr-trade-journal-design.md)
 - [Implementation plan](superpowers/plans/2026-10-13-ibkr-trade-journal.md)
+- [Whole-repository review, 2026-10-14](reviews/2026-10-14-whole-repo-code-review.md)
+- [Setup guide](SETUP.md)
+- [Test plan and acceptance mapping](TEST-PLAN.md)
 
-The plan's Task 1–2 steps are checked off. Read both documents when resuming; this checkpoint does not authorize skipping subsequent task reviews.
+The implementation plan still has unchecked steps for Tasks 3–15 even though their code is present. Those checkboxes are not a reliable current inventory. This update does not retroactively certify task reviews, historical test runs, or acceptance checks.
 
-## Completed
+## Implemented areas
 
-### Task 1 — standalone application bootstrap
-
-- Node/TypeScript ESM app, React/Vite entrypoint, Fastify health endpoint, validated runtime configuration.
-- Root `package.json` and npm lockfile; `@nathapp/nax-ai` and `@nathapp/nax-agent` pinned to `0.87.1` and public imports verified.
-- Shared domain types and synthetic Flex fixtures for spreads, assignment/exercise, reduced-field exports, partial fills and mixed-role rolls.
-- Fixtures corrected during review to use actual IBKR headers, explicit currency/dates, distinct contract IDs, supporting closed lots and parser-required cash values.
-- Commits: `f49145d`, `cacdee9`, `20c2368`, `ba9fde1`.
-
-### Task 2 — SQLite storage and migrations
-
-- Initial schema for retained evidence, decisions, identity bindings, model profiles, jobs and versioned projections.
-- SQLite WAL, foreign keys, 5000 ms busy timeout, generation-consistent allocation references and retained evidence independent of projection deletion.
-- Transactional/idempotent migrations, newer-schema rejection, persisted-running-job interruption on reopen, serialized synchronous writer queue.
-- Async writer callbacks rejected before invocation; PromiseLike returns excluded at the type level; regression verifies no post-await write escapes. Arbitrary callbacks can still schedule independent work; callers must use this trusted synchronous API correctly.
-- Compiled SQL migration assets and corrected `npm start` target (`dist/src/server/main.js`).
-- Commits: `58212c6`, `13372d2` (local report untracking), `f819853`.
-- Initial review's writer-callback finding fixed; scoped re-review reports no open Critical/Important findings. Controller resolved SQL-access check: current application SQL calls are confined to storage modules.
-
-## Fresh verification at the stopping point
-
-Run from repository root, on the implementation at `f819853`:
-
-| Command | Result |
+| Plan tasks | Current implementation |
 | --- | --- |
-| `npm test` | PASS — 2 files, 18 tests |
-| `npm run check:all` | PASS — Biome and TypeScript |
-| `npm run test:build-smoke` | PASS — production build, compiled fresh-database migration, exact npm start, health response and SIGTERM listener shutdown |
+| 1–2: bootstrap and storage | Node/TypeScript ESM backend, React/Vite frontend, validated config, health endpoints, versioned SQLite migrations, WAL, foreign keys and serialized writes. |
+| 3–5: imports and ledger | Flex CSV parsing/classification, normalization, staged original files, preview/commit services, provenance, identity resolution, duplicate handling and transaction revisions. |
+| 6–8: decisions and strategies | Append-only decisions, identity registry, grouping, allocations, lifecycle links, exposure, decimal accounting and projection validation. Split decisions are retained but are not applied; see R15. |
+| 9–10: builds and HTTP | Candidate generations, activation, rollback, recovery, jobs and validated routes for imports, ledger, journal, review and maintenance. |
+| 11: browser workflow | Journal, strategy detail, imports, transactions, review/decision editor and maintenance pages. Review identified pagination, evidence navigation and import confirmation gaps. |
+| 12–13: optional AI | Revisioned model profiles, credential references, guarded transport, compatibility checks, bounded tools, proposals, analysis runs and review UI. Review identified context budgeting, restart recovery and protocol authentication gaps. |
+| 14: maintenance | Data-directory lock, backup archives, offline restore CLI and shutdown handling. Actual database validation before restore replacement remains incomplete. |
+| 15: packaging and acceptance | Dockerfile, compose example, environment template, CI workflow, synthetic acceptance tests, browser tests and smoke scripts. Browser checks pass; Docker execution was not verified in this review. |
 
-Runtime used during implementation: Node 22.21.0. The Node 22.19.0 minimum-runtime/Docker checks are scheduled in Task 15, not yet verified.
+Presence of these components does not imply all required behavior works. The linked review describes reproducible deviations from the approved design.
 
-## Not implemented yet
+## Verification — review 2026-10-14, final checks 2026-10-15
 
-This is a tested scaffold and storage foundation, not a usable trading journal. CSV import/normalization, transaction deduplication and corrections, saved review decisions, strategy grouping/accounting, rebuild activation, journal/review screens, local-model profile UI and AI analysis, backup/restore, Docker distribution and CI remain Tasks 3–15.
+The original review at HEAD `812427c` passed 242 tests. Final results below apply to the combined P1 fixes on the current fix branch:
 
-Docker support is a committed design requirement; no Dockerfile has been implemented or Docker smoke test run yet. The server currently provides bootstrap behavior; Task 10 wires storage and domain services into the full application API.
+| Check | Result |
+| --- | --- |
+| `npm test` | PASS — 19 test files, 280 tests. |
+| `npm run check:all` | PASS — Biome and TypeScript; Biome reported nonblocking warning/informational diagnostics. |
+| Focused synthetic probes | Confirmed review defects in financial grouping, ledger revisions/identity, quarantine/preview behavior, restore, AI context limits and gateway authentication. |
+| `npm run build` | PASS — backend/migrations and frontend. |
+| `node scripts/smoke-built-server.mjs` | PASS — migrations, health and graceful shutdown. |
+| `npm run test:e2e` | PASS — all 19 Chromium tests; nonblocking color-environment warnings. |
+| `npm run test:docker` | Not run during this review. |
+| Live broker/model/deployment checks | Not performed. |
 
-## Resume point
+The original suite missed the reported failing cases. New regressions cover the fixed P1 cases; remaining P2 findings still represent acceptance gaps. Verification probes used temporary data. The authorized P1 fixes changed application code and added 38 tests; retained user data was not changed. All implementers used gpt-6-luna at high effort. Independent review corrections are included in the final passing results. The fresh pre-commit review on 2026-10-15 found and corrected future-replenishment and mixed-reservation edge cases, then approved the code.
 
-**Next task:** Task 3 — Flex CSV parsing, row classification and capability reporting. Do not repeat Tasks 1–2.
+## P1 resolution and remaining work
 
-1. Confirm the same repo and feature branch; inspect Git history and any new user changes.
-2. Reopen the design/plan and this checkpoint.
-3. Use the task-scoped brief and retained shared interfaces; implement Task 3 with a fresh implementer followed by independent review.
-4. Preserve the user's model preference unless changed: `gpt-6-luna`, high effort.
+R01–R06 are resolved: dependency-safe corrections, fresh retained-ledger reuse, chronological matching with safe reservations, account/currency boundaries, quarantine propagation and fail-closed execution aliases. See the [review report](reviews/2026-10-14-whole-repo-code-review.md) for evidence, new regression files and limitations. The [P1 fix plan](superpowers/plans/2026-10-14-review-p1-fixes.md) records execution scope.
 
-Local execution artifacts remain at `.superpowers/sdd/2026-10-13-ibkr-trade-journal/`: progress ledger, task briefs, implementation reports, review packages and dispatch-state JSON. They are intentionally ignored scratch; this committed file and Git history are the durable checkpoint. They have not been deleted because the plan is paused rather than complete.
+1. Perform a **full rebuild** after updating an existing installation. Parser/algorithm version strings remain unchanged; projection-only rebuilds can preserve pre-fix normalization with unchanged inputs. No existing journal data was automatically rebuilt.
+2. Resolve P2 findings R07–R17: restore validation, AI budgets/recovery/authentication, financial previews, explicit import confirmation, evidence browsing, pagination, applied splits and minimum-input classification.
+3. Retain and extend regression coverage, then rerun test/quality/build/browser gates for further changes.
+4. Run Docker smoke and deployment checks before claiming release readiness; neither was verified in this pass.
+5. Reconcile implementation-plan checkboxes with actual task/review evidence rather than file presence.
 
-## Known dependency/tooling concerns
+Chronology retains uncertain matches for review. Ordering now has linear auxiliary storage, but comparisons remain quadratic; large-journal throughput is not certified by the synthetic scale probes. Conflicted evidence and incompatible retained decisions may need user review before a replacement full build can activate.
 
-- npm 10.9.4 Arborist failed installing Vitest optional peers; pinned `npx npm@11.6.2` successfully installed the exact dependencies. No global npm configuration was changed.
-- Task 1 reported three npm audit high findings in the required nax-agent dependency chain through sandbox-runtime/node-forge, with no npm fix offered. Required library pins were preserved. This is recorded for future whole-branch review; no claim has been made that the path is harmless.
-- An unused nax setup worktree/branch remains at `<local setup worktree>`. No app implementation lives there; all app code is in this standalone repository.
+The P1 changes are recorded on the dedicated fix branch. The eleven P2 findings remain open; no P2 feature work was performed beyond correcting regressions introduced by the P1 fixes.
 
-## Controller rulings recorded during execution
+## Historical checkpoint
 
-- Ruling: use the user-requested standalone repository as the isolated workspace on a feature branch; do not create a nested worktree or modify nax — user changed project placement — cost if wrong: relocation only.
-- Ruling: follow user-selected gpt-6-luna high for implementers and reviewers, overriding skill model-tier recommendations — explicit user instruction — cost if wrong: more fix rounds.
-- Ruling: initial root manifest and library install already exist; Task 1 extends them instead of recreating them — preserve initialized repo baseline — cost if wrong: small scaffold rework.
-- Ruling: use pinned npm 11.6.2 for dependency installation after npm 10.9.4 Arborist failed loading Vitest optional peers — confirmed installer bug and compatible runtime — cost if wrong: lockfile/tooling regeneration.
-- Ruling: add fixtures.roll separately from the two-fill fixture — scenario C has two distinct cases, and downstream Task 5 requires exactly two isolated fills — cost if wrong: fixture/test adjustment.
-- Ruling: Task 2 corrects npm start to the actual emitted dist/src/server/main.js and verifies compiled startup along with migration assets — production entrypoint behavior overrides the plan-assumed dist/server path — cost if wrong: output-path adjustment.
+The previous version of this document recorded a pause after Task 2 at `f819853` on `feat/ibkr-trade-journal`, with 18 passing tests and successful bootstrap build smoke. That was an earlier checkpoint, superseded by the current repository state.
+
+The earlier checkpoint also recorded an npm installation workaround and dependency audit findings. Their current applicability was not reassessed in this review; they should not be interpreted as a current dependency audit. Execution-model preferences, remote state and scratch worktree state from that checkpoint were not reverified.

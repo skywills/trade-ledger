@@ -7,6 +7,7 @@ import type {
   Issue,
   LedgerSnapshot,
   Projection,
+  SourceRef,
   Strategy,
 } from "../../shared/domain.js";
 import { minorUnit, reconcilesWithin } from "../../shared/money.js";
@@ -215,8 +216,52 @@ export function accountProjection(
 
   const issues: Issue[] = [...projection.issues];
   const seeIssue = new Set(projection.issues.map((issue) => issue.key));
+  const dimensionsByStrategy = new Map<Id, Set<string>>();
+  const sourcesByStrategy = new Map<Id, SourceRef[]>();
+  for (const allocation of allocations) {
+    const execution = executionByKey.get(allocation.executionKey);
+    if (execution === undefined) continue;
+    const dimensions =
+      dimensionsByStrategy.get(allocation.strategyId) ?? new Set<string>();
+    dimensions.add(`${execution.account}\u0000${execution.currency}`);
+    dimensionsByStrategy.set(allocation.strategyId, dimensions);
+    const sources = sourcesByStrategy.get(allocation.strategyId) ?? [];
+    sources.push(...execution.sources);
+    sourcesByStrategy.set(allocation.strategyId, sources);
+  }
+  const incompatibleStrategies = new Set(
+    [...dimensionsByStrategy]
+      .filter(([, dimensions]) => dimensions.size > 1)
+      .map(([strategyId]) => strategyId),
+  );
 
   const strategies = projection.strategies.map((strategy) => {
+    if (incompatibleStrategies.has(strategy.id)) {
+      const issue = makeIssue(
+        "INCOMPATIBLE_STRATEGY_MEMBERSHIP",
+        sourcesByStrategy.get(strategy.id) ?? [],
+        "error",
+        strategy.id,
+      );
+      if (!seeIssue.has(issue.key)) {
+        seeIssue.add(issue.key);
+        issues.push(issue);
+      }
+      return {
+        ...strategy,
+        status: "unresolved" as const,
+        complete: false,
+        closeDate: null,
+        openingAmount: null,
+        cashflow: null,
+        brokerPnl: null,
+        reconstructedPnl: null,
+        positions: [],
+        reasons: [
+          ...new Set([...strategy.reasons, "INCOMPATIBLE_STRATEGY_MEMBERSHIP"]),
+        ].sort(),
+      };
+    }
     const strategyAllocations = allocations.filter(
       (allocation) => allocation.strategyId === strategy.id,
     );
@@ -272,7 +317,42 @@ export function validateProjection(
   const add = (issue: Issue): void => {
     if (!issues.has(issue.key)) issues.set(issue.key, issue);
   };
+  for (const issue of projection.issues) {
+    if (
+      issue.severity === "error" &&
+      (issue.code === "INCOMPATIBLE_STRATEGY_MERGE" ||
+        issue.code === "INCOMPATIBLE_STRATEGY_MEMBERSHIP")
+    ) {
+      add(issue);
+    }
+  }
   const byExecution = indexByExecution(projection.allocations);
+  const dimensionsByStrategy = new Map<Id, Set<string>>();
+  const sourcesByStrategy = new Map<Id, SourceRef[]>();
+  for (const allocation of projection.allocations) {
+    const execution = ledger.executions.find(
+      (candidate) => candidate.key === allocation.executionKey,
+    );
+    if (execution === undefined) continue;
+    const dimensions =
+      dimensionsByStrategy.get(allocation.strategyId) ?? new Set<string>();
+    dimensions.add(`${execution.account}\u0000${execution.currency}`);
+    dimensionsByStrategy.set(allocation.strategyId, dimensions);
+    const sources = sourcesByStrategy.get(allocation.strategyId) ?? [];
+    sources.push(...execution.sources);
+    sourcesByStrategy.set(allocation.strategyId, sources);
+  }
+  for (const [strategyId, dimensions] of dimensionsByStrategy) {
+    if (dimensions.size <= 1) continue;
+    add(
+      makeIssue(
+        "INCOMPATIBLE_STRATEGY_MEMBERSHIP",
+        sourcesByStrategy.get(strategyId) ?? [],
+        "error",
+        strategyId,
+      ),
+    );
+  }
 
   for (const execution of ledger.executions) {
     const entries = byExecution.get(execution.key) ?? [];

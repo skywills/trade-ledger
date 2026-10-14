@@ -1,4 +1,4 @@
-import type { Id, Issue } from "../../shared/domain.js";
+import type { Id, Issue, SourceRef } from "../../shared/domain.js";
 import { compareSources, type ResolvedTransaction } from "./identity.js";
 
 export type RevisionState = "active" | "superseded" | "cancelled";
@@ -74,7 +74,7 @@ export function applyRevisions(
     }
   }
 
-  const referencing = ordered
+  let pending = ordered
     .filter(
       (transaction) =>
         !transaction.conflicted && transaction.referencesTradeId !== null,
@@ -83,63 +83,109 @@ export function applyRevisions(
       compareSources(firstSource(left), firstSource(right)),
     );
 
-  const registerStandalone = (transaction: ResolvedTransaction): void => {
+  const registerUnresolved = (transaction: ResolvedTransaction): void => {
     issues.push({
       key: `ledger:unresolved_revision_reference:${transaction.key}`,
       code: "unresolved_revision_reference",
       sources: transaction.merged.sources,
-      severity: "warning",
+      severity: "error",
     });
-    chains.set(transaction.key, [
-      {
-        logicalKey: transaction.key,
-        revisionNumber: 1,
-        state: "active",
-        payload: transaction.merged,
-        importRowIds: transaction.importRowIds,
-      },
-    ]);
-    if (transaction.tradeId !== null) {
-      tradeIndex.set(
-        `${transaction.account}\u0000${transaction.tradeId}`,
-        transaction.key,
-      );
-    }
   };
 
-  for (const transaction of referencing) {
-    const reference = transaction.referencesTradeId;
-    if (reference === null) continue;
-    const targetKey = tradeIndex.get(
-      `${transaction.account}\u0000${reference}`,
-    );
-    if (targetKey === undefined || targetKey === transaction.key) {
-      registerStandalone(transaction);
-      continue;
+  // Resolve only rows whose predecessor is already in a known chain. Repeating
+  // this pass handles arbitrary source ordering and multiple correction hops;
+  // rows left when no progress is possible are missing references or cycles.
+  while (pending.length > 0) {
+    let progressed = false;
+    const unresolved: ResolvedTransaction[] = [];
+    const readyByTarget = new Map<string, ResolvedTransaction[]>();
+    const readyTransactions = new Set<string>();
+    for (const transaction of pending) {
+      const reference = transaction.referencesTradeId;
+      if (reference === null) continue;
+      const targetKey = tradeIndex.get(
+        `${transaction.account}\u0000${reference}`,
+      );
+      if (targetKey === undefined || targetKey === transaction.key) continue;
+      readyTransactions.add(transaction.key);
+      const candidates = readyByTarget.get(targetKey) ?? [];
+      candidates.push(transaction);
+      readyByTarget.set(targetKey, candidates);
     }
-    const targetChain = chains.get(targetKey);
-    if (targetChain === undefined) {
-      registerStandalone(transaction);
-      continue;
+    const ambiguousTransactions = new Set<string>();
+    for (const [targetKey, candidates] of readyByTarget) {
+      if (candidates.length < 2) continue;
+      const chain = chains.get(targetKey) ?? [];
+      const sourceMap = new Map<string, SourceRef>();
+      for (const source of [
+        ...chain.flatMap((revision) => revision.payload.sources),
+        ...candidates.flatMap((candidate) => candidate.merged.sources),
+      ]) {
+        sourceMap.set(`${source.importId}\u0000${source.rowNumber}`, source);
+      }
+      const sources = [...sourceMap.values()].sort(compareSources);
+      issues.push({
+        key: `ledger:ambiguous_revision_reference:${targetKey}`,
+        code: "ambiguous_revision_reference",
+        sources,
+        severity: "error",
+      });
+      chains.delete(targetKey);
+      for (const [tradeKey, chainKey] of tradeIndex) {
+        if (chainKey === targetKey) tradeIndex.delete(tradeKey);
+      }
+      for (const candidate of candidates) {
+        ambiguousTransactions.add(candidate.key);
+      }
+      progressed = true;
     }
 
-    const previous = targetChain[targetChain.length - 1];
-    if (previous === undefined) continue;
-    const cancellation = isCancellationEvidence(transaction);
-    previous.state = cancellation ? "cancelled" : "superseded";
-    targetChain.push({
-      logicalKey: targetKey,
-      revisionNumber: previous.revisionNumber + 1,
-      state: cancellation ? "cancelled" : "active",
-      payload: transaction.merged,
-      importRowIds: transaction.importRowIds,
-    });
-    if (transaction.tradeId !== null) {
-      tradeIndex.set(
-        `${transaction.account}\u0000${transaction.tradeId}`,
-        targetKey,
+    for (const transaction of pending) {
+      if (ambiguousTransactions.has(transaction.key)) continue;
+      if (!readyTransactions.has(transaction.key)) {
+        unresolved.push(transaction);
+        continue;
+      }
+      const reference = transaction.referencesTradeId;
+      if (reference === null) continue;
+      const targetKey = tradeIndex.get(
+        `${transaction.account}\u0000${reference}`,
       );
+      const targetChain =
+        targetKey === undefined ? undefined : chains.get(targetKey);
+      const previous = targetChain?.[targetChain.length - 1];
+      if (
+        targetKey === undefined ||
+        targetKey === transaction.key ||
+        targetChain === undefined ||
+        previous === undefined
+      ) {
+        unresolved.push(transaction);
+        continue;
+      }
+
+      const cancellation = isCancellationEvidence(transaction);
+      previous.state = cancellation ? "cancelled" : "superseded";
+      targetChain.push({
+        logicalKey: targetKey,
+        revisionNumber: previous.revisionNumber + 1,
+        state: cancellation ? "cancelled" : "active",
+        payload: transaction.merged,
+        importRowIds: transaction.importRowIds,
+      });
+      if (transaction.tradeId !== null) {
+        tradeIndex.set(
+          `${transaction.account}\u0000${transaction.tradeId}`,
+          targetKey,
+        );
+      }
+      progressed = true;
     }
+    if (!progressed) {
+      for (const transaction of unresolved) registerUnresolved(transaction);
+      break;
+    }
+    pending = unresolved;
   }
 
   const revisions: RevisionDraft[] = [];

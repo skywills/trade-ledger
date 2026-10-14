@@ -40,6 +40,7 @@ import {
 import {
   activeLedgerBuild,
   inputsChanged,
+  retainedNormalizationInputsChanged,
   snapshotInputs,
 } from "./snapshot.js";
 
@@ -171,6 +172,7 @@ function withLedgerIssues(
 function readRetainedLedger(
   store: Store,
   parserVersion: string,
+  currentWatermark: number,
 ): LedgerSnapshot {
   const retained = activeLedgerBuild(store.db);
   if (retained === null) {
@@ -185,6 +187,20 @@ function readRetainedLedger(
       "VERSION_UNAVAILABLE",
       `The retained ledger generation uses parser version ${retained.parserVersion}, not ${parserVersion}.`,
       400,
+    );
+  }
+  if (
+    retainedNormalizationInputsChanged(
+      store,
+      retained.id,
+      currentWatermark,
+      parserVersion,
+    )
+  ) {
+    throw new AppError(
+      "BUILD_INPUTS_CHANGED",
+      "The retained ledger no longer matches current imports or identity/inclusion decisions. Run a full rebuild before a projection rebuild.",
+      409,
     );
   }
   return readLedger(store, retained.id);
@@ -227,7 +243,7 @@ export async function rebuild(
           parserVersion: input.parserVersion,
           decisionWatermark: snapshot.watermark,
         })
-      : readRetainedLedger(store, input.parserVersion);
+      : readRetainedLedger(store, input.parserVersion, snapshot.watermark);
 
   const buildId = await insertCandidate(store, {
     ledgerId: ledger.id,

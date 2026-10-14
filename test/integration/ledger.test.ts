@@ -330,9 +330,9 @@ describe("ledger normalization", () => {
       expect(ledger.issues).toHaveLength(0);
     }));
 
-  it("keeps a correction with an unresolvable reference as its own transaction with a warning", async () =>
+  it("holds a correction with an unresolvable reference out of active transactions", async () =>
     withStore(async (store) => {
-      await commitBytes(
+      const importId = await commitBytes(
         store,
         "dangling.csv",
         buildExecutionTable([
@@ -352,13 +352,12 @@ describe("ledger normalization", () => {
         decisionWatermark: 0,
       });
 
-      expect(ledger.executions).toHaveLength(1);
-      expect(ledger.executions[0]?.quantity).toBe("3");
-      const warning = ledger.issues.find(
+      expect(ledger.executions).toHaveLength(0);
+      const issue = ledger.issues.find(
         (issue) => issue.code === "unresolved_revision_reference",
       );
-      expect(warning?.severity).toBe("warning");
-      expect(warning?.sources).toHaveLength(1);
+      expect(issue?.severity).toBe("error");
+      expect(issue?.sources).toEqual([{ importId, rowNumber: 2 }]);
     }));
 
   it("keeps executions active when a later reporting window omits them", async () =>

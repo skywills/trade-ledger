@@ -1,5 +1,10 @@
 import type { Id } from "../../shared/domain.js";
-import { decisionWatermark } from "../decisions/service.js";
+import {
+  type Decision,
+  decisionWatermark,
+  effectiveDecisions,
+  readDecisions,
+} from "../decisions/service.js";
 import { LEDGER_PARSER_VERSION } from "../ledger/normalize.js";
 import type { Store } from "../storage/database.js";
 import { type LedgerImportRef, manifestHash } from "../storage/ledger.js";
@@ -64,6 +69,127 @@ export function inputsChanged(
 export interface RetainedLedger {
   id: Id;
   parserVersion: string;
+}
+
+interface RetainedLedgerManifestRow {
+  input_manifest_hash: string;
+  decision_watermark: number | null;
+}
+
+/**
+ * Returns whether the active retained ledger still reflects the source inputs
+ * that normalization consumes. Projection-only decisions (notes, groups,
+ * allocations, and similar decisions) are deliberately excluded.
+ *
+ * Ledger manifests store their source imports but not identity bindings. The
+ * earliest build referencing a ledger is its originating full build; verify
+ * that watermark against the manifest, then compare effective normalization
+ * decisions directly.
+ */
+export function retainedNormalizationInputsChanged(
+  store: Store,
+  ledgerId: Id,
+  currentWatermark: number,
+  parserVersion: string,
+): boolean {
+  const retained = store.db
+    .prepare(
+      `SELECT l.input_manifest_hash,
+              MIN(b.decision_watermark) AS decision_watermark
+       FROM ledger_builds l
+       LEFT JOIN builds b ON b.ledger_build_id = l.id
+       WHERE l.id = ?
+       GROUP BY l.id`,
+    )
+    .get(ledgerId) as RetainedLedgerManifestRow | undefined;
+  if (retained === undefined || retained.decision_watermark === null)
+    return true;
+
+  const decisions = readDecisions(store, currentWatermark);
+  const imports = readCommittedImportRefs(store.db);
+  const retainedWatermark = retained.decision_watermark;
+  const historical = readDecisions(store, retainedWatermark);
+  if (
+    manifestHash(
+      parserVersion,
+      retainedWatermark,
+      includedImports(imports, historical),
+    ) !== retained.input_manifest_hash
+  ) {
+    return true;
+  }
+  return (
+    JSON.stringify(normalizationDecisionInputs(imports, historical)) !==
+    JSON.stringify(normalizationDecisionInputs(imports, decisions))
+  );
+}
+
+function includedImports(
+  imports: readonly LedgerImportRef[],
+  decisions: readonly Decision[],
+): LedgerImportRef[] {
+  const excluded = excludedImportIds(decisions);
+  return imports.filter((entry) => !excluded.has(entry.id));
+}
+
+function normalizationDecisionInputs(
+  imports: readonly LedgerImportRef[],
+  decisions: readonly Decision[],
+): unknown {
+  const effective = effectiveDecisions(decisions);
+  const excluded = excludedImportIds(effective);
+  const bindings: Array<{
+    id: string;
+    source: { importId: string; rowNumber: number };
+    canonicalIdentity: string;
+    expectedQuantity: string;
+  }> = [];
+  for (const decision of effective) {
+    if (decision.kind !== "identity_binding") continue;
+    try {
+      const payload = decision.payload as {
+        source?: { importId: string; rowNumber: number };
+        canonicalIdentity?: string;
+        expectedQuantity?: string;
+      };
+      if (
+        payload.source !== undefined &&
+        typeof payload.canonicalIdentity === "string" &&
+        payload.canonicalIdentity !== ""
+      ) {
+        bindings.push({
+          id: decision.id,
+          source: payload.source,
+          canonicalIdentity: payload.canonicalIdentity,
+          expectedQuantity: payload.expectedQuantity ?? "",
+        });
+      }
+    } catch {
+      // Malformed retained decisions are ignored by normalization as well.
+    }
+  }
+  return {
+    imports: imports
+      .filter((entry) => !excluded.has(entry.id))
+      .map((entry) => ({ id: entry.id, sha256: entry.sha256 })),
+    bindings,
+  };
+}
+
+function excludedImportIds(decisions: readonly Decision[]): Set<Id> {
+  const excluded = new Set<Id>();
+  for (const decision of effectiveDecisions(decisions)) {
+    const isExclusion =
+      decision.kind === "import_exclusion" || decision.kind === "exclusion";
+    const isInclusion =
+      decision.kind === "import_inclusion" || decision.kind === "reinclusion";
+    if (!isExclusion && !isInclusion) continue;
+    const payload = decision.payload as { importId?: string };
+    if (payload.importId === undefined) continue;
+    if (isExclusion) excluded.add(payload.importId);
+    else excluded.delete(payload.importId);
+  }
+  return excluded;
 }
 
 /** The ledger generation referenced by the currently active build, if any. */

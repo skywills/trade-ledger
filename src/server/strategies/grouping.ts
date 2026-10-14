@@ -84,17 +84,155 @@ function sortedByKey(executions: readonly Execution[]): Execution[] {
   );
 }
 
-function remainingFor(
-  draft: StrategyDraft,
-  instrument: Execution["instrument"],
-): string {
-  let total = new Decimal(0);
-  for (const leg of draft.legs) {
-    if (sameInstrument(leg.instrument, instrument)) {
-      total = total.plus(leg.quantity);
+/** Compares executions only when their available provenance makes order safe. */
+function compareExecutionTime(
+  left: Execution,
+  right: Execution,
+): number | null {
+  const sharesImport = left.sources.some((leftSource) =>
+    right.sources.some(
+      (rightSource) => rightSource.importId === leftSource.importId,
+    ),
+  );
+  const sameKnownTimezone =
+    left.timezone !== null &&
+    right.timezone !== null &&
+    left.timezone === right.timezone;
+  const sameUnzonedReport =
+    left.timezone === null && right.timezone === null && sharesImport;
+  if (
+    !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?/.test(left.rawDateTime) ||
+    !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?/.test(right.rawDateTime)
+  ) {
+    return null;
+  }
+  if (!sameKnownTimezone && !sameUnzonedReport) {
+    const leftDay = Date.parse(`${left.date}T00:00:00Z`);
+    const rightDay = Date.parse(`${right.date}T00:00:00Z`);
+    const dayGap = Math.abs(rightDay - leftDay) / 86_400_000;
+    // Legal timezone offsets span at most 26 hours. A three-day calendar gap
+    // keeps relative order certain without assigning either row a time zone.
+    if (dayGap > 2) return left.date < right.date ? -1 : 1;
+    return null;
+  }
+  if (
+    (!left.rawDateTime.includes("T") || !right.rawDateTime.includes("T")) &&
+    left.date === right.date
+  ) {
+    return null;
+  }
+  return left.rawDateTime < right.rawDateTime
+    ? -1
+    : left.rawDateTime > right.rawDateTime
+      ? 1
+      : 0;
+}
+
+/**
+ * Orders known chronological constraints without treating uncertain pairs as
+ * pairwise key comparisons. A stable topological ordering is transitive even
+ * when some executions cannot be compared safely.
+ */
+function orderByKnownChronology(executions: readonly Execution[]): Execution[] {
+  const indegree = new Map<string, number>();
+  for (const execution of executions) {
+    indegree.set(execution.key, 0);
+  }
+
+  const precedes = (left: Execution, right: Execution): boolean => {
+    const chronology = compareExecutionTime(left, right);
+    if (chronology === null) return false;
+    return chronology === 0 ? left.key < right.key : chronology < 0;
+  };
+
+  // Count incoming constraints without retaining the pairwise graph. The
+  // quadratic comparison cost is bounded by the close count, while auxiliary
+  // memory stays linear instead of growing with the number of comparable pairs.
+  for (let leftIndex = 0; leftIndex < executions.length; leftIndex += 1) {
+    const left = executions[leftIndex];
+    if (left === undefined) continue;
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < executions.length;
+      rightIndex += 1
+    ) {
+      const right = executions[rightIndex];
+      if (right === undefined) continue;
+      if (precedes(left, right)) {
+        indegree.set(right.key, (indegree.get(right.key) ?? 0) + 1);
+      } else if (precedes(right, left)) {
+        indegree.set(left.key, (indegree.get(left.key) ?? 0) + 1);
+      }
     }
   }
-  return total.toFixed();
+
+  const byKey = new Map(
+    executions.map((execution) => [execution.key, execution]),
+  );
+  const ready: string[] = [];
+  const pushReady = (key: string): void => {
+    let index = ready.length;
+    ready.push(key);
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      const parent = ready[parentIndex];
+      if (parent === undefined || parent <= key) break;
+      ready[index] = parent;
+      index = parentIndex;
+    }
+    ready[index] = key;
+  };
+  const popReady = (): string | undefined => {
+    const first = ready[0];
+    const last = ready.pop();
+    if (first === undefined || last === undefined || ready.length === 0)
+      return first;
+    let index = 0;
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      if (leftIndex >= ready.length) break;
+      const rightIndex = leftIndex + 1;
+      const childIndex =
+        rightIndex < ready.length &&
+        (ready[rightIndex] ?? "") < (ready[leftIndex] ?? "")
+          ? rightIndex
+          : leftIndex;
+      const child = ready[childIndex];
+      if (child === undefined || child >= last) break;
+      ready[index] = child;
+      index = childIndex;
+    }
+    ready[index] = last;
+    return first;
+  };
+  for (const execution of executions) {
+    if (indegree.get(execution.key) === 0) pushReady(execution.key);
+  }
+  const pending = new Set(executions.map((execution) => execution.key));
+  const ordered: Execution[] = [];
+  while (ready.length > 0) {
+    const key = popReady();
+    if (key === undefined) continue;
+    const execution = byKey.get(key);
+    if (execution !== undefined) ordered.push(execution);
+    pending.delete(key);
+    if (execution === undefined) continue;
+    for (const next of pending) {
+      const nextExecution = byKey.get(next);
+      if (nextExecution === undefined || !precedes(execution, nextExecution))
+        continue;
+      const nextIndegree = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, nextIndegree);
+      if (nextIndegree === 0) pushReady(next);
+    }
+  }
+
+  // Pairwise time evidence should be acyclic. In case malformed provenance
+  // ever creates a cycle, keep the entire close set deterministic and let the
+  // exposure guard below prevent a consumed opening from being reused.
+  return ordered.length === executions.length
+    ? ordered
+    : sortedByKey(executions);
 }
 
 function lifecycleEventFor(group: readonly Execution[]): string {
@@ -143,9 +281,31 @@ export function groupStrategies(
     id: Id,
     account: string,
     currency: string,
+    sources: SourceRef[] = [],
   ): StrategyDraft => {
     const existing = drafts.get(id);
     if (existing !== undefined) {
+      if (existing.account !== account || existing.currency !== currency) {
+        const splitId = `${id}\u0000incompatible\u0000${account}\u0000${currency}`;
+        const split = drafts.get(splitId);
+        if (split !== undefined) return split;
+        const incompatible = emptyDraft(splitId);
+        incompatible.account = account;
+        incompatible.currency = currency;
+        incompatible.unresolved = true;
+        incompatible.blocking = true;
+        incompatible.complete = false;
+        const issue = makeIssue(
+          "INCOMPATIBLE_STRATEGY_MEMBERSHIP",
+          sources,
+          "error",
+          `${id}:${account}:${currency}`,
+        );
+        pushDraftIssue(incompatible, issue);
+        addIssue(issue);
+        drafts.set(splitId, incompatible);
+        return incompatible;
+      }
       if (existing.account === "") existing.account = account;
       if (existing.currency === "") existing.currency = currency;
       return existing;
@@ -363,6 +523,7 @@ export function groupStrategies(
         binding.strategyId,
         execution.account,
         execution.currency,
+        execution.sources,
       );
       addLeg(draft, legOf(execution, role, { quantity, netCash, brokerPnl }));
       recordConsumption(execution, quantity, netCash, brokerPnl);
@@ -373,6 +534,7 @@ export function groupStrategies(
       binding.strategyId,
       execution.account,
       execution.currency,
+      execution.sources,
     );
     addLeg(
       draft,
@@ -406,7 +568,12 @@ export function groupStrategies(
       first.account,
       group.map((execution) => execution.key),
     );
-    const draft = draftFor(id, first.account, first.currency);
+    const draft = draftFor(
+      id,
+      first.account,
+      first.currency,
+      group.flatMap((execution) => execution.sources),
+    );
     for (const execution of group) {
       const quantity = availableOf(execution).toFixed();
       const netCash = residualNetCash(execution);
@@ -445,7 +612,12 @@ export function groupStrategies(
     }
     if (!matched) {
       const id = resolveId(execution.account, [execution.key]);
-      const draft = draftFor(id, execution.account, execution.currency);
+      const draft = draftFor(
+        id,
+        execution.account,
+        execution.currency,
+        execution.sources,
+      );
       addLeg(draft, legOf(execution, "close"));
       recordConsumption(
         execution,
@@ -472,29 +644,132 @@ export function groupStrategies(
   //    a unique compatible remaining position. Only the residual of a
   //    partially allocated execution is auto-matched; ambiguity or a missing
   //    opening becomes an unresolved review item rather than an invented match.
-  const closeExecutions = sortedByKey(
-    ledger.executions.filter(
-      (execution) =>
-        execution.event !== "unsupported" &&
-        roleOf(execution) === "close" &&
-        !availableOf(execution).isZero(),
-    ),
+  const closeExecutions = ledger.executions.filter(
+    (execution) =>
+      execution.event !== "unsupported" &&
+      roleOf(execution) === "close" &&
+      !availableOf(execution).isZero(),
   );
-  for (const close of closeExecutions) {
+  const orderedCloseExecutions = orderByKnownChronology(closeExecutions);
+  for (const close of orderedCloseExecutions) {
     const closeQuantity = availableOf(close).toFixed();
-    let candidates = [...drafts.values()].filter(
-      (draft) =>
-        draft.account === close.account &&
-        draft.currency === close.currency &&
-        draft.legs.some(
-          (leg) =>
-            sameInstrument(leg.instrument, close.instrument) &&
-            remainingCompatible(
-              remainingFor(draft, close.instrument),
-              closeQuantity,
-            ),
-        ),
-    );
+    let candidates = [...drafts.values()].filter((draft) => {
+      if (
+        draft.account !== close.account ||
+        draft.currency !== close.currency
+      ) {
+        return false;
+      }
+      let exposure = new Decimal(0);
+      const futureOpenings: { execution: Execution; quantity: Decimal }[] = [];
+      const futureCloses: { execution: Execution; quantity: Decimal }[] = [];
+      const uncertainFutureCloses: Decimal[] = [];
+      let sawOpening = false;
+      for (const leg of draft.legs) {
+        if (!sameInstrument(leg.instrument, close.instrument)) continue;
+        const related = executionByKey.get(leg.executionKey);
+        if (related === undefined) return false;
+        if (leg.role === "close") {
+          const chronological = compareExecutionTime(related, close);
+          const tiedEarlierClose =
+            chronological === 0 && related.key <= close.key;
+          if (
+            chronological !== null &&
+            (chronological < 0 || tiedEarlierClose)
+          ) {
+            exposure = exposure.plus(leg.quantity);
+          } else if (
+            chronological !== null &&
+            (chronological > 0 || related.key > close.key)
+          ) {
+            futureCloses.push({
+              execution: related,
+              quantity: new Decimal(leg.quantity),
+            });
+          } else {
+            // A later or uncertain assigned/matched close reserves capacity,
+            // but cannot create historical exposure with the opposite sign.
+            uncertainFutureCloses.push(new Decimal(leg.quantity));
+          }
+          continue;
+        }
+        const chronological = compareExecutionTime(related, close);
+        // Different time zones or date-only values on the same day leave
+        // ordering uncertain. A shared unzoned report provides a common
+        // wall-clock basis without claiming an absolute instant.
+        if (chronological === null) return false;
+        const tiedLifecycleEvent =
+          chronological === 0 && leg.role === "open" && close.event !== "trade";
+        if (chronological > 0 || (chronological === 0 && !tiedLifecycleEvent)) {
+          if (chronological > 0) {
+            futureOpenings.push({
+              execution: related,
+              quantity: new Decimal(leg.quantity),
+            });
+          }
+          continue;
+        }
+        exposure = exposure.plus(leg.quantity);
+        if (leg.role === "open") sawOpening = true;
+      }
+      if (
+        !sawOpening ||
+        !remainingCompatible(exposure.toFixed(), closeQuantity)
+      )
+        return false;
+      const reservesCurrentExposure = (quantity: Decimal): boolean =>
+        quantity.isNegative() !== exposure.isNegative();
+      const uncertainReservation = uncertainFutureCloses.reduce(
+        (sum, quantity) => {
+          return quantity.isNegative() !== exposure.isNegative()
+            ? sum.plus(quantity.abs())
+            : sum;
+        },
+        new Decimal(0),
+      );
+      let knownReservation = new Decimal(0);
+
+      for (const target of futureCloses) {
+        if (!reservesCurrentExposure(target.quantity)) continue;
+        let cumulativeFutureDemand = new Decimal(0);
+        for (const candidate of futureCloses) {
+          if (!reservesCurrentExposure(candidate.quantity)) continue;
+          const chronology = compareExecutionTime(
+            candidate.execution,
+            target.execution,
+          );
+          const precedesOrUnknown =
+            candidate.execution.key === target.execution.key ||
+            chronology === null ||
+            chronology < 0 ||
+            (chronology === 0 &&
+              candidate.execution.key < target.execution.key);
+          if (precedesOrUnknown) {
+            cumulativeFutureDemand = cumulativeFutureDemand.plus(
+              candidate.quantity.abs(),
+            );
+          }
+        }
+        const replenishmentBeforeTarget = futureOpenings.reduce(
+          (sum, opening) => {
+            if (opening.quantity.isNegative() !== exposure.isNegative()) {
+              return sum;
+            }
+            return compareExecutionTime(opening.execution, target.execution) ===
+              -1
+              ? sum.plus(opening.quantity.abs())
+              : sum;
+          },
+          new Decimal(0),
+        );
+        const deficit = cumulativeFutureDemand.minus(replenishmentBeforeTarget);
+        if (deficit.gt(knownReservation)) knownReservation = deficit;
+      }
+      return exposure
+        .abs()
+        .minus(uncertainReservation.plus(knownReservation))
+        .gte(new Decimal(closeQuantity).abs());
+    });
 
     const lot = ledger.lots.find(
       (row) =>
@@ -540,7 +815,7 @@ export function groupStrategies(
       );
     }
     const id = resolveId(close.account, [close.key]);
-    const draft = draftFor(id, close.account, close.currency);
+    const draft = draftFor(id, close.account, close.currency, close.sources);
     const netCash = residualNetCash(close);
     const brokerPnl = residualBrokerPnl(close);
     addLeg(
@@ -649,7 +924,7 @@ export function groupStrategies(
   // 7. Rolls: an order holding both a close and an open leg links the two
   //    episodes without merging their allocations or P/L.
   const orderCloses = new Map<string, Id>();
-  for (const close of closeExecutions) {
+  for (const close of orderedCloseExecutions) {
     const key = groupKeyOf(close);
     if (!orderOpenings.has(key)) continue;
     const closeDraftId = strategyOfExecution.get(close.key);
@@ -669,7 +944,28 @@ export function groupStrategies(
   const remap = new Map<Id, Id>();
   for (const { chosen, merged } of merges) {
     for (const mergedId of merged) {
-      if (drafts.has(mergedId)) remap.set(mergedId, chosen);
+      const sourceDraft = drafts.get(mergedId);
+      if (sourceDraft === undefined) continue;
+      const chosenDraft = drafts.get(chosen);
+      if (
+        chosenDraft !== undefined &&
+        (chosenDraft.account !== sourceDraft.account ||
+          chosenDraft.currency !== sourceDraft.currency)
+      ) {
+        const issue = makeIssue(
+          "INCOMPATIBLE_STRATEGY_MERGE",
+          [...sourceDraft.legs, ...chosenDraft.legs].flatMap(
+            (leg) => leg.sources,
+          ),
+          "error",
+          `${chosen}:${mergedId}`,
+        );
+        addIssue(issue);
+        pushDraftIssue(chosenDraft, issue);
+        pushDraftIssue(sourceDraft, issue);
+        continue;
+      }
+      remap.set(mergedId, chosen);
     }
   }
   const finalId = (id: Id): Id => {
@@ -682,9 +978,42 @@ export function groupStrategies(
     return current;
   };
 
-  const consolidated = new Map<Id, StrategyDraft>();
+  // Validate each transitive merge target before consolidating any amounts.
+  // A retained decision can name a chosen ID that has no current draft, so
+  // checking only the immediate chosen/merged pair is not sufficient.
+  const draftsByMergeTarget = new Map<Id, StrategyDraft[]>();
   for (const draft of drafts.values()) {
     const targetId = finalId(draft.id);
+    const group = draftsByMergeTarget.get(targetId) ?? [];
+    group.push(draft);
+    draftsByMergeTarget.set(targetId, group);
+  }
+  const safeTargets = new Map<Id, Id>();
+  for (const [targetId, group] of draftsByMergeTarget) {
+    const dimensions = new Set(
+      group.map((draft) => `${draft.account}\u0000${draft.currency}`),
+    );
+    if (dimensions.size <= 1) {
+      for (const draft of group) safeTargets.set(draft.id, targetId);
+      continue;
+    }
+    const issue = makeIssue(
+      "INCOMPATIBLE_STRATEGY_MERGE",
+      group.flatMap((draft) => draft.legs.flatMap((leg) => leg.sources)),
+      "error",
+      targetId,
+    );
+    addIssue(issue);
+    for (const draft of group) {
+      safeTargets.set(draft.id, draft.id);
+      pushDraftIssue(draft, issue);
+    }
+  }
+  const safeFinalId = (id: Id): Id => safeTargets.get(id) ?? finalId(id);
+
+  const consolidated = new Map<Id, StrategyDraft>();
+  for (const draft of drafts.values()) {
+    const targetId = safeFinalId(draft.id);
     let container = consolidated.get(targetId);
     if (container === undefined) {
       container = emptyDraft(targetId);
@@ -713,8 +1042,8 @@ export function groupStrategies(
   const finalLinks: Link[] = [];
   const finalLinkKeys = new Set<string>();
   for (const link of links) {
-    const from = finalId(link.from);
-    const to = finalId(link.to);
+    const from = safeFinalId(link.from);
+    const to = safeFinalId(link.to);
     if (from === to) continue;
     const key = `${from}|${to}|${link.type}`;
     if (finalLinkKeys.has(key)) continue;

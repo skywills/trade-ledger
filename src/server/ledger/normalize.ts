@@ -285,6 +285,14 @@ export async function normalizeLedger(
       }
     } else if (row.kind === "lot") {
       lots.push(lotDraft(row));
+    } else if (row.kind === "quarantine") {
+      issues.push(
+        ...row.issues.map((issue) => ({
+          ...issue,
+          key: `ledger:quarantine:${row.importId}:${row.rowNumber}:${issue.code}`,
+          sources: [{ importId: row.importId, rowNumber: row.rowNumber }],
+        })),
+      );
     }
   }
 
