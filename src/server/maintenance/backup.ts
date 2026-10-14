@@ -11,6 +11,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { create, list } from "tar";
 import { AppError } from "../../shared/errors.js";
 import { listImports } from "../imports/service.js";
@@ -102,14 +103,27 @@ function toEntry(stagingDir: string, relPath: string): BackupFileEntry {
 
 function appVersion(): string {
   if (process.env.npm_package_version) return process.env.npm_package_version;
-  try {
-    const url = new URL("../../../package.json", import.meta.url);
-    const parsed = JSON.parse(readFileSync(url, "utf8")) as {
-      version?: unknown;
-    };
-    if (typeof parsed.version === "string") return parsed.version;
-  } catch {
-    // A compiled deployment may not ship the package manifest.
+  // The compiled entry point lives at dist/src/server/maintenance, so the
+  // manifest shipped in the runtime image at /app/package.json is four levels
+  // up; the local build also keeps a copy at the repository root (three levels
+  // up from a source layout). Fall back to the working directory so a packaged
+  // deployment records its real version instead of 0.0.0.
+  const candidates = [
+    new URL("../../../../package.json", import.meta.url),
+    new URL("../../../package.json", import.meta.url),
+    pathToFileURL(join(process.cwd(), "package.json")),
+  ];
+  for (const url of candidates) {
+    try {
+      const parsed = JSON.parse(readFileSync(url, "utf8")) as {
+        version?: unknown;
+      };
+      if (typeof parsed.version === "string" && parsed.version !== "") {
+        return parsed.version;
+      }
+    } catch {
+      // Try the next candidate location.
+    }
   }
   return "0.0.0";
 }

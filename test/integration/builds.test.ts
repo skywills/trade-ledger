@@ -188,6 +188,11 @@ describe("versioned builds, atomic activation and rollback", () => {
         input("full", { signal: controller.signal }),
       );
       expect(cancelled.status).toBe("cancelled");
+      // A cancelled build is persisted: the returned id resolves to a real row.
+      const row = store.db
+        .prepare("SELECT status FROM builds WHERE id = ?")
+        .get(cancelled.id) as { status: string } | undefined;
+      expect(row).toMatchObject({ status: "cancelled" });
       expect(activeProjection(store).buildId).toBe(original);
     }));
 
@@ -575,6 +580,96 @@ describe("versioned builds, atomic activation and rollback", () => {
       await expect(rollbackBuild(store, "failed-build")).rejects.toMatchObject({
         code: "BUILD_NOT_ROLLBACKABLE",
       });
+    }));
+
+  it("surfaces duplicate manual allocations as a review item instead of failing the build", async () =>
+    withStore(async (store) => {
+      await commitBytes(
+        store,
+        "single.csv",
+        buildExecutionTable([
+          executionRow({
+            ClientAccountID: "SIM-DUP",
+            AssetClass: "OPT",
+            Symbol: "DUP",
+            UnderlyingSymbol: "DUP",
+            Conid: "9800001",
+            CurrencyPrimary: "USD",
+            TradeDate: "2026-09-03",
+            DateTime: "2026-09-03 10:00:00",
+            Quantity: "+1",
+            TradePrice: "14.02",
+            NetCash: "-1402.23006",
+            "Notes/Codes": "O",
+            IBOrderID: "DUP-OPEN",
+            BrokerageOrderID: "DUP-OPEN",
+            IBExecID: "EXEC-DUP-1",
+            TradeID: "TRADE-DUP-1",
+            Expiry: "2026-10-16",
+            Strike: "470",
+            "Put/Call": "P",
+            Multiplier: "100",
+          }),
+        ]),
+      );
+      await rebuild(store, input("full"));
+      const source = firstImportRow(store);
+      const executionKey = firstExecutionKey(store);
+      const watermark = decisionWatermark(store);
+
+      const allocation = {
+        executionKey,
+        quantity: "1",
+        netCash: "-1402.23006",
+        brokerPnl: null,
+      };
+      await appendDecision(
+        store,
+        manualAllocationInput({
+          strategyId: "dup-strategy",
+          source,
+          allocations: [allocation],
+        }),
+        watermark,
+      );
+      await appendDecision(
+        store,
+        manualAllocationInput({
+          strategyId: "dup-strategy",
+          source,
+          allocations: [allocation],
+        }),
+        watermark + 1,
+      );
+
+      const built = await rebuild(store, input("full"));
+      expect(built.status).toBe("active");
+      const projection = activeProjection(store).projection;
+      expect(projection?.issues.map((issue) => issue.code)).toContain(
+        "DUPLICATE_ALLOCATION",
+      );
+    }));
+
+  it("writes broker P/L to broker_pnl and leaves the legacy realized_pnl column unset", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      await rebuild(store, input("full"));
+      const buildId = activeProjection(store).buildId;
+      const rows = store.db
+        .prepare(
+          `SELECT broker_pnl, reconstructed_pnl, realized_pnl, remaining_exposure
+           FROM strategy_views WHERE build_id = ?`,
+        )
+        .all(buildId) as Array<{
+        broker_pnl: string | null;
+        reconstructed_pnl: string | null;
+        realized_pnl: string | null;
+        remaining_exposure: string | null;
+      }>;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.some((row) => row.broker_pnl !== null)).toBe(true);
+      expect(rows.every((row) => row.realized_pnl === null)).toBe(true);
+      expect(rows.every((row) => row.remaining_exposure === null)).toBe(true);
     }));
 });
 

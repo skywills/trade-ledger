@@ -212,7 +212,6 @@ export function groupStrategies(
   const bindings: Binding[] = [];
   const merges: MergeInstruction[] = [];
   const lifecycles: LifecycleInstruction[] = [];
-
   for (const decision of orderedDecisions) {
     const payload = decision.payload;
     switch (decision.kind) {
@@ -320,10 +319,27 @@ export function groupStrategies(
   // 1. Retained manual/explicit allocations are applied before automatic
   //    matching. Each decision row contributes its own signed quantity and
   //    cash, so a partial row reserves only its share and the execution's
-  //    remainder stays available for automatic matching.
+  //    remainder stays available for automatic matching. A second retained
+  //    allocation targeting the same execution+strategy+role is a duplicate:
+  //    it is deduplicated and surfaced as a review issue rather than being
+  //    applied twice (which would double exposure and could hard-fail a build).
+  const appliedBindingKeys = new Set<string>();
   for (const binding of bindings) {
     const { execution } = binding;
     const role = roleOf(execution);
+    const bindingKey = `${binding.strategyId}\u0000${execution.key}\u0000${role}`;
+    if (appliedBindingKeys.has(bindingKey)) {
+      addIssue(
+        makeIssue(
+          "DUPLICATE_ALLOCATION",
+          execution.sources,
+          "warning",
+          binding.strategyId,
+        ),
+      );
+      continue;
+    }
+    appliedBindingKeys.add(bindingKey);
     if (binding.quantity === null) {
       const residualQuantity = availableOf(execution);
       if (residualQuantity.isZero()) continue;

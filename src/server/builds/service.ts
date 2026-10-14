@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type {
   BuildResult,
   Id,
@@ -193,9 +192,6 @@ export async function rebuild(
       400,
     );
   }
-  if (input.signal.aborted) {
-    return { id: randomUUID(), status: "cancelled", issues: [] };
-  }
 
   const snapshot = snapshotInputs(store, input.parserVersion);
   const ledger =
@@ -205,10 +201,6 @@ export async function rebuild(
           decisionWatermark: snapshot.watermark,
         })
       : readRetainedLedger(store, input.parserVersion);
-
-  if (input.signal.aborted) {
-    return { id: randomUUID(), status: "cancelled", issues: [] };
-  }
 
   const buildId = await insertCandidate(store, {
     ledgerId: ledger.id,

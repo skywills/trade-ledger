@@ -171,7 +171,7 @@ export async function persistProjection(
         strategy.status,
         strategy.complete ? 1 : 0,
         strategy.openingAmount,
-        strategy.brokerPnl,
+        null,
         null,
         strategy.brokerPnl,
         strategy.reconstructedPnl,
@@ -195,10 +195,26 @@ export async function persistProjection(
          allocated_quantity, allocated_cash, broker_pnl, pnl_estimated
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    // The allocation primary key is (build, strategy, revision, role). A second
+    // row for the same key must never hard-fail the build via a SQL constraint;
+    // skip it and surface a review item instead.
+    const allocationKeys = new Set<string>();
+    const duplicateIssues: Issue[] = [];
     for (const allocation of projection.allocations) {
       if (!strategyIds.has(allocation.strategyId)) continue;
       const revisionId = headRevisionId(db, ledgerId, allocation.executionKey);
       if (revisionId === null) continue;
+      const allocationKey = `${allocation.strategyId}\u0000${revisionId}\u0000${allocation.role}`;
+      if (allocationKeys.has(allocationKey)) {
+        duplicateIssues.push({
+          key: `build:DUPLICATE_ALLOCATION:${allocation.strategyId}:${allocation.executionKey}:${allocation.role}`,
+          code: "DUPLICATE_ALLOCATION",
+          sources: [],
+          severity: "warning",
+        });
+        continue;
+      }
+      allocationKeys.add(allocationKey);
       insertAllocation.run(
         buildId,
         ledgerId,
@@ -237,7 +253,7 @@ export async function persistProjection(
          candidate_json, severity
        ) VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    for (const issue of projection.issues) {
+    for (const issue of [...projection.issues, ...duplicateIssues]) {
       insertIssue.run(
         buildId,
         issue.key,

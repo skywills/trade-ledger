@@ -395,6 +395,16 @@ export async function saveProfile(
         409,
       );
     }
+    const duplicate = store.db
+      .prepare("SELECT id FROM llm_profiles WHERE name = ? AND id <> ?")
+      .get(input.name, input.id) as { id: string } | undefined;
+    if (duplicate !== undefined) {
+      throw new AppError(
+        "PROFILE_NAME_EXISTS",
+        `A profile named "${input.name}" already exists.`,
+        409,
+      );
+    }
     const revision = current.revision + 1;
     const enabled = input.enabled ?? current.enabled === 1;
     store.db

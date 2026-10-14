@@ -323,6 +323,42 @@ describe("local model profiles and guarded transport", () => {
     ).rejects.toThrow();
   });
 
+  it("rejects renaming a profile onto another profile's name", async () => {
+    const store = await testStore();
+    const first = await saveProfile(
+      store,
+      baseInput({ name: "dup-a", endpoint: "http://127.0.0.1:9/v1" }),
+      null,
+    );
+    const second = await saveProfile(
+      store,
+      baseInput({ name: "dup-b", endpoint: "http://127.0.0.1:9/v1" }),
+      null,
+    );
+
+    await expect(
+      saveProfile(
+        store,
+        {
+          ...baseInput({ name: "dup-a", endpoint: "http://127.0.0.1:9/v1" }),
+          id: second.id,
+        },
+        second.revision,
+      ),
+    ).rejects.toMatchObject({ code: "PROFILE_NAME_EXISTS" });
+
+    // Re-saving a profile under its own current name stays valid.
+    const self = await saveProfile(
+      store,
+      {
+        ...baseInput({ name: "dup-a", endpoint: "http://127.0.0.1:9/v1" }),
+        id: first.id,
+      },
+      first.revision,
+    );
+    expect(self.name).toBe("dup-a");
+  });
+
   it("distinguishes unreachable, timeout, malformed-arguments and no-tool-call", async () => {
     const store = await testStore();
     const malformed = await server({ mode: "malformed-arguments" });

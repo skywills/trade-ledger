@@ -144,6 +144,7 @@ describe("consistent backup and offline restore", () => {
       const manifest = await createBackup(store, archive);
       expect(manifest.decisionWatermark).toBe(decisionWatermark(store));
       expect(manifest.schemaVersion).toBeGreaterThan(0);
+      expect(manifest.appVersion).not.toBe("0.0.0");
 
       const freshDir = join(trackTemp("ibkr-restore-"), "data");
       await restoreBackup(archive, freshDir);
@@ -159,6 +160,22 @@ describe("consistent backup and offline restore", () => {
       });
       void dataDir;
     } finally {
+      await dispose();
+    }
+  });
+
+  it("resolves the real app version without relying on npm env", async () => {
+    const { store, dispose } = await createTestStore();
+    const archive = join(trackTemp("ibkr-backup-version-"), "backup.tar");
+    const saved = process.env.npm_package_version;
+    delete process.env.npm_package_version;
+    try {
+      await seedStore(store);
+      const manifest = await createBackup(store, archive);
+      expect(manifest.appVersion).toMatch(/^\d+\.\d+\.\d+/);
+      expect(manifest.appVersion).not.toBe("0.0.0");
+    } finally {
+      if (saved !== undefined) process.env.npm_package_version = saved;
       await dispose();
     }
   });
