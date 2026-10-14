@@ -343,7 +343,7 @@ test("financially consequential decisions preview before confirmation", async ({
   page,
 }) => {
   await page.goto("/review");
-  await page.getByLabel("Decision kind").selectOption("exclusion");
+  await page.getByLabel("Decision kind").selectOption("import_exclusion");
   await page.getByLabel("Import").selectOption({ label: "spread.csv" });
   await page.getByRole("button", { name: "Preview decision" }).click();
   const preview = page.getByTestId("decision-preview");

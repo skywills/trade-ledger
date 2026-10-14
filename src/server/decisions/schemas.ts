@@ -102,7 +102,7 @@ const LifecycleSchema = z.object({
 });
 
 const ExclusionSchema = z.object({
-  kind: z.literal("exclusion"),
+  kind: z.literal("import_exclusion"),
   ...CommonFields,
   payload: z.object({
     importId: IdSchema,
@@ -110,7 +110,7 @@ const ExclusionSchema = z.object({
 });
 
 const ReinclusionSchema = z.object({
-  kind: z.literal("reinclusion"),
+  kind: z.literal("import_inclusion"),
   ...CommonFields,
   payload: z.object({
     importId: IdSchema,
@@ -135,8 +135,8 @@ export const DECISION_KINDS = [
   "group_merge",
   "group_split",
   "lifecycle",
-  "exclusion",
-  "reinclusion",
+  "import_exclusion",
+  "import_inclusion",
   "rejection",
 ] as const;
 
@@ -349,7 +349,7 @@ export function exclusionInput(args: {
   author?: string;
 }): DecisionInput {
   return parseOrThrow(ExclusionSchema, {
-    kind: "exclusion",
+    kind: "import_exclusion",
     clientRequestId: args.clientRequestId ?? crypto.randomUUID(),
     sources: [],
     strategyIds: [],
@@ -366,7 +366,7 @@ export function reinclusionInput(args: {
   author?: string;
 }): DecisionInput {
   return parseOrThrow(ReinclusionSchema, {
-    kind: "reinclusion",
+    kind: "import_inclusion",
     clientRequestId: args.clientRequestId ?? crypto.randomUUID(),
     sources: [],
     strategyIds: [],

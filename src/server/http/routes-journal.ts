@@ -12,6 +12,7 @@ import {
   activeLedgerSnapshot,
   activeProjection,
 } from "../builds/service.js";
+import { readStrategyMetadata } from "../decisions/service.js";
 import type { Store } from "../storage/database.js";
 
 /** Journal, ledger and strategy read routes, all served from the active build. */
@@ -104,10 +105,12 @@ export async function registerJournalRoutes(
     const links = (active.projection?.links ?? []).filter(
       (entry) => entry.from === id || entry.to === id,
     );
+    const metadata = readStrategyMetadata(store, id);
     return {
       strategy,
       allocations,
       links,
+      metadata,
       buildId: active.buildId,
       stale: active.stale,
     };

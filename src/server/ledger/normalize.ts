@@ -18,7 +18,11 @@ import {
   manifestHash,
   persistLedgerBuild,
 } from "../storage/ledger.js";
-import { type Candidate, resolveIdentities } from "./identity.js";
+import {
+  type Candidate,
+  type IdentityBinding,
+  resolveIdentities,
+} from "./identity.js";
 import { applyRevisions } from "./revisions.js";
 
 export const LEDGER_PARSER_VERSION = "flex-v1";
@@ -111,9 +115,13 @@ function excludedImportIds(
   const excluded = new Set<Id>();
   for (const row of rows) {
     if (superseded.has(row.id)) continue;
-    if (row.kind !== "import_exclusion" && row.kind !== "import_inclusion") {
-      continue;
-    }
+    // Canonical kinds are `import_exclusion`/`import_inclusion`; the bare legacy
+    // aliases are still honoured so previously retained decisions keep working.
+    const isExclusion =
+      row.kind === "import_exclusion" || row.kind === "exclusion";
+    const isInclusion =
+      row.kind === "import_inclusion" || row.kind === "reinclusion";
+    if (!isExclusion && !isInclusion) continue;
     let importId: string | undefined;
     try {
       const payload = JSON.parse(row.payload_json) as { importId?: string };
@@ -122,10 +130,59 @@ function excludedImportIds(
       importId = undefined;
     }
     if (importId === undefined) continue;
-    if (row.kind === "import_exclusion") excluded.add(importId);
+    if (isExclusion) excluded.add(importId);
     else excluded.delete(importId);
   }
   return excluded;
+}
+
+/**
+ * Reads the latest nonsuperseded identity-binding decisions up to the
+ * watermark. These are the retained user resolutions that allow weak rows
+ * (no strong broker identity) to merge into one logical transaction.
+ */
+function readIdentityBindings(
+  db: Store["db"],
+  decisionWatermark: number,
+): IdentityBinding[] {
+  const rows = db
+    .prepare(
+      `SELECT id, kind, payload_json, supersedes_id FROM decisions
+       WHERE sequence <= ? ORDER BY sequence`,
+    )
+    .all(decisionWatermark) as DecisionRow[];
+  const superseded = new Set(
+    rows
+      .map((row) => row.supersedes_id)
+      .filter((id): id is string => id !== null),
+  );
+  const bindings: IdentityBinding[] = [];
+  for (const row of rows) {
+    if (superseded.has(row.id)) continue;
+    if (row.kind !== "identity_binding") continue;
+    try {
+      const payload = JSON.parse(row.payload_json) as {
+        source?: SourceRef;
+        canonicalIdentity?: string;
+        expectedQuantity?: string;
+      };
+      if (
+        payload.source !== undefined &&
+        typeof payload.canonicalIdentity === "string" &&
+        payload.canonicalIdentity !== ""
+      ) {
+        bindings.push({
+          source: payload.source,
+          canonicalIdentity: payload.canonicalIdentity,
+          expectedQuantity: payload.expectedQuantity ?? "",
+          decisionId: row.id,
+        });
+      }
+    } catch {
+      // A malformed payload is ignored rather than fabricated.
+    }
+  }
+  return bindings;
 }
 
 function readCommittedRows(db: Store["db"]): RowRecord[] {
@@ -231,7 +288,10 @@ export async function normalizeLedger(
     }
   }
 
-  const identity = resolveIdentities(candidates);
+  const identity = resolveIdentities(
+    candidates,
+    readIdentityBindings(store.db, options.decisionWatermark),
+  );
   issues.push(...identity.issues);
   const revisionOutcome = applyRevisions(
     identity.transactions.filter((transaction) => !transaction.conflicted),

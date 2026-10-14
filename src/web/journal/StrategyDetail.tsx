@@ -127,6 +127,14 @@ export function StrategyDetail({ id }: { id: string }) {
           <dd>{strategy.brokerPnl ?? "Unavailable"}</dd>
           <dt>Reconstructed P/L (source precision)</dt>
           <dd>{strategy.reconstructedPnl ?? "Unavailable"}</dd>
+          <dt>Notes</dt>
+          <dd data-testid="strategy-notes">
+            {detail.data?.metadata.notes ?? "—"}
+          </dd>
+          <dt>Stop loss</dt>
+          <dd data-testid="strategy-stop-loss">
+            {detail.data?.metadata.stopLoss ?? "—"}
+          </dd>
           <dt>Debit/credit (display)</dt>
           <dd>{formatMoney(strategy.openingAmount, strategy.currency)}</dd>
           <dt>Reasons</dt>
@@ -240,7 +248,11 @@ export function StrategyDetail({ id }: { id: string }) {
         </div>
       ) : null}
 
-      <DecisionEditor fixedStrategyId={id} />
+      <DecisionEditor
+        fixedStrategyId={id}
+        initialNotes={detail.data?.metadata.notes ?? null}
+        initialStopLoss={detail.data?.metadata.stopLoss ?? null}
+      />
     </section>
   );
 }

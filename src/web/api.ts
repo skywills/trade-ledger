@@ -165,10 +165,16 @@ export const JobSchema = z.object({
   finishedAt: z.string().nullable(),
 });
 
+export const StrategyMetadataSchema = z.object({
+  notes: z.string().nullable(),
+  stopLoss: z.string().nullable(),
+});
+
 export const StrategyDetailSchema = z.object({
   strategy: StrategySchema,
   allocations: z.array(AllocationSchema),
   links: z.array(StrategyLinkSchema),
+  metadata: StrategyMetadataSchema,
   buildId: z.string().nullable(),
   stale: z.boolean(),
 });

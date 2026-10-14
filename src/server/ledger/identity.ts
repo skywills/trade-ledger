@@ -7,6 +7,19 @@ export interface Candidate {
 }
 
 /**
+ * A retained, account-scoped resolution of a weak row (one with no strong
+ * broker identity) to a canonical identity. Rows bound to the same canonical
+ * identity and account merge into one logical transaction; the binding is the
+ * only thing that may collapse weak rows.
+ */
+export interface IdentityBinding {
+  source: SourceRef;
+  canonicalIdentity: string;
+  expectedQuantity: string;
+  decisionId: Id;
+}
+
+/**
  * A resolved logical transaction: every candidate row that unambiguously
  * belongs to one account-scoped broker identity, merged into a single
  * financial payload with every contributing source retained.
@@ -48,6 +61,38 @@ function execKey(account: string, execId: string): string {
 
 function sourceKey(source: SourceRef): string {
   return `txn:${source.importId}:src:${source.rowNumber}`;
+}
+
+function refKey(source: SourceRef): string {
+  return `${source.importId}\u0000${source.rowNumber}`;
+}
+
+function bindingKey(account: string, canonicalIdentity: string): string {
+  return `txn:${account}:binding:${canonicalIdentity}`;
+}
+
+/**
+ * Maps each retained binding's source row to its canonical identity. Two
+ * bindings for one source that disagree on the canonical identity are
+ * contradictory: that source is left on its source-based identity rather than
+ * silently joining either target.
+ */
+function bindingTargets(
+  bindings: readonly IdentityBinding[],
+): Map<string, string> {
+  const bySource = new Map<string, string>();
+  const conflicted = new Set<string>();
+  for (const binding of bindings) {
+    const key = refKey(binding.source);
+    const existing = bySource.get(key);
+    if (existing === undefined) {
+      bySource.set(key, binding.canonicalIdentity);
+    } else if (existing !== binding.canonicalIdentity) {
+      conflicted.add(key);
+    }
+  }
+  for (const key of conflicted) bySource.delete(key);
+  return bySource;
 }
 
 /**
@@ -108,10 +153,12 @@ function emptyIssueKey(code: string, scope: string): string {
  */
 export function resolveIdentities(
   candidates: readonly Candidate[],
+  bindings: readonly IdentityBinding[] = [],
 ): IdentityResult {
   const ordered = [...candidates].sort((left, right) =>
     compareSources(left.source, right.source),
   );
+  const boundTargets = bindingTargets(bindings);
 
   const aliasToTrade = new Map<string, string>();
   const aliasRegistrations = new Map<string, SourceRef>();
@@ -149,10 +196,18 @@ export function resolveIdentities(
         key = tradeKey(account, aliasTarget);
         resolvedTradeId = aliasTarget;
       } else {
-        key = execKey(account, execId);
+        const bound = boundTargets.get(refKey(candidate.source));
+        key =
+          bound !== undefined
+            ? bindingKey(account, bound)
+            : execKey(account, execId);
       }
     } else {
-      key = sourceKey(candidate.source);
+      const bound = boundTargets.get(refKey(candidate.source));
+      key =
+        bound !== undefined
+          ? bindingKey(account, bound)
+          : sourceKey(candidate.source);
     }
 
     const group = groups.get(key);

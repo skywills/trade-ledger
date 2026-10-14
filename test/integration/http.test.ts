@@ -456,6 +456,49 @@ describe("validated HTTP API", () => {
     expect((strategy.json() as { strategy: { id: string } }).strategy.id).toBe(
       strategyId,
     );
+    expect((strategy.json() as { metadata: unknown }).metadata).toEqual({
+      notes: null,
+      stopLoss: null,
+    });
+
+    // A retained note/stop-loss is visible through the same read route.
+    const notes = await app.inject({
+      method: "POST",
+      url: "/api/decisions",
+      headers: { origin: ORIGIN },
+      payload: {
+        kind: "notes",
+        clientRequestId: "notes-metadata-1",
+        sources: [],
+        strategyIds: [strategyId],
+        supersedesId: null,
+        author: "user",
+        payload: { strategyId, text: "Held through earnings" },
+      },
+    });
+    expect(notes.statusCode, notes.body).toBe(201);
+    const stopLoss = await app.inject({
+      method: "POST",
+      url: "/api/decisions",
+      headers: { origin: ORIGIN },
+      payload: {
+        kind: "stop_loss",
+        clientRequestId: "stop-metadata-1",
+        sources: [],
+        strategyIds: [strategyId],
+        supersedesId: null,
+        author: "user",
+        payload: { strategyId, price: "1.25" },
+      },
+    });
+    expect(stopLoss.statusCode, stopLoss.body).toBe(201);
+
+    const withMetadata = await app.inject(`/api/strategies/${strategyId}`);
+    expect((withMetadata.json() as { metadata: unknown }).metadata).toEqual({
+      notes: "Held through earnings",
+      stopLoss: "1.25",
+    });
+
     expect((await app.inject("/api/strategies/missing")).statusCode).toBe(404);
 
     expect((await app.inject("/api/transactions")).statusCode).toBe(200);

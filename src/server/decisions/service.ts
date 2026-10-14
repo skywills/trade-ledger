@@ -94,6 +94,46 @@ export function effectiveDecisions(decisions: readonly Decision[]): Decision[] {
   return decisions.filter((decision) => !superseded.has(decision.id));
 }
 
+export interface StrategyMetadata {
+  notes: string | null;
+  stopLoss: string | null;
+}
+
+/**
+ * Returns the effective retained metadata for one strategy: the latest
+ * nonsuperseded `notes` and `stop_loss` decisions. Metadata is retained in the
+ * decisions table and never touched by a rebuild, so this read survives a full
+ * normalization without any projection being present.
+ */
+export function readStrategyMetadata(
+  store: Store,
+  strategyId: Id,
+): StrategyMetadata {
+  const decisions = effectiveDecisions(
+    readDecisions(store, decisionWatermark(store)),
+  );
+  let notes: string | null = null;
+  let stopLoss: string | null = null;
+  for (const decision of decisions) {
+    const payload = decision.payload;
+    const payloadStrategyId =
+      typeof payload.strategyId === "string" ? payload.strategyId : undefined;
+    const targetsStrategy =
+      payloadStrategyId === strategyId ||
+      decision.strategyIds.includes(strategyId);
+    if (!targetsStrategy) continue;
+    if (decision.kind === "notes" && typeof payload.text === "string") {
+      notes = payload.text;
+    } else if (
+      decision.kind === "stop_loss" &&
+      typeof payload.price === "string"
+    ) {
+      stopLoss = payload.price;
+    }
+  }
+  return { notes, stopLoss };
+}
+
 function activeLedgerBuildId(
   db: import("better-sqlite3").Database,
 ): string | null {

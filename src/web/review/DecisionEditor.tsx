@@ -35,15 +35,18 @@ const KINDS = [
   { value: "identity_binding", label: "Identity binding", consequential: true },
   { value: "group_explicit", label: "Group (explicit)", consequential: true },
   { value: "group_merge", label: "Merge strategies", consequential: true },
-  { value: "group_split", label: "Split strategy", consequential: true },
   { value: "lifecycle", label: "Lifecycle event", consequential: true },
   {
     value: "manual_allocation",
     label: "Manual allocation",
     consequential: true,
   },
-  { value: "exclusion", label: "Exclude import", consequential: true },
-  { value: "reinclusion", label: "Reinstate import", consequential: true },
+  { value: "import_exclusion", label: "Exclude import", consequential: true },
+  {
+    value: "import_inclusion",
+    label: "Reinstate import",
+    consequential: true,
+  },
   { value: "rejection", label: "Reject evidence", consequential: true },
 ] as const;
 
@@ -74,8 +77,12 @@ function sourceOf(execution: Execution) {
  */
 export function DecisionEditor({
   fixedStrategyId,
+  initialNotes,
+  initialStopLoss,
 }: {
   fixedStrategyId?: string;
+  initialNotes?: string | null;
+  initialStopLoss?: string | null;
 }) {
   const journal = useJson("/api/journal?pageSize=100", JournalEnvelope);
   const imports = useJson("/api/imports?pageSize=100", ImportsEnvelope);
@@ -90,8 +97,8 @@ export function DecisionEditor({
 
   const [kind, setKind] = useState<Kind>("notes");
   const [strategyId, setStrategyId] = useState(fixedStrategyId ?? "");
-  const [notes, setNotes] = useState("");
-  const [stopPrice, setStopPrice] = useState("");
+  const [notes, setNotes] = useState(initialNotes ?? "");
+  const [stopPrice, setStopPrice] = useState(initialStopLoss ?? "");
   const [importId, setImportId] = useState("");
   const [evidenceHash, setEvidenceHash] = useState("");
   const [reason, setReason] = useState("");
@@ -101,8 +108,6 @@ export function DecisionEditor({
   const [expectedQuantity, setExpectedQuantity] = useState("");
   const [chosenId, setChosenId] = useState("");
   const [mergedIds, setMergedIds] = useState<string[]>([]);
-  const [childIds, setChildIds] = useState<string[]>([]);
-  const [notesOwnerId, setNotesOwnerId] = useState("");
   const [lifecycleEvent, setLifecycleEvent] = useState<
     "assignment" | "exercise" | "expiry" | "roll"
   >("assignment");
@@ -171,11 +176,11 @@ export function DecisionEditor({
           summary: `Stop loss ${stopPrice.trim()} on ${strategyById.get(effectiveStrategyId)?.description ?? effectiveStrategyId}`,
         };
       }
-      case "exclusion":
-      case "reinclusion": {
+      case "import_exclusion":
+      case "import_inclusion": {
         if (importId === "") throw new Error("Select an import.");
         const entry = importList.find((item) => item.id === importId);
-        const verb = kind === "exclusion" ? "Exclude" : "Reinstate";
+        const verb = kind === "import_exclusion" ? "Exclude" : "Reinstate";
         return {
           payload: {
             kind,
@@ -254,24 +259,6 @@ export function DecisionEditor({
             },
           },
           summary: `Merge ${mergedIds.length} strateg${mergedIds.length === 1 ? "y" : "ies"} into ${strategyById.get(chosenId)?.description ?? chosenId}`,
-        };
-      }
-      case "group_split": {
-        if (chosenId === "") throw new Error("Choose the parent strategy.");
-        if (childIds.length === 0)
-          throw new Error("Select at least one child strategy.");
-        return {
-          payload: {
-            kind,
-            sources: [],
-            strategyIds: [chosenId, ...childIds],
-            payload: {
-              parentStrategyId: chosenId,
-              childStrategyIds: childIds,
-              notesOwnerStrategyId: notesOwnerId === "" ? null : notesOwnerId,
-            },
-          },
-          summary: `Split ${strategyById.get(chosenId)?.description ?? chosenId} into ${childIds.length} part(s)`,
         };
       }
       case "lifecycle": {
@@ -471,8 +458,8 @@ export function DecisionEditor({
       </p>
 
       {fixedStrategyId === undefined &&
-      kind !== "exclusion" &&
-      kind !== "reinclusion" &&
+      kind !== "import_exclusion" &&
+      kind !== "import_inclusion" &&
       kind !== "rejection" &&
       kind !== "lifecycle" ? (
         <p>
@@ -520,7 +507,7 @@ export function DecisionEditor({
         </p>
       ) : null}
 
-      {kind === "exclusion" || kind === "reinclusion" ? (
+      {kind === "import_exclusion" || kind === "import_inclusion" ? (
         <p>
           <label>
             Import{" "}
@@ -699,58 +686,6 @@ export function DecisionEditor({
                 "0"}
             </label>
           ))}
-        </fieldset>
-      ) : null}
-
-      {kind === "group_split" ? (
-        <fieldset>
-          <legend>Split strategy</legend>
-          <p>
-            <label>
-              Parent strategy{" "}
-              <select
-                aria-label="Parent strategy"
-                value={chosenId}
-                onChange={(event) => setChosenId(event.target.value)}
-              >
-                <option value="">Choose the parent</option>
-                {strategies.map((strategy) => (
-                  <option key={strategy.id} value={strategy.id}>
-                    {strategy.description}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </p>
-          {strategies.map((strategy) => (
-            <label key={strategy.id} className="check-row">
-              <input
-                type="checkbox"
-                checked={childIds.includes(strategy.id)}
-                onChange={() => toggle(childIds, setChildIds, strategy.id)}
-              />
-              {strategy.description} · qty{" "}
-              {strategy.positions.map((entry) => entry.quantity).join("/") ||
-                "0"}
-            </label>
-          ))}
-          <p>
-            <label>
-              Notes owner{" "}
-              <select
-                aria-label="Notes owner"
-                value={notesOwnerId}
-                onChange={(event) => setNotesOwnerId(event.target.value)}
-              >
-                <option value="">No notes owner</option>
-                {strategies.map((strategy) => (
-                  <option key={strategy.id} value={strategy.id}>
-                    {strategy.description}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </p>
         </fieldset>
       ) : null}
 

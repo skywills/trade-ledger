@@ -273,7 +273,7 @@ describe("final acceptance: scenarios A-D survive rebuild, backup and restore", 
       expect(decisionsBefore.map((decision) => decision.kind)).toEqual([
         "notes",
         "stop_loss",
-        "exclusion",
+        "import_exclusion",
         "rejection",
       ]);
 

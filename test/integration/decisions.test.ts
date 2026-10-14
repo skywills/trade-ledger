@@ -20,6 +20,7 @@ import {
   decisionWatermark,
   effectiveDecisions,
   readDecisions,
+  readStrategyMetadata,
 } from "../../src/server/decisions/service.js";
 import {
   commitImport,
@@ -580,33 +581,158 @@ describe("retained decisions and stable strategy identities", () => {
       expect(effective[0]?.payload).toMatchObject({ evidenceHash: "def456" });
     }));
 
-  it("records exclusion and reinclusion of imports and remaps processed decisions", async () =>
+  it("excludes then reinstates an import through the schema decision path", async () =>
     withStore(async (store) => {
       const importId = await commitBytes(store, "spread.csv", fixtures.spread);
+
+      const baseline = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: 0,
+      });
+      expect(baseline.executions.length).toBeGreaterThan(0);
 
       const exclusion = await appendDecision(
         store,
         exclusionInput({ importId }),
         0,
       );
-      expect(exclusion.kind).toBe("exclusion");
+      expect(exclusion.kind).toBe("import_exclusion");
+      expect(exclusion.sequence).toBe(1);
+
+      const excluded = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: exclusion.sequence,
+      });
+      // The excluded import contributes no executions; raw evidence is retained.
+      expect(excluded.executions).toHaveLength(0);
 
       const reinclusion = await appendDecision(
         store,
-        reinclusionInput({ importId }),
+        reinclusionInput({ importId, supersedesId: exclusion.id }),
         1,
       );
-      expect(reinclusion.kind).toBe("reinclusion");
+      expect(reinclusion.kind).toBe("import_inclusion");
+      expect(reinclusion.sequence).toBe(2);
 
-      const decisions = readDecisions(store, decisionWatermark(store));
-      expect(decisions).toHaveLength(2);
+      const restored = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: reinclusion.sequence,
+      });
+      expect(restored.executions).toHaveLength(baseline.executions.length);
 
-      const baseline = await normalizeLedger(store, {
+      const retainedRows = store.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM import_rows WHERE import_id = ?",
+        )
+        .get(importId) as { count: number };
+      expect(retainedRows.count).toBeGreaterThan(0);
+    }));
+
+  it("merges two weakly-identified rows only through a retained identity_binding decision", async () =>
+    withStore(async (store) => {
+      const weakRow: ExecutionFields = {
+        ClientAccountID: "SIM-A",
+        AssetClass: "STK",
+        Symbol: "WEAK",
+        UnderlyingSymbol: "WEAK",
+        Conid: "9900001",
+        CurrencyPrimary: "USD",
+        TradeDate: "2026-09-03",
+        DateTime: "2026-09-03 10:00:00",
+        Quantity: "+1",
+        TradePrice: "10",
+        NetCash: "-10",
+        "Notes/Codes": "O",
+        Multiplier: "1",
+      };
+      await commitBytes(
+        store,
+        "weak.csv",
+        buildExecutionTable([executionRow(weakRow), executionRow(weakRow)]),
+      );
+
+      // Weak rows have no TradeID/IBExecID, so they stay separate by default.
+      const unbound = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: 0,
+      });
+      expect(unbound.executions).toHaveLength(2);
+
+      await activateLatestBuild(store);
+      const rows = store.db
+        .prepare(
+          `SELECT import_id AS importId, row_number AS rowNumber
+           FROM import_rows ORDER BY import_id, row_number`,
+        )
+        .all() as Array<{ importId: string; rowNumber: number }>;
+      expect(rows).toHaveLength(2);
+      const first = rows[0];
+      const second = rows[1];
+      if (first === undefined || second === undefined) {
+        throw new Error("expected two weak rows");
+      }
+
+      await appendDecision(
+        store,
+        identityBindingInput({
+          source: first,
+          canonicalIdentity: "canonical-weak",
+          expectedQuantity: "1",
+        }),
+        0,
+      );
+      const binding = await appendDecision(
+        store,
+        identityBindingInput({
+          source: second,
+          canonicalIdentity: "canonical-weak",
+          expectedQuantity: "1",
+        }),
+        1,
+      );
+      expect(binding.kind).toBe("identity_binding");
+
+      const merged = await normalizeLedger(store, {
+        parserVersion: "flex-v1",
+        decisionWatermark: binding.sequence,
+      });
+      expect(merged.executions).toHaveLength(1);
+      expect(merged.executions[0]?.sources).toHaveLength(2);
+    }));
+
+  it("returns retained notes and stop_loss from the read path across a rebuild", async () =>
+    withStore(async (store) => {
+      const strategy = "strategy-metadata";
+      await appendDecision(
+        store,
+        notesInput({ strategyId: strategy, text: "Volatility play" }),
+        0,
+      );
+      await appendDecision(
+        store,
+        stopLossInput({ strategyId: strategy, price: "2.50" }),
+        1,
+      );
+
+      expect(readStrategyMetadata(store, strategy)).toEqual({
+        notes: "Volatility play",
+        stopLoss: "2.50",
+      });
+
+      // A full re-normalization never touches retained metadata.
+      await normalizeLedger(store, {
         parserVersion: "flex-v1",
         decisionWatermark: decisionWatermark(store),
       });
-      const executions = baseline.executions;
-      expect(executions.length).toBeGreaterThan(0);
+
+      expect(readStrategyMetadata(store, strategy)).toEqual({
+        notes: "Volatility play",
+        stopLoss: "2.50",
+      });
+      expect(readStrategyMetadata(store, "other")).toEqual({
+        notes: null,
+        stopLoss: null,
+      });
     }));
 
   it("records notes and stop_loss on strategies with stable strategy IDs across reopens", async () =>
