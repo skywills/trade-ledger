@@ -350,7 +350,10 @@ describe("import preview, original storage, and commit", () => {
         { now: atInstant },
       );
       await expect(
-        commitImport(store, pC.id, { faults: crashHooks(["afterPromote"]) }),
+        commitImport(store, pC.id, {
+          faults: crashHooks(["afterPromote"]),
+          now: atInstant,
+        }),
       ).rejects.toThrow(/afterPromote/);
       expect(existsSync(contentPath(store, pC.hash))).toBe(true);
 
