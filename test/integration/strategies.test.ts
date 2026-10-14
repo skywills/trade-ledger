@@ -338,7 +338,7 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       ]);
     }));
 
-  it("classifies mixed-expiry groups as custom", () =>
+  it("labels mixed-expiry groups as Mixed with no expiry year", () =>
     withStore(async (store) => {
       const rows = buildExecutionTable([
         optionLeg("MIXED", "T-M-1", { Expiry: "2026-12-18" }),
@@ -354,7 +354,21 @@ describe("strategy grouping, closes and option lifecycle links", () => {
 
       expect(projection.strategies).toHaveLength(1);
       expect(projection.strategies[0]?.type).toBe("custom");
-      expect(projection.strategies[0]?.expiry).toBeNull();
+      expect(projection.strategies[0]?.expiry).toBe("Mixed");
+      expect(projection.strategies[0]?.expiryYear).toBeNull();
+    }));
+
+  it("keeps the real expiry and year for a single-expiry group", () =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable([
+        optionLeg("SINGLE", "T-S-1", { Expiry: "2027-01-15" }),
+      ]);
+      const ledger = await ledgerFrom(store, "single.csv", rows);
+      const projection = groupStrategies(ledger, [], resolveId);
+
+      expect(projection.strategies).toHaveLength(1);
+      expect(projection.strategies[0]?.expiry).toBe("2027-01-15");
+      expect(projection.strategies[0]?.expiryYear).toBe(2027);
     }));
 
   it("tracks partial closure without inventing a close date", () =>

@@ -171,7 +171,10 @@ export function recomputePresentation(draft: StrategyDraft): void {
         .filter((expiry): expiry is string => expiry !== null),
     ),
   ];
-  draft.expiry = expiries.length === 1 ? (expiries[0] ?? null) : null;
+  // More than one distinct contract expiry is surfaced as the explicit
+  // "Mixed" label rather than an ambiguous null; zero known expiries (shares,
+  // unknown contracts) stay null, not "Mixed".
+  draft.expiry = expiries.length > 1 ? "Mixed" : (expiries[0] ?? null);
   const symbol =
     draft.openingLegs[0]?.instrument.underlying ??
     draft.openingLegs[0]?.instrument.symbol ??

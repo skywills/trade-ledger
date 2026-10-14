@@ -61,6 +61,17 @@ export function StrategyDetail({ id }: { id: string }) {
 
   const history = listDecisions(id);
 
+  // Actual contract expiry dates behind the strategy, so a "Mixed" label in
+  // the journal can be understood without leaving the detail view.
+  const actualExpiries = [
+    ...new Set(
+      allocations
+        .map((allocation) => executionByKey.get(allocation.executionKey))
+        .map((execution) => execution?.instrument.expiry)
+        .filter((expiry): expiry is string => expiry !== undefined),
+    ),
+  ].sort();
+
   return (
     <section>
       <p>
@@ -100,6 +111,10 @@ export function StrategyDetail({ id }: { id: string }) {
           <dd>{strategy.closeDate ?? "—"}</dd>
           <dt>Expiry</dt>
           <dd>{strategy.expiry ?? "—"}</dd>
+          <dt>Contract expiries (actual)</dt>
+          <dd data-testid="actual-expiries">
+            {actualExpiries.length > 0 ? actualExpiries.join(", ") : "—"}
+          </dd>
           <dt>Expiry year</dt>
           <dd>{strategy.expiryYear ?? "—"}</dd>
           <dt>Complete</dt>

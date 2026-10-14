@@ -269,6 +269,45 @@ test("partial close shows status and expiry year, stock shows no year", async ({
   await expect(stockRow.locator('[data-column="year"]')).toContainText("—");
 });
 
+test("mixed-expiry strategies show Mixed and actual dates in detail", async ({
+  page,
+}) => {
+  const mixed = buildExecutionTable([
+    optionLeg("MIX-OPEN", "T-MIX1", {
+      Symbol: "MIXEXP",
+      UnderlyingSymbol: "MIXEXP",
+      Conid: "6400001",
+      Expiry: "2026-12-18",
+      Quantity: "+1",
+      NetCash: "-200",
+      TradePrice: "2",
+      "Notes/Codes": "O",
+    }),
+    optionLeg("MIX-OPEN", "T-MIX2", {
+      Symbol: "MIXEXP",
+      UnderlyingSymbol: "MIXEXP",
+      Conid: "6400002",
+      Expiry: "2027-01-15",
+      Strike: "110",
+      Quantity: "-1",
+      NetCash: "150",
+      TradePrice: "1.5",
+      "Notes/Codes": "O",
+    }),
+  ]);
+  await confirmImport(page, [csvFile("mixed-expiry.csv", mixed)]);
+  await page.getByRole("link", { name: "Journal" }).click();
+
+  const row = page.getByRole("row").filter({ hasText: "MIXEXP" });
+  await expect(row.locator('[data-column="expiry"]')).toContainText("Mixed");
+  await expect(row.locator('[data-column="year"]')).toContainText("—");
+
+  await row.getByRole("link", { name: /MIXEXP/ }).click();
+  const dates = page.getByTestId("actual-expiries");
+  await expect(dates).toContainText("2026-12-18");
+  await expect(dates).toContainText("2027-01-15");
+});
+
 test("notes and stop loss survive a full rebuild", async ({ page }) => {
   await page.goto("/review");
   await page.getByLabel("Decision kind").selectOption("notes");
