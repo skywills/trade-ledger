@@ -37,9 +37,10 @@ export async function registerMaintenanceRoutes(
         mkdirSync(backupsDir, { recursive: true });
         const outputPath = join(backupsDir, `${jobId}.tar`);
         await createBackup(store, outputPath, { signal: controller.signal });
-        await jobs.finish(jobId, "complete");
+        // Never overwrite a status a concurrent cancel already recorded.
+        await jobs.finishIfRunning(jobId, "complete");
       } catch (error) {
-        await jobs.finish(
+        await jobs.finishIfRunning(
           jobId,
           controller.signal.aborted ? "cancelled" : "failed",
           error instanceof Error ? error.message : String(error),

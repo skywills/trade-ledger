@@ -31,6 +31,16 @@ function invalid(message: string): AppError {
   return new AppError("BACKUP_INVALID", message, 400);
 }
 
+function assertNotLocked(targetDir: string): void {
+  if (isDataDirLocked(targetDir)) {
+    throw new AppError(
+      "DATA_DIR_LOCKED",
+      "Stop the running journal instance before restoring a backup.",
+      409,
+    );
+  }
+}
+
 /**
  * Rejects entries that could escape the extraction root: absolute paths,
  * parent-directory traversal, or link entries that could point outside.
@@ -195,13 +205,7 @@ export async function restoreBackup(
   if (!existsSync(archivePath)) {
     throw invalid(`No backup archive exists at ${archivePath}.`);
   }
-  if (isDataDirLocked(targetDir)) {
-    throw new AppError(
-      "DATA_DIR_LOCKED",
-      "Stop the running journal instance before restoring a backup.",
-      409,
-    );
-  }
+  assertNotLocked(targetDir);
 
   const parent = dirname(resolve(targetDir));
   mkdirSync(parent, { recursive: true });
@@ -230,7 +234,11 @@ export async function restoreBackup(
     // The manifest is archive metadata, not journal data.
     rmSync(manifestPath, { force: true });
 
+    // Re-check the lock immediately before touching the target: a process that
+    // started during extraction/validation must never be replaced under.
+    assertNotLocked(targetDir);
     makePreRestoreBackup(targetDir);
+    assertNotLocked(targetDir);
     swapIn(stagingDir, targetDir);
     swapped = true;
   } catch (error) {

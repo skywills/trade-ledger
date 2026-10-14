@@ -16,9 +16,8 @@ import { BuildBadge, ErrorPanel } from "../components.js";
 import { ModelsPanel } from "./ModelsPanel.js";
 
 /**
- * Maintenance owns rebuild/rollback controls. Models (Task 12) and backup
- * (Task 14) panels extend this page later; for now it never fabricates any
- * chart or risk metric.
+ * Maintenance owns rebuild/rollback, backup, and offline restore controls, plus
+ * the model profiles panel. It never fabricates any chart or risk metric.
  */
 export function MaintenancePage() {
   const journal = useJson("/api/journal?pageSize=1", JournalEnvelope);

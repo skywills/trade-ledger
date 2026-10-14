@@ -238,6 +238,10 @@ export async function createBackup(
       },
     );
 
+    if (options.signal?.aborted) {
+      throw new AppError("BACKUP_CANCELLED", "The backup was cancelled.", 409);
+    }
+
     const database = toEntry(stagingDir, SNAPSHOT_FILENAME);
     const originals = captured.originals.map((file) =>
       toEntry(stagingDir, file.relPath),

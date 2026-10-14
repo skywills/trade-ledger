@@ -35,6 +35,7 @@ import {
   listImports,
   previewImport,
 } from "../../src/server/imports/service.js";
+import { JobService } from "../../src/server/jobs/service.js";
 import { LEDGER_PARSER_VERSION } from "../../src/server/ledger/normalize.js";
 import {
   createBackup,
@@ -249,9 +250,13 @@ describe("consistent backup and offline restore", () => {
     try {
       await seedStore(store);
       await createBackup(store, archive);
+      // Corrupt bytes inside the manifest payload (not tar zero-padding) so the
+      // archive is deterministically invalid regardless of entry alignment.
       const bytes = readFileSync(archive);
-      bytes[Math.floor(bytes.length / 2)] =
-        (bytes[Math.floor(bytes.length / 2)] ?? 0) ^ 0xff;
+      const needle = Buffer.from("ibkr-trade-journal-backup");
+      const index = bytes.indexOf(needle);
+      expect(index).toBeGreaterThan(-1);
+      bytes[index] = (bytes[index] ?? 0) ^ 0xff;
       writeFileSync(archive, bytes);
 
       const freshDir = join(trackTemp("ibkr-restore-corrupt-"), "data");
@@ -518,6 +523,28 @@ describe("consistent backup and offline restore", () => {
       const manifest = await createBackup(store, archive);
       await pending;
       expect(manifest.decisionWatermark).toBe(1);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("does not let a late backup success overwrite a cancelled job", async () => {
+    const { store, dispose } = await createTestStore();
+    try {
+      const jobs = new JobService(store);
+      const jobId = await jobs.create("backup", {});
+      await jobs.progress(jobId, "snapshotting");
+      await jobs.cancel(jobId);
+      expect(jobs.read(jobId)?.status).toBe("cancelled");
+
+      const updated = await jobs.finishIfRunning(jobId, "complete");
+      expect(updated).toBe(false);
+      expect(jobs.read(jobId)?.status).toBe("cancelled");
+
+      const runningId = await jobs.create("backup", {});
+      const finished = await jobs.finishIfRunning(runningId, "complete");
+      expect(finished).toBe(true);
+      expect(jobs.read(runningId)?.status).toBe("complete");
     } finally {
       await dispose();
     }

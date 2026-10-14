@@ -107,6 +107,25 @@ export class JobService {
     });
   }
 
+  /**
+   * Finishes a job only while it is still `running`, returning whether it did.
+   * A job cancelled while its work was reaching a terminal state keeps the
+   * `cancelled` status instead of being overwritten by a late success.
+   */
+  finishIfRunning(jobId: Id, status: string, error?: string): Promise<boolean> {
+    this.controllers.delete(jobId);
+    return write(this.store, () => {
+      const result = this.store.db
+        .prepare(
+          `UPDATE jobs
+           SET status = ?, progress = ?, finished_at = ?, error = ?
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(status, status, this.now().toISOString(), error ?? null, jobId);
+      return result.changes > 0;
+    });
+  }
+
   read(jobId: Id): JobRecord | null {
     const row = this.store.db
       .prepare(
