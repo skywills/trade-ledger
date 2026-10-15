@@ -1,9 +1,13 @@
 import type { SessionEvent } from "@nathapp/nax-agent";
 import { describe, expect, it } from "vitest";
+import { saveProfile } from "../../src/server/ai/profiles.js";
 import {
   DEFAULT_TURN_LIMITS,
+  resolveProfile,
   UsageMeter,
 } from "../../src/server/ai/session-host.js";
+import { profileInput } from "../helpers/chat.js";
+import { createTestStore } from "../helpers/store.js";
 
 const base = {
   sessionId: "s",
@@ -85,5 +89,29 @@ describe("UsageMeter", () => {
       generatedTokens: 30,
     });
     expect(meter.costUsd).toBeCloseTo(0.05);
+  });
+});
+
+describe("resolveProfile", () => {
+  it("requires cloud confirmation and a verified profile", async () => {
+    const t = await createTestStore();
+    try {
+      const cloud = await saveProfile(
+        t.store,
+        {
+          ...profileInput("cloud", "https://example.invalid/v1"),
+          mode: "cloud",
+        },
+        null,
+      );
+      expect(() =>
+        resolveProfile(t.store, cloud.id, { cloudConfirmed: true }),
+      ).toThrow(expect.objectContaining({ code: "PROFILE_NOT_VERIFIED" }));
+      expect(() =>
+        resolveProfile(t.store, null, { cloudConfirmed: false }),
+      ).toThrow(expect.objectContaining({ code: "NO_PROFILE" }));
+    } finally {
+      await t.dispose();
+    }
   });
 });

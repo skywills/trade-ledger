@@ -244,12 +244,6 @@ export type SubmittedProposalDto = z.infer<typeof SubmittedProposalSchema>;
 
 export const AnalysisEnvelopeSchema = z.object({ run: AnalysisRunSchema });
 
-export const StartAnalysisResponseSchema = z.object({ runId: z.string() });
-
-export const AnswerAnalysisResponseSchema = z.object({
-  status: z.enum(["accepted", "expired", "cancelled", "unknown"]),
-});
-
 export const AcceptAnalysisResponseSchema = z.object({
   decisions: z.array(
     z.object({
