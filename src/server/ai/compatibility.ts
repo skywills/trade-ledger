@@ -45,6 +45,9 @@ const PROBE_TOOL: ToolDefinition = {
   },
 };
 
+/** Probe output cap; leaves room for a reasoning model to think before calling. */
+const PROBE_MAX_TOKENS = 32_000;
+
 const PROBE_PROMPT =
   'Call the journal_probe tool exactly once with {"value":"ok"}. Do not answer with text.';
 
@@ -153,7 +156,7 @@ export async function testProfile(
     const completed = await client.complete(model, {
       messages: [{ role: "user", content: PROBE_PROMPT }],
       tools: [PROBE_TOOL],
-      maxTokens: Math.min(profile.maxTokens, 64),
+      maxTokens: Math.min(profile.maxTokens, PROBE_MAX_TOKENS),
       signal,
     });
     const verdict = probeSucceeded(completed.toolCalls);
