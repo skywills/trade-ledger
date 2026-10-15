@@ -70,7 +70,7 @@ export function Composer({
     const csvs = Array.from(files ?? []).filter((f) =>
       f.name.toLowerCase().endsWith(".csv"),
     );
-    if (csvs.length === 0) return;
+    if (csvs.length === 0 || disabled || uploading) return;
     setUploading(true);
     setError(null);
     try {
@@ -85,7 +85,7 @@ export function Composer({
 
   async function submit() {
     const trimmed = text.trim();
-    if (trimmed === "" || disabled) return;
+    if (trimmed === "" || disabled || uploading) return;
     try {
       await onSend(
         trimmed,
@@ -125,7 +125,7 @@ export function Composer({
           type="button"
           className="secondary"
           data-testid="composer-attach"
-          disabled={uploading}
+          disabled={uploading || disabled}
           onClick={() => fileInput.current?.click()}
         >
           Attach CSV
@@ -147,7 +147,11 @@ export function Composer({
           rows={2}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing
+            ) {
               e.preventDefault();
               void submit();
             }

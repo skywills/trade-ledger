@@ -8,9 +8,18 @@ import { ErrorPanel } from "../components.js";
 import { Link, navigate } from "../navigation.js";
 import { ThreadView } from "./ThreadView.js";
 
+const PROFILE_CODES = new Set([
+  "NO_PROFILE",
+  "PROFILE_DISABLED",
+  "PROFILE_NOT_VERIFIED",
+]);
+
 export function ChatPage({ threadId }: { threadId: string | undefined }) {
   const threads = useJson("/api/chat/threads?pageSize=100", ThreadsEnvelope);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    message: string;
+    code: string | null;
+  } | null>(null);
   const [cloudConfirmed, setCloudConfirmed] = useState(false);
 
   async function newThread() {
@@ -27,8 +36,8 @@ export function ChatPage({ threadId }: { threadId: string | undefined }) {
     } catch (err) {
       setError(
         err instanceof ApiError
-          ? err.message
-          : "Could not start a conversation.",
+          ? { message: err.message, code: err.code }
+          : { message: "Could not start a conversation.", code: null },
       );
     }
   }
@@ -51,7 +60,7 @@ export function ChatPage({ threadId }: { threadId: string | undefined }) {
           />{" "}
           Allow sending journal data to a cloud model
         </label>
-        {error !== null ? <ErrorPanel message={error} /> : null}
+        {error !== null ? <ErrorPanel message={error.message} /> : null}
         <ul>
           {(threads.data?.items ?? []).map((t) => (
             <li key={t.id}>
@@ -64,7 +73,7 @@ export function ChatPage({ threadId }: { threadId: string | undefined }) {
             </li>
           ))}
         </ul>
-        {error?.includes("profile") === true ? (
+        {error?.code != null && PROFILE_CODES.has(error.code) ? (
           <p>
             <Link to="/maintenance">
               Configure a model in Maintenance → Models

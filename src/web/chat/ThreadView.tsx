@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { ThreadDetailDto } from "../../shared/chat-api.js";
+import { ApiError } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
 import { useQuery } from "../navigation.js";
 import { ProposalList } from "../review/ProposalList.js";
@@ -67,6 +69,15 @@ function MessageList({
 export function ThreadView({ threadId }: { threadId: string }) {
   const { state, send, cancel, answer, reload } = useThread(threadId);
   const query = useQuery();
+  const [stopError, setStopError] = useState<string | null>(null);
+  const stop = () => {
+    setStopError(null);
+    cancel().catch((err: unknown) =>
+      setStopError(
+        err instanceof ApiError ? err.message : "Could not stop the turn.",
+      ),
+    );
+  };
   if (state.detail === null) {
     return state.error !== null ? (
       <ErrorPanel message={state.error} />
@@ -80,11 +91,7 @@ export function ThreadView({ threadId }: { threadId: string }) {
   const pending = state.pending;
   return (
     <section className="thread-view">
-      <ThreadHeader
-        thread={thread}
-        running={running}
-        onStop={() => void cancel()}
-      />
+      <ThreadHeader thread={thread} running={running} onStop={stop} />
       <MessageList state={state} detail={state.detail} />
       {runs
         .filter((r) => r.proposals.length > 0)
@@ -97,9 +104,15 @@ export function ThreadView({ threadId }: { threadId: string }) {
         ))}
       {pending !== null ? (
         <InteractionCard
+          key={pending.requestId}
           pending={pending}
           onAnswer={(reply) => answer(pending.requestId, reply)}
         />
+      ) : null}
+      {stopError !== null ? (
+        <p className="error-text" role="alert">
+          {stopError}
+        </p>
       ) : null}
       {state.error !== null ? <ErrorPanel message={state.error} /> : null}
       {limited ? (

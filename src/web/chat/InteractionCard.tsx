@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { PendingDto } from "../../shared/chat-api.js";
+import { ApiError } from "../api.js";
 
 type Reply = { decision: "allow" | "deny" } | { text: string };
 
@@ -12,10 +13,16 @@ export function InteractionCard({
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const run = async (reply: Reply) => {
     setBusy(true);
+    setError(null);
     try {
       await onAnswer(reply);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not send your answer.",
+      );
     } finally {
       setBusy(false);
     }
@@ -31,6 +38,11 @@ export function InteractionCard({
         <p>
           <strong>The agent wants to:</strong> {pending.text}
         </p>
+        {error !== null ? (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        ) : null}
         <div className="actions">
           <button
             type="button"
@@ -56,6 +68,11 @@ export function InteractionCard({
   return (
     <div className="interaction-card" data-testid="question-card">
       <p>{pending.text}</p>
+      {error !== null ? (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      ) : null}
       <input
         aria-label="Answer"
         value={text}
