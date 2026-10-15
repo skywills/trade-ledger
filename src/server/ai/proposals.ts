@@ -23,7 +23,7 @@ import {
 } from "../decisions/service.js";
 import type { Store } from "../storage/database.js";
 import { makeIssue } from "../strategies/projection.js";
-import { readRun, updateRun } from "./runs.js";
+import { markProposalAccepted, readRun, updateRun } from "./runs.js";
 
 /**
  * A model's reconciliation proposal. It mirrors the Task 6 financial decision
@@ -387,15 +387,7 @@ export async function acceptProposal(
     proposalDecisionInput(submitted.proposal),
     expectedWatermark,
   );
-  const proposals = run.proposals.map((entry) =>
-    entry.id === proposalId ? { ...entry, accepted: true } : entry,
-  );
-  const allAccepted = proposals.every((entry) => entry.accepted);
-  await updateRun(store, runId, {
-    proposals,
-    acceptedDecisionIds: [...run.acceptedDecisionIds, decision.id],
-    status: allAccepted ? "accepted" : run.status,
-  });
+  await markProposalAccepted(store, runId, proposalId, decision.id);
   return [decision];
 }
 

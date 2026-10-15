@@ -232,4 +232,59 @@ describe("thread-aware proposal runs", () => {
       pendingProposals: 1,
     });
   });
+
+  it("keeps a proposal appended while an acceptance is in flight", async () => {
+    const s = await store();
+    const { ledger, buildId } = await seedLedger(s);
+    const thread = await createThread(s, draft);
+    const profile = await localProfile(s);
+    await insertRun(
+      s,
+      {
+        id: "run-2",
+        profileSnapshot: profile,
+        evidence: buildEvidenceSnapshot(s, { buildId, issueKeys: [] }),
+        sessionId: thread.sessionId,
+        createdAt: now.toISOString(),
+        threadId: thread.id,
+      },
+      "proposal_ready",
+    );
+    const execution = ledger.executions[0];
+    const source = execution?.sources[0];
+    if (execution === undefined || source === undefined)
+      throw new Error("no execution");
+    const proposal = {
+      kind: "manual_allocation" as const,
+      strategyIds: ["strategy-test"],
+      sources: execution.sources,
+      rationale: "r",
+      payload: {
+        strategyId: "strategy-test",
+        source,
+        allocations: [
+          {
+            executionKey: execution.key,
+            quantity: execution.quantity,
+            netCash: execution.netCash,
+            brokerPnl: null,
+          },
+        ],
+      },
+    };
+    const first = {
+      id: newProposalId(),
+      proposal,
+      submittedAt: now.toISOString(),
+      accepted: false,
+    };
+    await appendRunProposal(s, "run-2", first);
+    await Promise.all([
+      acceptProposal(s, "run-2", first.id, 0),
+      appendRunProposal(s, "run-2", { ...first, id: newProposalId() }),
+    ]);
+    const run = readRun(s, "run-2");
+    expect(run?.proposals.map((p) => p.accepted)).toEqual([true, false]);
+    expect(run?.acceptedDecisionIds).toHaveLength(1);
+  });
 });

@@ -290,6 +290,44 @@ export function appendRunProposal(
   });
 }
 
+/**
+ * Marks one proposal accepted and records its decision, re-reading the row
+ * inside the writer queue so a concurrently appended proposal is never lost.
+ */
+export function markProposalAccepted(
+  store: Store,
+  runId: Id,
+  proposalId: Id,
+  decisionId: Id,
+): Promise<void> {
+  return write(store, () => {
+    const current = readRun(store, runId);
+    if (current === null) {
+      throw new AppError(
+        "RUN_NOT_FOUND",
+        `No analysis run exists for id ${runId}.`,
+        404,
+      );
+    }
+    const proposals = current.proposals.map((entry) =>
+      entry.id === proposalId ? { ...entry, accepted: true } : entry,
+    );
+    const status = proposals.every((entry) => entry.accepted)
+      ? "accepted"
+      : current.status;
+    store.db
+      .prepare(
+        "UPDATE ai_runs SET proposal_json = ?, decision_references_json = ?, status = ? WHERE id = ?",
+      )
+      .run(
+        JSON.stringify({ proposals }),
+        JSON.stringify([...current.acceptedDecisionIds, decisionId]),
+        status,
+        runId,
+      );
+  });
+}
+
 export function listRunsForThread(store: Store, threadId: Id): PersistedRun[] {
   const rows = store.db
     .prepare("SELECT id FROM ai_runs WHERE thread_id = ? ORDER BY created_at")
