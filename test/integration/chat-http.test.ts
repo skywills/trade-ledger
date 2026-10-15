@@ -120,6 +120,22 @@ describe("chat HTTP API", () => {
     await reader?.cancel();
   });
 
+  it("closes promptly while a browser still has an SSE stream open", async () => {
+    const app = await appWithModel([{ kind: "text", text: "x" }]);
+    const id = await createChatThread(app);
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const response = await fetch(`${base}/api/chat/threads/${id}/events`);
+    const reader = response.body?.getReader();
+    const first = new TextDecoder().decode((await reader?.read())?.value);
+    expect(first).toContain("event: ready");
+    const closed = await Promise.race([
+      app.close().then(() => "closed"),
+      new Promise((r) => setTimeout(() => r("hung"), 4000)),
+    ]);
+    expect(closed).toBe("closed");
+    await reader?.cancel().catch(() => undefined);
+  });
+
   it("validates input and rejects cross-origin mutations", async () => {
     const app = await appWithModel([]);
     const id = await createChatThread(app);

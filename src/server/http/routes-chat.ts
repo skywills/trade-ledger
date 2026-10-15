@@ -140,34 +140,50 @@ function registerTurnControl(
   });
 }
 
+type EndStream = () => void;
+
 function registerEvents(
   app: FastifyInstance,
   store: Store,
   chat: ChatService,
 ): void {
+  const open = new Set<EndStream>();
+  // Hijacked SSE responses are never ended by Fastify; end them before close
+  // waits on connections, or app.close() hangs while a browser has /chat open.
+  app.addHook("preClose", async () => {
+    for (const end of [...open]) end();
+  });
+
   app.get("/api/chat/threads/:id/events", async (request, reply) => {
     const id = idOf(request);
     const thread = requireThread(store, id);
     reply.hijack();
-    reply.raw.writeHead(200, {
+    const raw = reply.raw;
+    raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
     });
-    const write = (event: string, data: unknown) =>
-      reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    write("ready", { threadStatus: thread.status });
+    const writable = () => !raw.writableEnded && !raw.destroyed;
+    const send = (chunk: string) => {
+      if (writable()) raw.write(chunk);
+    };
+    send(
+      `event: ready\ndata: ${JSON.stringify({ threadStatus: thread.status })}\n\n`,
+    );
     const unsubscribe = chat.bus.subscribe(id, (frame) =>
-      write(frame.event, frame.data),
+      send(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`),
     );
-    const keepalive = setInterval(
-      () => reply.raw.write(": keepalive\n\n"),
-      KEEPALIVE_MS,
-    );
-    request.raw.on("close", () => {
+    const keepalive = setInterval(() => send(": keepalive\n\n"), KEEPALIVE_MS);
+    const end: EndStream = () => {
       clearInterval(keepalive);
       unsubscribe();
-    });
+      open.delete(end);
+      if (writable()) raw.end();
+    };
+    open.add(end);
+    request.raw.on("close", end);
+    raw.on("error", end);
   });
 }
 
