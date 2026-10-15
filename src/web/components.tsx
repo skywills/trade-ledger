@@ -63,3 +63,28 @@ export function BuildBadge({
     </p>
   );
 }
+
+/** Horizontally scrollable, keyboard-focusable wrapper for wide tables. */
+export function TableScroll({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must be keyboard reachable
+    <section className="table-scroll" aria-label={label} tabIndex={0}>
+      {children}
+    </section>
+  );
+}
+
+/** Sign-aware class for a decimal string so gains/losses are not colour-only
+ * (the formatted amount still carries its own sign). */
+export function pnlClass(value: string | null): string | undefined {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("-")) return "pnl-loss";
+  return /[1-9]/.test(trimmed) ? "pnl-gain" : undefined;
+}

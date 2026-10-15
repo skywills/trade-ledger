@@ -1,5 +1,5 @@
 import { ReviewEnvelope, useJson } from "../api.js";
-import { BuildBadge, ErrorPanel, Loading } from "../components.js";
+import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link } from "../navigation.js";
 import { AnalysisPanel } from "./AnalysisPanel.js";
 import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
@@ -24,35 +24,53 @@ export function ReviewPage() {
           onRetry={remote.reload}
         />
       ) : (
-        <table aria-label="Review items">
-          <thead>
-            <tr>
-              <th>Severity</th>
-              <th>Code</th>
-              <th>Sources</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(remote.data?.items ?? []).map((issue) => (
-              <tr key={issue.key}>
-                <td>{issue.severity}</td>
-                <td>{issue.code}</td>
-                <td>
-                  {issue.sources.length === 0
-                    ? "—"
-                    : issue.sources.map((source) => (
-                        <Link
-                          key={`${source.importId}:${source.rowNumber}`}
-                          to={`/imports?import=${source.importId}&row=${source.rowNumber}`}
-                        >
-                          {source.rowNumber}{" "}
-                        </Link>
-                      ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <TableScroll label="Review items table">
+            <table aria-label="Review items">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>Code</th>
+                  <th>Sources</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(remote.data?.items ?? []).map((issue) => (
+                  <tr key={issue.key}>
+                    <td>
+                      <span
+                        className={`badge ${issue.severity === "error" ? "badge-danger" : "badge-warn"}`}
+                      >
+                        <span aria-hidden="true">
+                          {issue.severity === "error" ? "✕" : "⚠"}
+                        </span>
+                        {issue.severity}
+                      </span>
+                    </td>
+                    <td>{issue.code}</td>
+                    <td>
+                      {issue.sources.length === 0
+                        ? "—"
+                        : issue.sources.map((source) => (
+                            <Link
+                              key={`${source.importId}:${source.rowNumber}`}
+                              to={`/imports?import=${source.importId}&row=${source.rowNumber}`}
+                            >
+                              {source.rowNumber}{" "}
+                            </Link>
+                          ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
+          {(remote.data?.items.length ?? 0) === 0 ? (
+            <p className="empty-state">
+              No review issues in the active build. Nothing needs attention.
+            </p>
+          ) : null}
+        </>
       )}
 
       <DecisionEditor />

@@ -26,6 +26,7 @@ export function MaintenancePage() {
   const [error, setError] = useState<string | null>(null);
   const [rollbackId, setRollbackId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [backupJob, setBackupJob] = useState<Job | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const restore = useJson(
@@ -89,6 +90,7 @@ export function MaintenancePage() {
   }
 
   async function rollback() {
+    setConfirmingRollback(false);
     if (rollbackId.trim() === "") return;
     setError(null);
     setNotice(null);
@@ -115,97 +117,151 @@ export function MaintenancePage() {
         stale={journal.data?.stale ?? false}
       />
 
-      <h3>Rebuild</h3>
-      <p>
-        <button
-          type="button"
-          onClick={() => void startBuild("full")}
-          disabled={busy}
-        >
-          Rebuild full
-        </button>{" "}
-        <button
-          type="button"
-          onClick={() => void startBuild("projection")}
-          disabled={busy}
-        >
-          Rebuild projection
-        </button>
-        {job !== null &&
-        !["complete", "failed", "cancelled", "interrupted"].includes(
-          job.status,
-        ) ? (
-          <button type="button" onClick={() => void cancel()}>
-            Cancel job
+      <section className="card">
+        <h3>Rebuild</h3>
+        <p className="muted">
+          Recompute strategies from the imported ledger. Use a projection
+          rebuild for a quick refresh.
+        </p>
+        <p>
+          <button
+            type="button"
+            onClick={() => void startBuild("full")}
+            disabled={busy}
+          >
+            Rebuild full
+          </button>{" "}
+          <button
+            type="button"
+            onClick={() => void startBuild("projection")}
+            disabled={busy}
+          >
+            Rebuild projection
           </button>
+          {job !== null &&
+          !["complete", "failed", "cancelled", "interrupted"].includes(
+            job.status,
+          ) ? (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => void cancel()}
+            >
+              Cancel job
+            </button>
+          ) : null}
+        </p>
+        {job !== null ? (
+          <p>
+            <span data-testid="job-status">Job {job.status}</span>
+            {job.progress !== null ? (
+              <span data-testid="job-progress"> · {job.progress}</span>
+            ) : null}
+            {job.error !== null ? <span> · {job.error}</span> : null}
+          </p>
         ) : null}
-      </p>
-      {job !== null ? (
-        <p>
-          <span data-testid="job-status">Job {job.status}</span>
-          {job.progress !== null ? (
-            <span data-testid="job-progress"> · {job.progress}</span>
-          ) : null}
-          {job.error !== null ? <span> · {job.error}</span> : null}
+      </section>
+      <section className="card">
+        <h3>Rollback</h3>
+        <p className="muted">
+          Restore a previously retained build. This replaces the active build.
         </p>
-      ) : null}
-
-      <h3>Rollback</h3>
-      <p>
-        <label>
-          Build id to restore{" "}
-          <input
-            value={rollbackId}
-            onChange={(event) => setRollbackId(event.target.value)}
-          />
-        </label>{" "}
-        <button type="button" onClick={() => void rollback()}>
-          Rollback
-        </button>
-      </p>
-      {notice !== null ? (
-        <p data-testid="rollback-notice" role="status">
-          {notice}
-        </p>
-      ) : null}
-
-      <h3>Backup</h3>
-      <p>
-        <button
-          type="button"
-          onClick={() => void startBackup()}
-          disabled={backupBusy}
-        >
-          Create backup
-        </button>
-      </p>
-      {backupJob !== null ? (
         <p>
-          <span data-testid="backup-status">Backup {backupJob.status}</span>
-          {backupJob.status === "complete" ? (
+          <label>
+            Build id to restore{" "}
+            <input
+              value={rollbackId}
+              onChange={(event) => setRollbackId(event.target.value)}
+            />
+          </label>{" "}
+          {confirmingRollback ? (
             <>
-              {" "}
-              <a
-                data-testid="backup-download"
-                href={`/api/maintenance/backups/${backupJob.id}/download`}
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void rollback()}
               >
-                Download archive
-              </a>
+                Confirm rollback
+              </button>{" "}
+              <button
+                type="button"
+                onClick={() => setConfirmingRollback(false)}
+              >
+                Keep current build
+              </button>
             </>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (rollbackId.trim() === "") {
+                  setError("Enter the id of the build to restore.");
+                  return;
+                }
+                setError(null);
+                setConfirmingRollback(true);
+              }}
+            >
+              Rollback
+            </button>
+          )}
         </p>
-      ) : null}
+        {confirmingRollback ? (
+          <p role="alert" className="muted">
+            Restore build {rollbackId.trim()}? The active build will be
+            replaced.
+          </p>
+        ) : null}
+        {notice !== null ? (
+          <p data-testid="rollback-notice" role="status">
+            {notice}
+          </p>
+        ) : null}
+      </section>
+      <section className="card">
+        <h3>Backup</h3>
+        <p className="muted">
+          Create a downloadable archive of the journal data.
+        </p>
+        <p>
+          <button
+            type="button"
+            onClick={() => void startBackup()}
+            disabled={backupBusy}
+          >
+            Create backup
+          </button>
+        </p>
+        {backupJob !== null ? (
+          <p>
+            <span data-testid="backup-status">Backup {backupJob.status}</span>
+            {backupJob.status === "complete" ? (
+              <>
+                {" "}
+                <a
+                  data-testid="backup-download"
+                  href={`/api/maintenance/backups/${backupJob.id}/download`}
+                >
+                  Download archive
+                </a>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+      </section>
+      <section className="card">
+        <h3>Restore</h3>
 
-      <h3>Restore</h3>
-      <p>
-        Restore is an offline operation; this page never performs one. Follow
-        these steps on the host:
-      </p>
-      <ol data-testid="restore-instructions">
-        {(restore.data?.instructions ?? []).map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
+        <p>
+          Restore is an offline operation; this page never performs one. Follow
+          these steps on the host:
+        </p>
+        <ol data-testid="restore-instructions">
+          {(restore.data?.instructions ?? []).map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      </section>
 
       {error !== null ? <ErrorPanel message={error} /> : null}
 
