@@ -1,0 +1,160 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  appendMessage,
+  createThread,
+  deleteThread,
+  findMessageByClientId,
+  listMessages,
+  listThreads,
+  readThread,
+  recoverChatThreads,
+  updateMessage,
+  updateThread,
+} from "../../src/server/chat/threads.js";
+import { createTestStore, type TestStore } from "../helpers/store.js";
+
+const open: TestStore[] = [];
+afterEach(async () => {
+  await Promise.all(open.splice(0).map((s) => s.dispose()));
+});
+async function store() {
+  const s = await createTestStore();
+  open.push(s);
+  return s.store;
+}
+const now = new Date("2026-10-15T10:00:00Z");
+const draft = {
+  title: "P&L",
+  sessionId: "sess-1",
+  profileId: null,
+  modelRef: "openrouter/m",
+  cloudConfirmed: false,
+  seed: null,
+  now,
+};
+
+describe("chat thread repository", () => {
+  it("creates threads and allocates monotonic message seqs", async () => {
+    const s = await store();
+    const thread = await createThread(s, draft);
+    expect(thread).toMatchObject({
+      status: "idle",
+      cost: "0",
+      nextSeq: 0,
+      pending: null,
+    });
+    const a = await appendMessage(s, thread.id, {
+      role: "user",
+      content: "hi",
+      attachments: [],
+      status: "complete",
+      clientMessageId: "c1",
+      now,
+    });
+    const b = await appendMessage(s, thread.id, {
+      role: "assistant",
+      content: "",
+      attachments: [],
+      status: "streaming",
+      clientMessageId: null,
+      now,
+    });
+    expect([a.seq, b.seq]).toEqual([0, 1]);
+    expect(readThread(s, thread.id)?.nextSeq).toBe(2);
+    expect(findMessageByClientId(s, thread.id, "c1")?.id).toBe(a.id);
+    expect(listMessages(s, thread.id).map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("rejects a duplicate clientMessageId within a thread", async () => {
+    const s = await store();
+    const thread = await createThread(s, draft);
+    await appendMessage(s, thread.id, {
+      role: "user",
+      content: "x",
+      attachments: [],
+      status: "complete",
+      clientMessageId: "dup",
+      now,
+    });
+    await expect(
+      appendMessage(s, thread.id, {
+        role: "user",
+        content: "x",
+        attachments: [],
+        status: "complete",
+        clientMessageId: "dup",
+        now,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("updates, lists newest first and deletes with messages", async () => {
+    const s = await store();
+    const t1 = await createThread(s, { ...draft, sessionId: "a" });
+    const t2 = await createThread(s, { ...draft, sessionId: "b" });
+    await updateThread(s, t1.id, {
+      title: "renamed",
+      now: new Date("2026-10-16T00:00:00Z"),
+    });
+    expect(listThreads(s).map((t) => t.id)).toEqual([t1.id, t2.id]);
+    const m = await appendMessage(s, t2.id, {
+      role: "user",
+      content: "x",
+      attachments: [],
+      status: "complete",
+      clientMessageId: null,
+      now,
+    });
+    await updateMessage(s, m.id, {
+      content: "y",
+      tools: [
+        {
+          callId: "c",
+          name: "list_imports",
+          status: "done",
+          isError: false,
+          approval: null,
+        },
+      ],
+    });
+    expect(listMessages(s, t2.id)[0]?.tools[0]?.name).toBe("list_imports");
+    await deleteThread(s, t2.id);
+    expect(readThread(s, t2.id)).toBeNull();
+    expect(listMessages(s, t2.id)).toEqual([]);
+  });
+
+  it("recovers threads and messages interrupted by a restart", async () => {
+    const s = await store();
+    const thread = await createThread(s, draft);
+    await updateThread(s, thread.id, {
+      status: "waiting",
+      pending: {
+        kind: "approval",
+        requestId: "r",
+        tool: "rebuild",
+        text: "Rebuild",
+        expiresAt: "x",
+      },
+      now,
+    });
+    const m = await appendMessage(s, thread.id, {
+      role: "assistant",
+      content: "part",
+      attachments: [],
+      status: "streaming",
+      clientMessageId: null,
+      now,
+    });
+    await recoverChatThreads(s, now);
+    expect(readThread(s, thread.id)).toMatchObject({
+      status: "failed",
+      pending: null,
+    });
+    expect(listMessages(s, thread.id).find((x) => x.id === m.id)).toMatchObject(
+      { status: "failed", error: "INTERRUPTED", content: "part" },
+    );
+  });
+});
