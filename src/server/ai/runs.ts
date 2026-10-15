@@ -52,6 +52,7 @@ export interface PersistedRun {
   readonly sessionId: string | null;
   readonly createdAt: string;
   readonly finishedAt: string | null;
+  readonly threadId: Id | null;
 }
 
 export interface RunDraft {
@@ -60,6 +61,7 @@ export interface RunDraft {
   readonly evidence: EvidenceSnapshot;
   readonly sessionId: string;
   readonly createdAt: string;
+  readonly threadId?: Id | null;
 }
 
 interface RunRow {
@@ -74,6 +76,7 @@ interface RunRow {
   cost_source: string | null;
   status: string;
   created_at: string;
+  thread_id: string | null;
 }
 
 interface ValidationMeta {
@@ -97,8 +100,8 @@ function insertRow(
          id, input_references_json, input_hash, profile_id,
          profile_snapshot_json, requested_model, returned_model, prompt_version,
          schema_version, proposal_json, validation_json, decision_references_json,
-         usage_json, cost, cost_source, status, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         usage_json, cost, cost_source, status, created_at, thread_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       draft.id,
@@ -123,11 +126,16 @@ function insertRow(
       null,
       status,
       draft.createdAt,
+      draft.threadId ?? null,
     );
 }
 
-export function insertRun(store: Store, draft: RunDraft): Promise<void> {
-  return write(store, () => insertRow(store, draft, "running"));
+export function insertRun(
+  store: Store,
+  draft: RunDraft,
+  status: AnalysisStatus = "running",
+): Promise<void> {
+  return write(store, () => insertRow(store, draft, status));
 }
 
 function toRun(row: RunRow): PersistedRun {
@@ -153,6 +161,7 @@ function toRun(row: RunRow): PersistedRun {
     sessionId: meta.sessionId ?? null,
     createdAt: row.created_at,
     finishedAt: meta.finishedAt ?? null,
+    threadId: row.thread_id ?? null,
   };
 }
 
@@ -161,7 +170,7 @@ export function readRun(store: Store, id: Id): PersistedRun | null {
     .prepare(
       `SELECT id, profile_snapshot_json, input_references_json, proposal_json,
               validation_json, decision_references_json, usage_json, cost,
-              cost_source, status, created_at
+              cost_source, status, created_at, thread_id
        FROM ai_runs WHERE id = ?`,
     )
     .get(id) as RunRow | undefined;
@@ -173,7 +182,7 @@ export function listRuns(store: Store): PersistedRun[] {
     .prepare(
       `SELECT id, profile_snapshot_json, input_references_json, proposal_json,
               validation_json, decision_references_json, usage_json, cost,
-              cost_source, status, created_at
+              cost_source, status, created_at, thread_id
        FROM ai_runs ORDER BY created_at DESC, rowid DESC`,
     )
     .all() as RunRow[];
@@ -255,4 +264,61 @@ export function updateRun(
         id,
       );
   });
+}
+
+/** Read-modify-write of one proposal, so concurrent acceptances are never overwritten. */
+export function appendRunProposal(
+  store: Store,
+  runId: Id,
+  proposal: SubmittedProposal,
+): Promise<void> {
+  return write(store, () => {
+    const current = readRun(store, runId);
+    if (current === null) {
+      throw new AppError(
+        "RUN_NOT_FOUND",
+        `No analysis run exists for id ${runId}.`,
+        404,
+      );
+    }
+    store.db
+      .prepare("UPDATE ai_runs SET proposal_json = ? WHERE id = ?")
+      .run(
+        JSON.stringify({ proposals: [...current.proposals, proposal] }),
+        runId,
+      );
+  });
+}
+
+export function listRunsForThread(store: Store, threadId: Id): PersistedRun[] {
+  const rows = store.db
+    .prepare("SELECT id FROM ai_runs WHERE thread_id = ? ORDER BY created_at")
+    .all(threadId) as { id: string }[];
+  return rows
+    .map((row) => readRun(store, row.id))
+    .filter((run): run is PersistedRun => run !== null);
+}
+
+export interface RunSummary {
+  readonly id: Id;
+  readonly status: AnalysisStatus;
+  readonly createdAt: string;
+  readonly threadId: Id | null;
+  readonly pendingProposals: number;
+}
+
+export function listRunSummaries(store: Store): RunSummary[] {
+  const rows = store.db
+    .prepare("SELECT id FROM ai_runs ORDER BY created_at DESC")
+    .all() as { id: string }[];
+  return rows
+    .map((row) => readRun(store, row.id))
+    .filter((run): run is PersistedRun => run !== null)
+    .map((run) => ({
+      id: run.id,
+      status: run.status,
+      createdAt: run.createdAt,
+      threadId: run.threadId,
+      pendingProposals: run.proposals.filter((p) => !p.accepted).length,
+    }));
 }

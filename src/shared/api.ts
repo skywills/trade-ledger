@@ -227,6 +227,7 @@ export const AnalysisRunSchema = z.object({
   sessionId: z.string().nullable(),
   createdAt: z.string(),
   finishedAt: z.string().nullable(),
+  threadId: z.string().nullable().default(null),
 });
 
 export type AnalysisRunDto = z.infer<typeof AnalysisRunSchema>;

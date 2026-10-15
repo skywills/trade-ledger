@@ -1,4 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { buildEvidenceSnapshot } from "../../src/server/ai/evidence.js";
+import { acceptProposal } from "../../src/server/ai/proposals.js";
+import {
+  appendRunProposal,
+  insertRun,
+  listRunSummaries,
+  listRunsForThread,
+  newProposalId,
+  readRun,
+  updateRun,
+} from "../../src/server/ai/runs.js";
 import {
   appendMessage,
   createThread,
@@ -11,6 +22,7 @@ import {
   updateMessage,
   updateThread,
 } from "../../src/server/chat/threads.js";
+import { localProfile, seedLedger } from "../helpers/chat.js";
 import { createTestStore, type TestStore } from "../helpers/store.js";
 
 const open: TestStore[] = [];
@@ -156,5 +168,68 @@ describe("chat thread repository", () => {
     expect(listMessages(s, thread.id).find((x) => x.id === m.id)).toMatchObject(
       { status: "failed", error: "INTERRUPTED", content: "part" },
     );
+  });
+});
+
+describe("thread-aware proposal runs", () => {
+  it("appends proposals in place and never loses an acceptance", async () => {
+    const s = await store();
+    const { ledger, buildId } = await seedLedger(s);
+    const thread = await createThread(s, draft);
+    const profile = await localProfile(s);
+    const runId = "run-1";
+    await insertRun(
+      s,
+      {
+        id: runId,
+        profileSnapshot: profile,
+        evidence: buildEvidenceSnapshot(s, { buildId, issueKeys: [] }),
+        sessionId: thread.sessionId,
+        createdAt: now.toISOString(),
+        threadId: thread.id,
+      },
+      "proposal_ready",
+    );
+    const execution = ledger.executions[0];
+    const source = execution?.sources[0];
+    if (execution === undefined || source === undefined)
+      throw new Error("no execution");
+    const proposal = {
+      kind: "manual_allocation" as const,
+      strategyIds: ["strategy-test"],
+      sources: execution.sources,
+      rationale: "r",
+      payload: {
+        strategyId: "strategy-test",
+        source,
+        allocations: [
+          {
+            executionKey: execution.key,
+            quantity: execution.quantity,
+            netCash: execution.netCash,
+            brokerPnl: null,
+          },
+        ],
+      },
+    };
+    const first = {
+      id: newProposalId(),
+      proposal,
+      submittedAt: now.toISOString(),
+      accepted: false,
+    };
+    await appendRunProposal(s, runId, first);
+    await acceptProposal(s, runId, first.id, 0);
+    await appendRunProposal(s, runId, { ...first, id: newProposalId() });
+    await updateRun(s, runId, { usage: null, cost: 0 }); // turn end writes usage only
+    const run = readRun(s, runId);
+    expect(run?.proposals.map((p) => p.accepted)).toEqual([true, false]);
+    expect(run?.threadId).toBe(thread.id);
+    expect(listRunsForThread(s, thread.id).map((r) => r.id)).toEqual([runId]);
+    expect(listRunSummaries(s)[0]).toMatchObject({
+      id: runId,
+      threadId: thread.id,
+      pendingProposals: 1,
+    });
   });
 });
