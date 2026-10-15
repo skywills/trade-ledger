@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ChatPage } from "./chat/ChatPage.js";
 import { ImportsPage } from "./imports/ImportsPage.js";
 import { JournalPage } from "./journal/JournalPage.js";
 import { StrategyDetail } from "./journal/StrategyDetail.js";
@@ -30,6 +31,8 @@ function renderRoute(pathname: string) {
       return <TransactionsPage />;
     case "review":
       return <ReviewPage />;
+    case "chat":
+      return <ChatPage threadId={second} />;
     case "maintenance":
       return <MaintenancePage />;
     case "strategies":
@@ -48,6 +51,7 @@ const NAV_ITEMS = [
   { to: "/imports", label: "Imports", match: ["imports"] },
   { to: "/transactions", label: "Transactions", match: ["transactions"] },
   { to: "/review", label: "Review", match: ["review"] },
+  { to: "/chat", label: "Agent", match: ["chat"] },
   { to: "/maintenance", label: "Maintenance", match: ["maintenance"] },
 ] as const;
 
