@@ -4,8 +4,14 @@ import { BuildScheduler } from "../../src/server/builds/service.js";
 import { journalTools } from "../../src/server/chat/tools/journal.js";
 import { pnlTools } from "../../src/server/chat/tools/pnl.js";
 import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
+import { statusTools } from "../../src/server/chat/tools/status.js";
+import {
+  commitImport,
+  previewImport,
+} from "../../src/server/imports/service.js";
 import { JobService } from "../../src/server/jobs/service.js";
 import type { Store } from "../../src/server/storage/database.js";
+import { fixtures } from "../fixtures/scenarios.js";
 import { seedLedger } from "../helpers/chat.js";
 import { createTestStore, type TestStore } from "../helpers/store.js";
 
@@ -80,6 +86,48 @@ describe("journal read tools", () => {
       await call(tools, "get_strategy", { strategyId: "nope" }),
     ).toMatchObject({ isError: true });
     expect(await call(tools, "list_strategies", { limit: 500 })).toMatchObject({
+      isError: true,
+    });
+  });
+});
+
+describe("status read tools", () => {
+  it("reads imports, a staged preview, build status and a job", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    await seedLedger(t.store);
+    const ctx = toolContext(t.store);
+    const tools = statusTools(ctx);
+    const preview = await previewImport(t.store, {
+      filename: "new.csv",
+      bytes: fixtures.spread,
+      timezone: "UTC",
+    });
+    const staged = JSON.parse(
+      (await call(tools, "get_import_preview", { previewId: preview.id }))
+        .content,
+    );
+    expect(staged).toMatchObject({
+      id: preview.id,
+      filename: "new.csv",
+      committable: true,
+    });
+    expect(staged.counts.executions).toBeGreaterThan(0);
+    await commitImport(t.store, preview.id);
+    expect(
+      JSON.parse((await call(tools, "list_imports", {})).content).items.length,
+    ).toBe(1);
+    expect(
+      JSON.parse((await call(tools, "get_build_status", {})).content),
+    ).toHaveProperty("buildId");
+    const jobId = await ctx.jobs.create("backup", {});
+    expect(
+      JSON.parse((await call(tools, "get_job", { jobId })).content).job.id,
+    ).toBe(jobId);
+    expect(
+      await call(tools, "get_import_preview", { previewId: "missing" }),
+    ).toMatchObject({ isError: true });
+    expect(await call(tools, "get_job", { jobId: "missing" })).toMatchObject({
       isError: true,
     });
   });
