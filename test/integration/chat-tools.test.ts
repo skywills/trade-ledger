@@ -187,3 +187,53 @@ describe("commit_import when the rebuild cannot start", () => {
     expect(listImports(t.store)).toHaveLength(1);
   });
 });
+
+describe("tool results fit nax-agent's model-facing limits", () => {
+  it("formats results so no line is cut and the JSON stays intact", async () => {
+    const { MODEL_MAX_BYTES, MODEL_MAX_LINE_CHARS, MODEL_MAX_LINES } =
+      await import("@nathapp/nax-agent");
+    const { jsonResult } = await import(
+      "../../src/server/chat/tools/shared.js"
+    );
+    const strategy = (i: number) => ({
+      id: `3714f38f-5aba-43f8-85f9-${String(i).padStart(12, "0")}`,
+      type: "bull_put_spread",
+      currency: "USD",
+      description: `Strategy ${i} bull put spread`,
+      openingDate: "2026-09-25",
+      closeDate: null,
+      status: "open",
+      brokerPnl: "0",
+      reconstructedPnl: null,
+      positions: [
+        { instrumentKey: "symbol:BA    261120P00180000", quantity: "1" },
+        { instrumentKey: "symbol:BA    261120P00190000", quantity: "-1" },
+      ],
+      reasons: ["MISSING_MULTIPLIER"],
+    });
+    const payload = {
+      buildId: "af42c66d",
+      stale: false,
+      items: Array.from({ length: 50 }, (_, i) => strategy(i)),
+      total: 84,
+      nextOffset: 50,
+    };
+    const result = jsonResult(payload);
+    expect(result.isError).toBeUndefined();
+    const lines = result.content.split("\n");
+    expect(Math.max(...lines.map((l) => l.length))).toBeLessThanOrEqual(
+      MODEL_MAX_LINE_CHARS,
+    );
+    expect(lines.length).toBeLessThanOrEqual(MODEL_MAX_LINES);
+    expect(Buffer.byteLength(result.content)).toBeLessThan(MODEL_MAX_BYTES);
+    expect(JSON.parse(result.content)).toEqual(payload);
+  });
+
+  it("refuses a result the model would only see truncated", async () => {
+    const { jsonResult } = await import(
+      "../../src/server/chat/tools/shared.js"
+    );
+    const huge = { items: Array.from({ length: 400 }, () => "x".repeat(200)) };
+    expect(jsonResult(huge)).toMatchObject({ isError: true });
+  });
+});
