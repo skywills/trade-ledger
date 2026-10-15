@@ -40,6 +40,35 @@ const BROKER_ID_FIELDS = [
   "RelatedTradeID",
 ] as const;
 
+const OCC_SYMBOL = /^\S{1,6}\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
+
+interface OccContract {
+  expiry: string;
+  strike: DecimalText;
+  putCall: "P" | "C";
+}
+
+/**
+ * Reads the contract terms embedded in an OCC option symbol such as
+ * "DELL  261016C00490000" (root, YYMMDD, C/P, strike x 1000). Used only when
+ * the export has no Expiry/Strike/Put-Call columns of its own.
+ */
+function parseOccSymbol(symbol: string): OccContract | null {
+  const match = OCC_SYMBOL.exec(symbol.trim());
+  if (match === null) return null;
+  const [, yy = "", mm = "", dd = "", right = "", rawStrike = ""] = match;
+  const month = Number(mm);
+  const day = Number(dd);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const whole = rawStrike.slice(0, 5).replace(/^0+(?=\d)/, "");
+  const fraction = rawStrike.slice(5).replace(/0+$/, "");
+  return {
+    expiry: `20${yy}-${mm}-${dd}`,
+    strike: fraction === "" ? whole : `${whole}.${fraction}`,
+    putCall: right === "P" ? "P" : "C",
+  };
+}
+
 const DERIVATIVE_ASSET_CLASSES: ReadonlySet<string> = new Set([
   "OPT",
   "WAR",
@@ -290,7 +319,12 @@ export function normalizeExecution(
     if (parsedExpiry === null) fail("invalid_date.Expiry");
     else expiry = parsedExpiry;
   }
-  const strike = optionalDecimal("Strike");
+  const occ =
+    (assetClass ?? "").toUpperCase() === "OPT" && symbol !== null
+      ? parseOccSymbol(symbol)
+      : null;
+  if (expiry === null && occ !== null) expiry = occ.expiry;
+  const strike = optionalDecimal("Strike") ?? occ?.strike ?? null;
   const multiplier = optionalDecimal("Multiplier");
   if (
     multiplier === null &&
@@ -303,7 +337,7 @@ export function normalizeExecution(
   if (rawPutCall === "P" || rawPutCall === "C") putCall = rawPutCall;
   else if (rawPutCall !== "") {
     issues.push(makeIssue("unexpected_put_call", source, "warning"));
-  }
+  } else if (occ !== null) putCall = occ.putCall;
   const conid = (fields["Conid"] ?? "").trim();
   const underlying = (fields["UnderlyingSymbol"] ?? "").trim();
   const instrument: Instrument = {
@@ -327,8 +361,17 @@ export function normalizeExecution(
   }
 
   const codes = splitCodes(fields["Notes/Codes"]);
-  const isOpen = codes.includes("O");
-  const isClose = codes.includes("C");
+  // Notes/Codes win; the Open/CloseIndicator column is the fallback when the
+  // codes carry no open/close marker (e.g. exports without a Notes/Codes column).
+  const codeMarks = codes.filter((code) => code === "O" || code === "C");
+  const marks =
+    codeMarks.length > 0
+      ? codeMarks
+      : splitCodes(fields["Open/CloseIndicator"]).map((mark) =>
+          mark.toUpperCase(),
+        );
+  const isOpen = marks.includes("O");
+  const isClose = marks.includes("C");
   const action: Execution["action"] =
     isOpen && isClose
       ? "mixed"

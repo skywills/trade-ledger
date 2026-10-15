@@ -327,7 +327,10 @@ describe("bounded analysis produces review proposals", () => {
       ]),
     );
     const snapshot = buildEvidenceSnapshot(store, { buildId, issueKeys: [] });
-    expect(snapshot.rows[0]).toMatchObject({ brokerPnl: "2" });
+    expect(snapshot.rows[0]).toMatchObject({
+      brokerPnl: "2",
+      action: "close",
+    });
   });
 
   it("survives cross-batch source references and rejects oversized rows", async () => {

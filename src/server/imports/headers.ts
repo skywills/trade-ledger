@@ -31,6 +31,8 @@ export const CANONICAL_FIELDS = [
   "OrigOrderID",
   "OrigTradeID",
   "RelatedTradeID",
+  "ClosePrice",
+  "Open/CloseIndicator",
 ] as const;
 
 export type CanonicalField = (typeof CANONICAL_FIELDS)[number];
@@ -44,6 +46,7 @@ export const HEADER_ALIASES: Readonly<Record<string, CanonicalField>> = {
   "Date/Time": "DateTime",
   OrderID: "IBOrderID",
   ExecID: "IBExecID",
+  OpenCloseIndicator: "Open/CloseIndicator",
 };
 
 const MIN_HEADER_MATCHES = 3;

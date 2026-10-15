@@ -10,6 +10,8 @@ export interface Classification {
 
 const SUPPORTING_LOT_CODES: ReadonlySet<string> = new Set(["ST", "LT"]);
 
+const OPEN_CLOSE_MARKS: ReadonlySet<string> = new Set(["O", "C"]);
+
 const LEVEL_OF_DETAIL_KINDS: Readonly<Record<string, RowKind>> = {
   EXECUTION: "execution",
   CLOSED_LOT: "lot",
@@ -48,6 +50,15 @@ export function classifyFields(fields: Record<string, string>): Classification {
   if (
     hasBrokerIdentity(fields["TradeID"]) ||
     hasBrokerIdentity(fields["IBExecID"])
+  ) {
+    return { kind: "execution", quarantineCode: null };
+  }
+  // Exports without per-fill ids (expiries, assignment deliveries) still mark
+  // each trade as an opening or closing one.
+  if (
+    splitCodes(fields["Open/CloseIndicator"]).some((mark) =>
+      OPEN_CLOSE_MARKS.has(mark.toUpperCase()),
+    )
   ) {
     return { kind: "execution", quarantineCode: null };
   }

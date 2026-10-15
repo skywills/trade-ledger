@@ -701,6 +701,103 @@ describe("normalizeExecution", () => {
     expect(exercise?.action).toBe("close");
   });
 
+  it("derives the action from the Open/CloseIndicator when codes carry none", () => {
+    const action = (fields: Record<string, string>) =>
+      normalizeExecution(rawRow(validExecutionFields(fields)), ref, null)
+        .execution?.action;
+    expect(action({ "Notes/Codes": "", "Open/CloseIndicator": "O" })).toBe(
+      "open",
+    );
+    expect(action({ "Notes/Codes": "", "Open/CloseIndicator": "C" })).toBe(
+      "close",
+    );
+    expect(action({ "Notes/Codes": "", "Open/CloseIndicator": "C;O" })).toBe(
+      "mixed",
+    );
+    expect(action({ "Notes/Codes": "", "Open/CloseIndicator": "" })).toBe(
+      "unknown",
+    );
+    // Explicit codes win over the indicator column.
+    expect(action({ "Notes/Codes": "C", "Open/CloseIndicator": "O" })).toBe(
+      "close",
+    );
+  });
+
+  it("recognizes ClosePrice and Open/CloseIndicator headers", () => {
+    const parsed = parseFlex(
+      csvFile([
+        csvLine([
+          "Symbol",
+          "TradeDate",
+          "Quantity",
+          "ClosePrice",
+          "OpenCloseIndicator",
+        ]),
+        csvLine(["AAA", "20260902", "1", "1.5", "O"]),
+      ]),
+    );
+    expect(parsed.capabilities).toContain("field:ClosePrice");
+    expect(parsed.capabilities).toContain("field:Open/CloseIndicator");
+    expect(parsed.rows[0]?.fields["Open/CloseIndicator"]).toBe("O");
+  });
+
+  it("classifies a row with no broker ids but an Open/CloseIndicator as an execution", () => {
+    const header = csvLine([
+      "Symbol",
+      "TradeDate",
+      "Quantity",
+      "Open/CloseIndicator",
+    ]);
+    const parsed = parseFlex(
+      csvFile([
+        header,
+        csvLine(["AAA", "20260918", "1", "C"]),
+        csvLine(["BBB", "20260918", "1", ""]),
+      ]),
+    );
+    expect(parsed.rows.map((row) => row.kind)).toEqual([
+      "execution",
+      "quarantine",
+    ]);
+  });
+
+  it("derives expiry, strike and put/call from an OCC option symbol when the columns are absent", () => {
+    const instrument = (fields: Record<string, string>) =>
+      normalizeExecution(
+        rawRow(
+          validExecutionFields({
+            Symbol: "DELL  261016C00490000",
+            UnderlyingSymbol: "DELL",
+            Expiry: "",
+            Strike: "",
+            "Put/Call": "",
+            ...fields,
+          }),
+        ),
+        ref,
+        null,
+      ).execution?.instrument;
+    expect(instrument({})).toMatchObject({
+      expiry: "2026-10-16",
+      strike: "490",
+      putCall: "C",
+    });
+    expect(instrument({ Symbol: "CMG   260918C00037500" })).toMatchObject({
+      expiry: "2026-09-18",
+      strike: "37.5",
+    });
+    // Explicit columns always win over the symbol.
+    expect(
+      instrument({ Expiry: "20261120", Strike: "500", "Put/Call": "P" }),
+    ).toMatchObject({ expiry: "2026-11-20", strike: "500", putCall: "P" });
+    // Shares and non-OCC symbols are left untouched.
+    expect(instrument({ AssetClass: "STK", Symbol: "DELL" })).toMatchObject({
+      expiry: null,
+      strike: null,
+      putCall: null,
+    });
+  });
+
   it("normalizes instrument fields and warns on missing multipliers", () => {
     const result = normalizeExecution(
       rawRow(validExecutionFields({ Multiplier: "" })),

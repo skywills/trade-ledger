@@ -164,9 +164,16 @@ than opening the store.
    IBCommission, Taxes, NetCash, FifoPnlRealized, CostBasis, Notes/Codes,
    IBOrderID, BrokerageOrderID, IBExecID, TradeID, Expiry, Strike, Put/Call,
    Multiplier, LevelOfDetail, OpenDateTime, PositionActionID, TimeZone,
-   OrigOrderID, OrigTradeID, RelatedTradeID`.
+   OrigOrderID, OrigTradeID, RelatedTradeID, ClosePrice, Open/CloseIndicator`.
 
-   Aliases (`Price`, `Commission`, `Code`, `Date/Time`, `OrderID`, `ExecID`)
+   `Open/CloseIndicator` (`O`, `C`, or `C;O`) tells the journal whether a trade
+   opens or closes a position; `Notes/Codes` takes precedence when it carries an
+   `O`/`C` code. A row with no broker ids but an indicator is still imported as
+   an execution. When the `Expiry`, `Strike` and `Put/Call` columns are absent,
+   they are read from the OCC option symbol (for example
+   `DELL  261016C00490000`).
+
+   Aliases (`Price`, `Commission`, `Code`, `Date/Time`, `OrderID`, `ExecID`, `OpenCloseIndicator`)
    are accepted too.
 
 3. **Build the journal.** After the first import, open **Maintenance** and click
