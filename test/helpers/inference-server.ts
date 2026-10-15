@@ -54,6 +54,8 @@ export interface InferenceServerOptions {
    * probe and an analysis turn can share one endpoint).
    */
   readonly planGateTool?: string;
+  /** Delay only the requests that consume a `plan` step (leaves probes fast). */
+  readonly planDelayMs?: number;
   /** When true, a request whose messages contain no tool result answers with a question first. */
 }
 
@@ -198,6 +200,10 @@ export async function startInferenceServer(
       const planActive =
         options.plan !== undefined &&
         (gate === undefined || requestToolNames.includes(gate));
+
+      if (planActive && (options.planDelayMs ?? 0) > 0) {
+        await sleep(options.planDelayMs ?? 0);
+      }
 
       let planStep: InferencePlanStep | undefined;
       if (planActive && options.plan !== undefined) {

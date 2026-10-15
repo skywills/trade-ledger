@@ -1,22 +1,13 @@
 import type { FastifyInstance } from "fastify";
+import { pageSlice, parsePageParams, toEnvelope } from "../../shared/api.js";
 import { AppError } from "../../shared/errors.js";
-import {
-  type AnalysisEvent,
-  answerAnalysis,
-  readAnalysisRun,
-  startAnalysis,
-  subscribeAnalysis,
-} from "../ai/analysis.js";
-import { defaultProfileId } from "../ai/profiles.js";
 import {
   acceptProposal,
   decisionWatermark,
   rejectProposal,
 } from "../ai/proposals.js";
-import { activeProjection } from "../builds/service.js";
+import { listRunSummaries, readRun } from "../ai/runs.js";
 import type { Store } from "../storage/database.js";
-
-const TERMINAL = new Set(["proposal_ready", "failed", "cancelled", "accepted"]);
 
 function readString(value: unknown, name: string, fallback?: string): string {
   if (value === undefined || value === null) {
@@ -31,21 +22,6 @@ function readString(value: unknown, name: string, fallback?: string): string {
     );
   }
   return value;
-}
-
-function readIssueKeys(value: unknown): string[] {
-  if (value === undefined || value === null) return [];
-  if (
-    !Array.isArray(value) ||
-    value.some((entry) => typeof entry !== "string")
-  ) {
-    throw new AppError(
-      "INVALID_INPUT",
-      "issueKeys must be an array of strings.",
-      400,
-    );
-  }
-  return value as string[];
 }
 
 function readWatermark(store: Store, body: unknown): number {
@@ -63,50 +39,20 @@ function readWatermark(store: Store, body: unknown): number {
   );
 }
 
-function sseFrame(event: AnalysisEvent): string {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-}
-
-/**
- * Analysis routes. Starting a run is a same-origin mutation like every other;
- * acceptance and rejection append retained decisions only after the run is
- * re-validated against the current ledger. The event stream carries question
- * requests so a person can answer a blocked turn.
- */
+/** Proposal runs: list, read, accept and reject. Runs are created by chat. */
 export async function registerAnalysisRoutes(
   app: FastifyInstance,
   store: Store,
 ): Promise<void> {
-  app.post("/api/analysis", async (request, reply) => {
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const profileId = readString(
-      body.profileId,
-      "profileId",
-      defaultProfileId(store) ?? undefined,
-    );
-    const active = activeProjection(store);
-    const buildId = readString(
-      body.buildId,
-      "buildId",
-      active.buildId ?? undefined,
-    );
-    const runId = await startAnalysis(
-      store,
-      {
-        profileId,
-        buildId,
-        issueKeys: readIssueKeys(body.issueKeys),
-        cloudConfirmed: body.cloudConfirmed === true,
-      },
-      new AbortController().signal,
-    );
-    reply.code(202);
-    return { runId };
+  app.get("/api/analysis", async (request) => {
+    const params = parsePageParams(request.query);
+    const all = listRunSummaries(store);
+    return toEnvelope(pageSlice(all, params), params, all.length, null, false);
   });
 
   app.get("/api/analysis/:id", async (request) => {
     const { id } = request.params as { id: string };
-    const run = readAnalysisRun(store, id);
+    const run = readRun(store, id);
     if (run === null) {
       throw new AppError(
         "RUN_NOT_FOUND",
@@ -163,57 +109,5 @@ export async function registerAnalysisRoutes(
       }
       throw error;
     }
-  });
-
-  app.post("/api/analysis/:id/answer", async (request) => {
-    const { id } = request.params as { id: string };
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const requestId = readString(body.requestId, "requestId");
-    const text = readString(body.text, "text");
-    const status = answerAnalysis(id, requestId, text);
-    return { status };
-  });
-
-  app.get("/api/analysis/:id/events", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const run = readAnalysisRun(store, id);
-    if (run === null) {
-      throw new AppError(
-        "RUN_NOT_FOUND",
-        `No analysis run exists for id ${id}.`,
-        404,
-      );
-    }
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    });
-    // A run that already finished (for example after a restart, when its
-    // in-memory event buffer is gone) still reports its terminal status and
-    // closes, so the stream never hangs.
-    if (TERMINAL.has(run.status)) {
-      reply.raw.write(
-        sseFrame({ type: "status", status: run.status } as AnalysisEvent),
-      );
-      reply.raw.end();
-      return;
-    }
-    let closed = false;
-    const unsubscribe = subscribeAnalysis(id, (event) => {
-      if (closed) return;
-      reply.raw.write(sseFrame(event));
-      if (event.type === "status" && TERMINAL.has(event.status)) {
-        closed = true;
-        unsubscribe();
-        reply.raw.end();
-      }
-    });
-    request.raw.on("close", () => {
-      closed = true;
-      unsubscribe();
-      if (!reply.raw.writableEnded) reply.raw.end();
-    });
   });
 }

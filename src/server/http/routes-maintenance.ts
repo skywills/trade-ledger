@@ -1,9 +1,9 @@
-import { createReadStream, existsSync, mkdirSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../shared/errors.js";
 import type { JobService } from "../jobs/service.js";
-import { createBackup } from "../maintenance/backup.js";
+import { startBackupJob } from "../maintenance/backup-job.js";
 import type { Store } from "../storage/database.js";
 
 const RESTORE_INSTRUCTIONS = [
@@ -26,27 +26,7 @@ export async function registerMaintenanceRoutes(
   const backupsDir = join(store.dataDir, "backups");
 
   app.post("/api/maintenance/backups", async (_request, reply) => {
-    const jobId = await jobs.create("backup", {
-      requestedAt: new Date().toISOString(),
-    });
-    const controller = new AbortController();
-    jobs.register(jobId, controller);
-    void (async () => {
-      try {
-        await jobs.progress(jobId, "snapshotting");
-        mkdirSync(backupsDir, { recursive: true });
-        const outputPath = join(backupsDir, `${jobId}.tar`);
-        await createBackup(store, outputPath, { signal: controller.signal });
-        // Never overwrite a status a concurrent cancel already recorded.
-        await jobs.finishIfRunning(jobId, "complete");
-      } catch (error) {
-        await jobs.finishIfRunning(
-          jobId,
-          controller.signal.aborted ? "cancelled" : "failed",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    })();
+    const jobId = await startBackupJob(store, jobs);
     reply.code(202);
     return { jobId };
   });

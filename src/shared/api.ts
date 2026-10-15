@@ -179,6 +179,15 @@ export const AnalysisStatusSchema = z.enum([
   "accepted",
 ]);
 
+export const RunSummarySchema = z.object({
+  id: z.string(),
+  status: AnalysisStatusSchema,
+  createdAt: z.string(),
+  threadId: z.string().nullable(),
+  pendingProposals: z.number().int(),
+});
+export type RunSummaryDto = z.infer<typeof RunSummarySchema>;
+
 export const ProposalDraftSchema = z.object({
   kind: z.string(),
   rationale: z.string().optional(),
@@ -227,18 +236,13 @@ export const AnalysisRunSchema = z.object({
   sessionId: z.string().nullable(),
   createdAt: z.string(),
   finishedAt: z.string().nullable(),
+  threadId: z.string().nullable().default(null),
 });
 
 export type AnalysisRunDto = z.infer<typeof AnalysisRunSchema>;
 export type SubmittedProposalDto = z.infer<typeof SubmittedProposalSchema>;
 
 export const AnalysisEnvelopeSchema = z.object({ run: AnalysisRunSchema });
-
-export const StartAnalysisResponseSchema = z.object({ runId: z.string() });
-
-export const AnswerAnalysisResponseSchema = z.object({
-  status: z.enum(["accepted", "expired", "cancelled", "unknown"]),
-});
 
 export const AcceptAnalysisResponseSchema = z.object({
   decisions: z.array(

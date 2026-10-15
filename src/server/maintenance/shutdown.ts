@@ -1,16 +1,16 @@
-import { cancelActiveAnalyses, drainActiveAnalyses } from "../ai/analysis.js";
 import { cancelActiveBuilds, drainActiveBuilds } from "../builds/service.js";
+import { cancelActiveChats, drainActiveChats } from "../chat/service.js";
 import type { Store } from "../storage/database.js";
 
 export interface ShutdownOptions {
-  readonly cancelAnalyses?: () => void;
-  readonly drainAnalyses?: () => Promise<void>;
+  readonly cancelChats?: () => void;
+  readonly drainChats?: () => Promise<void>;
   readonly cancelBuilds?: () => void;
   readonly drainBuilds?: () => Promise<void>;
 }
 
 /**
- * Graceful termination. Cancels in-flight AI analysis through each run's
+ * Graceful termination. Cancels in-flight chat turns through each thread's
  * session, aborts every in-flight rebuild so a candidate observed mid-flight is
  * cancelled before it can be activated, then awaits both until settled. The
  * writer queue is drained, but the active build pointer is never touched, so a
@@ -23,14 +23,14 @@ export async function shutdown(
 ): Promise<void> {
   // Cancellation is driven through the process-wide registries so detached
   // work is stopped directly; no external signal is threaded through.
-  const cancelAnalyses = options.cancelAnalyses ?? cancelActiveAnalyses;
-  const drainAnalyses = options.drainAnalyses ?? drainActiveAnalyses;
+  const cancelChats = options.cancelChats ?? cancelActiveChats;
+  const drainChats = options.drainChats ?? drainActiveChats;
   const cancelBuilds = options.cancelBuilds ?? cancelActiveBuilds;
   const drainBuilds = options.drainBuilds ?? drainActiveBuilds;
 
-  cancelAnalyses();
+  cancelChats();
   cancelBuilds();
 
-  await Promise.all([drainAnalyses(), drainBuilds()]);
+  await Promise.all([drainChats(), drainBuilds()]);
   await store.queue.drain();
 }

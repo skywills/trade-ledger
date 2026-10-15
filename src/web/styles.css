@@ -845,3 +845,110 @@ dd.num {
   font-variant-numeric: tabular-nums;
   overflow-wrap: normal;
 }
+
+/* ---------- Agent chat ---------- */
+.chat-page {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) 1fr;
+  gap: var(--space-4);
+}
+.thread-list ul {
+  list-style: none;
+  padding: 0;
+}
+.thread-list li a {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.chat-message {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.chat-user {
+  align-self: flex-end;
+  background: var(--surface-2);
+}
+.chat-assistant {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.chat-message pre {
+  overflow-x: auto;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+}
+.tool-chips,
+.attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-2);
+}
+.tool-chip,
+.attachment-chips li {
+  font-size: var(--text-xs);
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+}
+.tool-chip.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.interaction-card {
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+.interaction-card .actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.composer-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+}
+.proposal-card {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: start;
+}
+@media (max-width: 720px) {
+  .chat-page {
+    grid-template-columns: 1fr;
+  }
+  .chat-message {
+    max-width: 100%;
+  }
+  .composer-row {
+    flex-wrap: wrap;
+  }
+}

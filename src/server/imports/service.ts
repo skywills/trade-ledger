@@ -238,6 +238,45 @@ function readPreviewRecord(store: Store, previewId: Id): PreviewRecord {
   return row;
 }
 
+export interface PreviewSummary {
+  readonly id: Id;
+  readonly filename: string;
+  readonly status: string;
+  readonly expiresAt: string;
+  readonly preview: ImportPreview;
+}
+
+/** A staged preview for display; expired or unknown previews are refused. */
+export function readPreviewSummary(
+  store: Store,
+  previewId: Id,
+  now: Date = new Date(),
+): PreviewSummary {
+  const record = readPreviewRecord(store, previewId);
+  if (record.status !== "committed" && record.expires_at <= now.toISOString()) {
+    throw new AppError(
+      "IMPORT_PREVIEW_EXPIRED",
+      `Import preview ${previewId} has expired; upload the file again.`,
+      410,
+    );
+  }
+  const meta = JSON.parse(record.preview_json) as PreviewMeta;
+  return {
+    id: record.id,
+    filename: record.filename,
+    status: record.status,
+    expiresAt: record.expires_at,
+    preview: {
+      id: record.id,
+      hash: record.sha256,
+      capabilities: meta.capabilities,
+      counts: meta.counts,
+      issues: meta.issues,
+      committable: meta.committable,
+    },
+  };
+}
+
 function sweepExpiredPreviews(store: Store, now: Date): Promise<void> {
   const expired = store.db
     .prepare(
