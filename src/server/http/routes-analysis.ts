@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { pageSlice, parsePageParams, toEnvelope } from "../../shared/api.js";
 import { AppError } from "../../shared/errors.js";
 import {
   type AnalysisEvent,
@@ -13,6 +14,7 @@ import {
   decisionWatermark,
   rejectProposal,
 } from "../ai/proposals.js";
+import { listRunSummaries } from "../ai/runs.js";
 import { activeProjection } from "../builds/service.js";
 import type { Store } from "../storage/database.js";
 
@@ -77,6 +79,12 @@ export async function registerAnalysisRoutes(
   app: FastifyInstance,
   store: Store,
 ): Promise<void> {
+  app.get("/api/analysis", async (request) => {
+    const params = parsePageParams(request.query);
+    const all = listRunSummaries(store);
+    return toEnvelope(pageSlice(all, params), params, all.length, null, false);
+  });
+
   app.post("/api/analysis", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const profileId = readString(

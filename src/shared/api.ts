@@ -179,6 +179,15 @@ export const AnalysisStatusSchema = z.enum([
   "accepted",
 ]);
 
+export const RunSummarySchema = z.object({
+  id: z.string(),
+  status: AnalysisStatusSchema,
+  createdAt: z.string(),
+  threadId: z.string().nullable(),
+  pendingProposals: z.number().int(),
+});
+export type RunSummaryDto = z.infer<typeof RunSummarySchema>;
+
 export const ProposalDraftSchema = z.object({
   kind: z.string(),
   rationale: z.string().optional(),

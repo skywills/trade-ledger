@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { testProfile } from "../../src/server/ai/compatibility.js";
 import { createDefaultSecretResolver } from "../../src/server/ai/credentials.js";
 import { saveProfile } from "../../src/server/ai/profiles.js";
+import { acceptProposal } from "../../src/server/ai/proposals.js";
+import { listRunsForThread, readRun } from "../../src/server/ai/runs.js";
 import { BuildScheduler } from "../../src/server/builds/service.js";
 import type { ChatFrame } from "../../src/server/chat/frames.js";
 import { type ChatLimits, ChatService } from "../../src/server/chat/service.js";
@@ -332,5 +334,78 @@ describe("write tools need the user's approval", () => {
     });
     chat.answer(thread.id, requestId, { decision: "deny" });
     await waitIdle(t.store, thread.id);
+  });
+});
+
+describe("proposals from chat", () => {
+  it("records proposals on a thread run and keeps a mid-turn acceptance", async () => {
+    const t = await createTestStore();
+    stores.push(t);
+    const { ledger } = await seedLedger(t.store);
+    const execution = ledger.executions[0];
+    if (execution === undefined) throw new Error("no execution");
+    const proposal = {
+      kind: "manual_allocation",
+      strategyIds: ["strategy-test"],
+      sources: execution.sources,
+      rationale: "r",
+      payload: {
+        strategyId: "strategy-test",
+        source: execution.sources[0],
+        allocations: [
+          {
+            executionKey: execution.key,
+            quantity: execution.quantity,
+            netCash: execution.netCash,
+            brokerPnl: null,
+          },
+        ],
+      },
+    };
+    const inference = await startInferenceServer({
+      mode: "tool-call",
+      planGateTool: "get_pnl_summary",
+      plan: [
+        { kind: "tool-call", toolName: "submit_proposal", arguments: proposal },
+        { kind: "tool-call", toolName: "create_backup", arguments: {} }, // blocks on approval so we can accept mid-turn
+        { kind: "text", text: "proposed" },
+      ],
+    });
+    servers.push(inference);
+    const profile = await verifiedProfile(t.store, inference);
+    const jobs = new JobService(t.store);
+    const chat = new ChatService({
+      store: t.store,
+      secrets: createDefaultSecretResolver(),
+      jobs,
+      scheduler: new BuildScheduler(t.store, {}, jobs),
+    });
+    services.push(chat);
+    const thread = await chat.createThread({ profileId: profile.id });
+    let proposalFrame: { runId: string; proposalId: string } | null = null;
+    const approval = new Promise<string>((resolve) =>
+      chat.bus.subscribe(thread.id, (f) => {
+        if (f.event === "proposal") proposalFrame = f.data;
+        if (f.event === "approval") resolve(f.data.requestId);
+      }),
+    );
+    await chat.sendMessage(thread.id, {
+      clientMessageId: "c",
+      text: "reconcile",
+    });
+    const requestId = await approval;
+    expect(proposalFrame).not.toBeNull();
+    const { runId, proposalId } = proposalFrame as unknown as {
+      runId: string;
+      proposalId: string;
+    };
+    await acceptProposal(t.store, runId, proposalId, 0); // accept while the turn is still running
+    chat.answer(thread.id, requestId, { decision: "deny" });
+    await waitIdle(t.store, thread.id);
+    const run = readRun(t.store, runId);
+    expect(run?.threadId).toBe(thread.id);
+    expect(run?.proposals[0]?.accepted).toBe(true);
+    expect(run?.status).toBe("accepted");
+    expect(listRunsForThread(t.store, thread.id)).toHaveLength(1);
   });
 });

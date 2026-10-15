@@ -175,3 +175,21 @@ describe("chat HTTP API", () => {
     ).toBe("failed");
   });
 });
+
+describe("GET /api/analysis", () => {
+  it("lists no runs on a fresh store", async () => {
+    const t = await createTestStore();
+    stores.push(t);
+    await closeStore(t.store);
+    const app = await createApp(
+      readConfig({ DATA_DIR: t.dataDir, ALLOWED_ORIGIN: ORIGIN }),
+    );
+    apps.push(app);
+    const body = (await app.inject("/api/analysis")).json() as {
+      items: unknown[];
+      total: number;
+    };
+    expect(body.items).toEqual([]);
+    expect(body.total).toBe(0);
+  });
+});
