@@ -22,7 +22,7 @@ importing, rebuilding, reviewing and browsing all work with no model server.
 | Docker + Docker Compose | Optional. Required only for the containerised run and `npm run test:docker`. |
 | Local persistent disk | SQLite in WAL mode. **Do not** put the data directory on a network filesystem (NFS/SMB). |
 | An IBKR Flex CSV | Activity Flex Query export containing the Trades/Executions section. See [section 6](#6-first-run-walkthrough). |
-| A local model server | Optional. Only needed for the AI analysis panel (Ollama, llama.cpp, LM Studio, etc.). |
+| A local model server | Optional. Only needed for the Agent chat page (Ollama, llama.cpp, LM Studio, etc.). |
 
 No GPU, no bundled weights, and no cloud account are required.
 
@@ -198,7 +198,11 @@ than opening the store.
 
 ## 7. Optional: local AI inference
 
-The analysis panel is optional and never required for readiness. Configure a
+The Agent page is optional and never required for readiness. It uses the
+**default** model profile, which must be verified (run the compatibility test).
+Conversation transcripts are stored under `DATA_DIR/transcripts/chat`. Cloud
+profiles need the confirmation checkbox before they can be made the default.
+Configure a
 profile under **Maintenance → Models**:
 
 - **Name** — a label.
@@ -315,7 +319,7 @@ same-origin.
 | `better-sqlite3` fails to install/compile | Install a build toolchain (Python 3, `make`, `g++`) or use the Docker image, which pins the toolchain. |
 | Startup aborts: persisted schema is newer | The database was written by a newer app version. Deploy the matching version; do not open it with an older build. |
 | `/health/ready` is red but the app was healthy before | Check the data directory is writable and migrations completed. Readiness depends only on the database. |
-| Analysis panel reports an unavailable model | Check the profile endpoint is reachable **from the container** (`host.docker.internal` for the host) and that **Supports tools** is enabled. |
+| Agent page reports an unavailable model | Check the profile endpoint is reachable **from the container** (`host.docker.internal` for the host) and that **Supports tools** is enabled. |
 
 ---
 

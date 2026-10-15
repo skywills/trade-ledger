@@ -80,6 +80,19 @@ Responses expose only the credential's configured/missing status, never its
 value. Unauthenticated local endpoints need no key; the app sends a documented
 per-profile placeholder and never borrows an ambient cloud credential.
 
+## Agent chat
+
+The **Agent** page (`/chat`) is an optional conversational assistant over your
+journal. It needs a verified default model profile (see Local inference) and
+can read strategies, P&L, transactions, imports and review data through
+bounded read-only tools.
+
+- Imports, rebuilds and backups ask for your explicit **Allow** before they run.
+- Decisions are never written by the agent directly; they are only created from
+  proposals you accept.
+- CSV files can be attached to a message for an import preview.
+- Each thread is capped at $5 of estimated cost and 1M generated tokens.
+
 ## Local inference
 
 Two network arrangements are documented; `localhost` inside the app container
