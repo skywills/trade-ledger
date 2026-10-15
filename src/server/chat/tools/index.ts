@@ -1,18 +1,20 @@
-// src/server/chat/tools/index.ts
 import { journalTools } from "./journal.js";
 import { pnlTools } from "./pnl.js";
 import { proposalTools } from "./proposals.js";
+import { guardReads, resetAfterWrite } from "./repeatGuard.js";
 import type { ChatTool, ChatToolContext } from "./shared.js";
 import { statusTools } from "./status.js";
 import { writeTools } from "./writes.js";
 
-/** All chat tools. Later tasks append write and proposal tools here. */
+/**
+ * All chat tools. Read tools are guarded against repeated or runaway calls;
+ * a successful write resets that guard so reads can see the new data.
+ */
 export function createChatTools(ctx: ChatToolContext): ChatTool[] {
+  const reads = [...pnlTools(ctx), ...journalTools(ctx), ...statusTools(ctx)];
   return [
-    ...pnlTools(ctx),
-    ...journalTools(ctx),
-    ...statusTools(ctx),
-    ...writeTools(ctx),
+    ...reads.map((tool) => guardReads(ctx, tool)),
+    ...writeTools(ctx).map((tool) => resetAfterWrite(ctx, tool)),
     ...proposalTools(ctx),
   ];
 }

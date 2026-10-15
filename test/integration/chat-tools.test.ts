@@ -316,3 +316,84 @@ describe("list tools never dead-end on a large page", () => {
     }
   });
 });
+
+describe("repeat-call guard", () => {
+  async function guardedTools() {
+    const t = await createTestStore();
+    open.push(t);
+    await seedLedger(t.store);
+    const { createChatTools } = await import(
+      "../../src/server/chat/tools/index.js"
+    );
+    const ctx = toolContext(t.store);
+    return { ctx, tools: createChatTools(ctx) };
+  }
+
+  it("refuses the third identical read call in a turn", async () => {
+    const { tools } = await guardedTools();
+    const input = { status: "open" };
+    expect(await call(tools, "list_strategies", input)).not.toMatchObject({
+      isError: true,
+    });
+    expect(
+      await call(tools, "list_strategies", { ...input }),
+    ).not.toMatchObject({ isError: true });
+    const third = await call(tools, "list_strategies", input);
+    expect(third).toMatchObject({ isError: true });
+    expect(third.content).toContain("already called list_strategies");
+  });
+
+  it("treats inputs with the same values in another key order as identical", async () => {
+    const { tools } = await guardedTools();
+    await call(tools, "list_strategies", { status: "open", limit: 5 });
+    await call(tools, "list_strategies", { limit: 5, status: "open" });
+    expect(
+      await call(tools, "list_strategies", { status: "open", limit: 5 }),
+    ).toMatchObject({ isError: true });
+  });
+
+  it("caps calls to one read tool per turn even with different inputs", async () => {
+    const { tools } = await guardedTools();
+    for (let offset = 0; offset < 15; offset += 1) {
+      expect(
+        await call(tools, "list_strategies", { offset, limit: 1 }),
+      ).not.toMatchObject({ isError: true });
+    }
+    const over = await call(tools, "list_strategies", { offset: 15, limit: 1 });
+    expect(over).toMatchObject({ isError: true });
+    expect(over.content).toContain("answer with what you have");
+  });
+
+  it("starts fresh on a new turn", async () => {
+    const { ctx, tools } = await guardedTools();
+    for (let i = 0; i < 2; i += 1) await call(tools, "list_imports", {});
+    expect(await call(tools, "list_imports", {})).toMatchObject({
+      isError: true,
+    });
+    ctx.turn.current = { proposalRunId: null, proposalCount: 0 };
+    expect(await call(tools, "list_imports", {})).not.toMatchObject({
+      isError: true,
+    });
+  });
+
+  it("lets status polling repeat freely", async () => {
+    const { ctx, tools } = await guardedTools();
+    const jobId = await ctx.jobs.create("backup", {});
+    for (let i = 0; i < 5; i += 1) {
+      expect(await call(tools, "get_job", { jobId })).not.toMatchObject({
+        isError: true,
+      });
+    }
+  });
+
+  it("allows re-reading after a successful write in the same turn", async () => {
+    const { tools } = await guardedTools();
+    for (let i = 0; i < 2; i += 1) await call(tools, "list_imports", {});
+    expect(await call(tools, "create_backup", {})).not.toMatchObject({
+      isError: true,
+    });
+    expect(await call(tools, "list_imports", {})).not.toMatchObject({
+      isError: true,
+    });
+  });
+});
