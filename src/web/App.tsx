@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ImportsPage } from "./imports/ImportsPage.js";
 import { JournalPage } from "./journal/JournalPage.js";
 import { StrategyDetail } from "./journal/StrategyDetail.js";
@@ -42,22 +43,60 @@ function renderRoute(pathname: string) {
   }
 }
 
+const NAV_ITEMS = [
+  { to: "/journal", label: "Journal", match: ["journal", "strategies"] },
+  { to: "/imports", label: "Imports", match: ["imports"] },
+  { to: "/transactions", label: "Transactions", match: ["transactions"] },
+  { to: "/review", label: "Review", match: ["review"] },
+  { to: "/maintenance", label: "Maintenance", match: ["maintenance"] },
+] as const;
+
 /** Application shell with the history-driven navigation and route switch. */
 export function App() {
   const { pathname } = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const firstRender = useRef(true);
+  const section =
+    pathname.split("/").filter((part) => part !== "")[0] ?? "journal";
+
+  // Move focus to the main region after client-side navigation so keyboard
+  // and screen-reader users land on the new page content.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the trigger
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+  }, [pathname]);
+
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <header className="app-header">
         <h1>IBKR Trade Journal</h1>
         <nav aria-label="Primary">
-          <Link to="/journal">Journal</Link>
-          <Link to="/imports">Imports</Link>
-          <Link to="/transactions">Transactions</Link>
-          <Link to="/review">Review</Link>
-          <Link to="/maintenance">Maintenance</Link>
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              aria-current={
+                (item.match as readonly string[]).includes(section)
+                  ? "page"
+                  : undefined
+              }
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
       </header>
-      <main className="app-main">{renderRoute(pathname)}</main>
+      <main id="main-content" className="app-main" ref={mainRef} tabIndex={-1}>
+        {renderRoute(pathname)}
+      </main>
     </div>
   );
 }

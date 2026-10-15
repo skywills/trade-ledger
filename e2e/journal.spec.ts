@@ -529,3 +529,82 @@ test("static fallback serves the SPA but leaves unknown API routes as JSON", asy
   expect(asset.status()).toBe(404);
   expect(asset.headers()["content-type"]).toContain("application/json");
 });
+
+test("confirm import stays disabled until a file is chosen", async ({
+  page,
+}) => {
+  await page.goto("/imports");
+  await expect(
+    page.getByRole("button", { name: "Confirm import" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("CSV files")
+    .setInputFiles({ ...CSV, buffer: Buffer.from(fixtures.spread) });
+  await expect(
+    page.getByRole("button", { name: "Confirm import" }),
+  ).toBeEnabled();
+  await expect(page.getByLabel("Selected files")).toContainText("spread.csv");
+});
+
+test("journal search narrows rows and offers a way back", async ({ page }) => {
+  await page.goto("/journal");
+  const rows = page.getByRole("table", { name: "Journal" }).getByRole("row");
+  await expect(rows.filter({ hasText: "AXON" }).first()).toBeVisible();
+  const before = await rows.count();
+
+  await page.getByLabel("Search strategies").fill("AXON");
+  await expect(rows.filter({ hasText: "AXON" }).first()).toBeVisible();
+  await expect(page.getByTestId("journal-no-matches")).toHaveCount(0);
+
+  await page.getByLabel("Search strategies").fill("no-such-symbol-zzz");
+  await expect(page.getByTestId("journal-no-matches")).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(rows).toHaveCount(before);
+});
+
+test("journal columns sort with aria-sort feedback", async ({ page }) => {
+  await page.goto("/journal");
+  const header = page.getByRole("columnheader", { name: /Debit \/ credit/ });
+  await expect(header).toHaveAttribute("aria-sort", "none");
+  await header.getByRole("button").click();
+  await expect(header).toHaveAttribute("aria-sort", "ascending");
+  await header.getByRole("button").click();
+  await expect(header).toHaveAttribute("aria-sort", "descending");
+  await header.getByRole("button").click();
+  await expect(header).toHaveAttribute("aria-sort", "none");
+});
+
+test("strategy tabs are operable with the arrow keys", async ({ page }) => {
+  await page.goto("/journal");
+  await page.getByRole("link", { name: /AXON/ }).first().click();
+  const summary = page.getByRole("tab", { name: "Summary" });
+  await summary.focus();
+  await page.keyboard.press("ArrowRight");
+  const allocations = page.getByRole("tab", { name: "Allocations" });
+  await expect(allocations).toHaveAttribute("aria-selected", "true");
+  await expect(allocations).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+test("rollback requires an explicit confirmation", async ({ page }) => {
+  await page.goto("/maintenance");
+  await page.getByRole("button", { name: "Rollback" }).click();
+  await expect(page.getByTestId("error-panel").or(page.getByRole("alert")).first()).toContainText(
+    "Enter the id",
+  );
+
+  await page.getByLabel("Build id to restore").fill("does-not-matter");
+  await page.getByRole("button", { name: "Rollback" }).click();
+  await expect(
+    page.getByRole("button", { name: "Confirm rollback" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Keep current build" }).click();
+  await expect(
+    page.getByRole("button", { name: "Confirm rollback" }),
+  ).toHaveCount(0);
+});
