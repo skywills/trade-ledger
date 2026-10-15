@@ -5,6 +5,7 @@ import { journalTools } from "../../src/server/chat/tools/journal.js";
 import { pnlTools } from "../../src/server/chat/tools/pnl.js";
 import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
 import { statusTools } from "../../src/server/chat/tools/status.js";
+import { writeTools } from "../../src/server/chat/tools/writes.js";
 import {
   commitImport,
   previewImport,
@@ -130,5 +131,30 @@ describe("status read tools", () => {
     expect(await call(tools, "get_job", { jobId: "missing" })).toMatchObject({
       isError: true,
     });
+  });
+});
+
+describe("write tool descriptions", () => {
+  it("asks before every run and describes the import from its preview", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    const tools = writeTools(toolContext(t.store));
+    expect(tools.every((tool) => tool.approval === "always")).toBe(true);
+    const preview = await previewImport(t.store, {
+      filename: "sept.csv",
+      bytes: fixtures.spread,
+      timezone: "UTC",
+    });
+    const commit = tools.find((tool) => tool.name === "commit_import");
+    expect(commit?.describe?.({ previewId: preview.id })).toMatch(
+      /^Commit import "sept\.csv" \(\d+ executions, \d+ quarantined\) and rebuild$/,
+    );
+    expect(
+      tools
+        .find((tool) => tool.name === "rebuild")
+        ?.describe?.({
+          mode: "projection",
+        }),
+    ).toBe("Rebuild ledger (projection)");
   });
 });

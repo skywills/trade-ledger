@@ -7,8 +7,13 @@ import { BuildScheduler } from "../../src/server/builds/service.js";
 import type { ChatFrame } from "../../src/server/chat/frames.js";
 import { type ChatLimits, ChatService } from "../../src/server/chat/service.js";
 import { listMessages, readThread } from "../../src/server/chat/threads.js";
+import {
+  listImports,
+  previewImport,
+} from "../../src/server/imports/service.js";
 import { JobService } from "../../src/server/jobs/service.js";
 import type { Store } from "../../src/server/storage/database.js";
+import { fixtures } from "../fixtures/scenarios.js";
 import { profileInput, seedLedger, verifiedProfile } from "../helpers/chat.js";
 import {
   type InferencePlanStep,
@@ -230,5 +235,102 @@ describe("ChatService read-only turns", () => {
       (m) => m.id === assistantMessageId,
     );
     expect(assistant?.status).toBe("cancelled");
+  });
+});
+
+describe("write tools need the user's approval", () => {
+  for (const decision of ["allow", "deny"] as const) {
+    it(`commit_import ${decision === "allow" ? "commits and rebuilds" : "changes nothing"} on ${decision}`, async () => {
+      const t = await createTestStore();
+      stores.push(t);
+      const preview = await previewImport(t.store, {
+        filename: "chat.csv",
+        bytes: fixtures.spread,
+        timezone: "UTC",
+      });
+      const inference = await startInferenceServer({
+        mode: "tool-call",
+        planGateTool: "get_pnl_summary",
+        plan: [
+          {
+            kind: "tool-call",
+            toolName: "commit_import",
+            arguments: { previewId: preview.id },
+          },
+          { kind: "text", text: "finished" },
+        ],
+      });
+      servers.push(inference);
+      const profile = await verifiedProfile(t.store, inference);
+      const jobs = new JobService(t.store);
+      const chat = new ChatService({
+        store: t.store,
+        secrets: createDefaultSecretResolver(),
+        jobs,
+        scheduler: new BuildScheduler(t.store, {}, jobs),
+      });
+      services.push(chat);
+      const thread = await chat.createThread({ profileId: profile.id });
+      chat.bus.subscribe(thread.id, (frame) => {
+        if (frame.event === "approval")
+          chat.answer(thread.id, frame.data.requestId, { decision });
+      });
+      await chat.sendMessage(thread.id, {
+        clientMessageId: "c",
+        text: "import it",
+        attachments: [{ previewId: preview.id, filename: "chat.csv" }],
+      });
+      await waitIdle(t.store, thread.id);
+      const assistant = listMessages(t.store, thread.id).find(
+        (m) => m.role === "assistant",
+      );
+      expect(assistant?.tools[0]).toMatchObject({
+        name: "commit_import",
+        approval: decision === "allow" ? "allowed" : "denied",
+      });
+      expect(listImports(t.store)).toHaveLength(decision === "allow" ? 1 : 0);
+      const buildJobs = t.store.db
+        .prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'rebuild'")
+        .get() as { n: number };
+      expect(buildJobs.n > 0).toBe(decision === "allow");
+    });
+  }
+
+  it("persists a pending approval on the thread while waiting", async () => {
+    const t = await createTestStore();
+    stores.push(t);
+    const inference = await startInferenceServer({
+      mode: "tool-call",
+      planGateTool: "get_pnl_summary",
+      plan: [
+        { kind: "tool-call", toolName: "create_backup", arguments: {} },
+        { kind: "text", text: "ok" },
+      ],
+    });
+    servers.push(inference);
+    const profile = await verifiedProfile(t.store, inference);
+    const jobs = new JobService(t.store);
+    const chat = new ChatService({
+      store: t.store,
+      secrets: createDefaultSecretResolver(),
+      jobs,
+      scheduler: new BuildScheduler(t.store, {}, jobs),
+    });
+    services.push(chat);
+    const thread = await chat.createThread({ profileId: profile.id });
+    const seen = new Promise<string>((resolve) =>
+      chat.bus.subscribe(thread.id, (f) => {
+        if (f.event === "approval") resolve(f.data.requestId);
+      }),
+    );
+    await chat.sendMessage(thread.id, { clientMessageId: "c", text: "backup" });
+    const requestId = await seen;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readThread(t.store, thread.id)).toMatchObject({
+      status: "waiting",
+      pending: { kind: "approval", requestId, text: "Create a backup" },
+    });
+    chat.answer(thread.id, requestId, { decision: "deny" });
+    await waitIdle(t.store, thread.id);
   });
 });
