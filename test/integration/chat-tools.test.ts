@@ -8,6 +8,7 @@ import { statusTools } from "../../src/server/chat/tools/status.js";
 import { writeTools } from "../../src/server/chat/tools/writes.js";
 import {
   commitImport,
+  listImports,
   previewImport,
 } from "../../src/server/imports/service.js";
 import { JobService } from "../../src/server/jobs/service.js";
@@ -156,5 +157,33 @@ describe("write tool descriptions", () => {
           mode: "projection",
         }),
     ).toBe("Rebuild ledger (projection)");
+  });
+});
+
+describe("commit_import when the rebuild cannot start", () => {
+  it("still reports the committed import", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    const ctx = toolContext(t.store);
+    const failing: ChatToolContext = {
+      ...ctx,
+      scheduler: {
+        submit: () => Promise.reject(new Error("queue down")),
+      } as unknown as ChatToolContext["scheduler"],
+    };
+    const preview = await previewImport(t.store, {
+      filename: "sept.csv",
+      bytes: fixtures.spread,
+      timezone: "UTC",
+    });
+    const result = await call(writeTools(failing), "commit_import", {
+      previewId: preview.id,
+    });
+    expect(result.isError).toBeFalsy();
+    const text = JSON.stringify(result);
+    expect(text).toContain("importId");
+    expect(text).toContain("rebuildError");
+    expect(text).toContain("queue down");
+    expect(listImports(t.store)).toHaveLength(1);
   });
 });

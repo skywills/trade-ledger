@@ -59,12 +59,22 @@ function commitImportTool(ctx: ChatToolContext): ChatTool {
       refuseInvalidInput(async () => {
         const { previewId } = CommitInput.parse(input ?? {});
         const committed = await commitImport(ctx.store, previewId);
-        const jobId = await submitRebuild(ctx, "full");
-        return jsonResult({
-          ...committed,
-          jobId,
-          note: "Rebuild started; poll get_job for completion.",
-        });
+        try {
+          const jobId = await submitRebuild(ctx, "full");
+          return jsonResult({
+            ...committed,
+            jobId,
+            note: "Rebuild started; poll get_job for completion.",
+          });
+        } catch (error) {
+          return jsonResult({
+            ...committed,
+            jobId: null,
+            rebuildError:
+              error instanceof Error ? error.message : String(error),
+            note: "Import committed but the rebuild did not start; ask the user to rebuild.",
+          });
+        }
       }),
   };
 }

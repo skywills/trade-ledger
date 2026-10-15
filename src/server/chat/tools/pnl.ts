@@ -29,11 +29,12 @@ export interface PnlGroup {
   readonly currency: string;
   readonly group: string;
   readonly strategies: number;
-  readonly brokerPnl: string;
-  readonly reconstructedPnl: string;
-  readonly cashflow: string;
+  readonly brokerPnl: string | null;
+  readonly reconstructedPnl: string | null;
+  readonly cashflow: string | null;
   readonly missingBrokerPnl: number;
   readonly missingReconstructedPnl: number;
+  readonly missingCashflow: number;
 }
 export interface PnlSummary {
   readonly groups: PnlGroup[];
@@ -47,6 +48,7 @@ interface Acc {
   cash: Decimal;
   missingBroker: number;
   missingRecon: number;
+  missingCash: number;
 }
 
 function groupKey(
@@ -92,6 +94,7 @@ function add(acc: Acc, strategy: Strategy): Acc {
     missingBroker: acc.missingBroker + (strategy.brokerPnl === null ? 1 : 0),
     missingRecon:
       acc.missingRecon + (strategy.reconstructedPnl === null ? 1 : 0),
+    missingCash: acc.missingCash + (strategy.cashflow === null ? 1 : 0),
   };
 }
 
@@ -102,7 +105,17 @@ const ZERO: Acc = {
   cash: new Decimal(0),
   missingBroker: 0,
   missingRecon: 0,
+  missingCash: 0,
 };
+
+/** A total over zero known values is unknown (null), never "0". */
+function totalOrNull(
+  total: Decimal,
+  missing: number,
+  strategies: number,
+): string | null {
+  return missing === strategies ? null : total.toFixed();
+}
 
 /** Per-currency P&L totals; null values are counted, never summed as zero. */
 export function summarizePnl(
@@ -144,11 +157,16 @@ export function summarizePnl(
       currency,
       group,
       strategies: acc.strategies,
-      brokerPnl: acc.broker.toFixed(),
-      reconstructedPnl: acc.recon.toFixed(),
-      cashflow: acc.cash.toFixed(),
+      brokerPnl: totalOrNull(acc.broker, acc.missingBroker, acc.strategies),
+      reconstructedPnl: totalOrNull(
+        acc.recon,
+        acc.missingRecon,
+        acc.strategies,
+      ),
+      cashflow: totalOrNull(acc.cash, acc.missingCash, acc.strategies),
       missingBrokerPnl: acc.missingBroker,
       missingReconstructedPnl: acc.missingRecon,
+      missingCashflow: acc.missingCash,
     }));
   return { groups, excludedNoDate: undated };
 }
@@ -158,7 +176,7 @@ export function pnlTools(ctx: ChatToolContext): ChatTool[] {
     {
       name: "get_pnl_summary",
       description:
-        "Summarise strategy P&L from the active build, per currency (never summed across currencies). Dates are YYYY-MM-DD and filter on closeDate by default (realised P&L). missing* counts strategies whose P&L is unknown.",
+        "Summarise strategy P&L from the active build, per currency (never summed across currencies). Dates are YYYY-MM-DD and filter on closeDate by default (realised P&L). missing* counts strategies whose value is unknown; a total is null when every strategy in the group is unknown (never 0).",
       inputSchema: {
         type: "object",
         properties: {

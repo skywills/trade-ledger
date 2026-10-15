@@ -61,6 +61,19 @@ describe("summarizePnl", () => {
     });
   });
 
+  it("reports an all-null group as null, never zero", () => {
+    const result = summarizePnl(
+      [strategy({ brokerPnl: null, cashflow: null })],
+      {},
+    );
+    expect(result.groups[0]).toMatchObject({
+      brokerPnl: null,
+      missingBrokerPnl: 1,
+      cashflow: null,
+      missingCashflow: 1,
+    });
+  });
+
   it("filters by closeDate by default and reports undated exclusions", () => {
     const result = summarizePnl(
       [
