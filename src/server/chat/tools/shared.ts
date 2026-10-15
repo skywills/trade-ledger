@@ -1,8 +1,13 @@
-import type { EmbedderTool, EmbedderToolResult } from "@nathapp/nax-agent";
+import {
+  type EmbedderTool,
+  type EmbedderToolResult,
+  MODEL_MAX_BYTES,
+  MODEL_MAX_LINE_CHARS,
+  MODEL_MAX_LINES,
+} from "@nathapp/nax-agent";
 import { ZodError } from "zod";
 import type { Id } from "../../../shared/domain.js";
 import { AppError } from "../../../shared/errors.js";
-import { MAX_READ_PAYLOAD_BYTES } from "../../ai/evidence.js";
 import type { BuildScheduler } from "../../builds/service.js";
 import type { JobService } from "../../jobs/service.js";
 import type { Store } from "../../storage/database.js";
@@ -14,6 +19,8 @@ export const UNTRUSTED =
 export const MAX_LIST_ROWS = 50;
 
 export interface TurnScope {
+  /** Identifies the turn; stays the same when the scope is copied mid-turn. */
+  readonly turnId: string;
   readonly proposalRunId: Id | null;
   readonly proposalCount: number;
 }
@@ -53,27 +60,116 @@ export async function refuseInvalidInput(
   }
 }
 
+/**
+ * nax-agent cuts any tool result line longer than MODEL_MAX_LINE_CHARS and any
+ * result over MODEL_MAX_BYTES / MODEL_MAX_LINES, spilling the rest to a file
+ * the model cannot page back through (it is one line too). Results therefore
+ * go out as JSON with one top-level field and one array element per line, and
+ * a budget that leaves room for the loop's own nudge text.
+ */
+const MODEL_BYTE_BUDGET = MODEL_MAX_BYTES - 2_000;
+
+function fieldLines(key: string, value: unknown): string[] {
+  const name = JSON.stringify(key);
+  if (!Array.isArray(value) || value.length === 0) {
+    return [`${name}:${JSON.stringify(value)}`];
+  }
+  const items = value.map((item) => JSON.stringify(item));
+  return [
+    `${name}:[`,
+    ...items.map((item, i) => (i < items.length - 1 ? `${item},` : item)),
+    "]",
+  ];
+}
+
+/** Line-per-element JSON; indented JSON when an element alone is too long. */
+export function formatForModel(payload: unknown): string {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    return JSON.stringify(payload, null, 1);
+  }
+  const fields = Object.entries(payload as Record<string, unknown>)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => fieldLines(key, value));
+  const body = fields.map((lines, i) =>
+    i < fields.length - 1
+      ? [...lines.slice(0, -1), `${lines[lines.length - 1]},`]
+      : lines,
+  );
+  const compact = ["{", ...body.flat(), "}"].join("\n");
+  const fits = compact
+    .split("\n")
+    .every((line) => line.length <= MODEL_MAX_LINE_CHARS);
+  return fits ? compact : JSON.stringify(payload, null, 1);
+}
+
+function fitsModel(content: string): boolean {
+  const lines = content.split("\n");
+  return (
+    Buffer.byteLength(content, "utf8") <= MODEL_BYTE_BUDGET &&
+    lines.length <= MODEL_MAX_LINES &&
+    lines.every((line) => line.length <= MODEL_MAX_LINE_CHARS)
+  );
+}
+
 export function jsonResult(payload: unknown): EmbedderToolResult {
-  const content = JSON.stringify(payload);
-  if (Buffer.byteLength(content, "utf8") > MAX_READ_PAYLOAD_BYTES) {
+  const content = formatForModel(payload);
+  if (!fitsModel(content)) {
     return errorResult(
-      "The result exceeds the read payload cap; narrow the filters or lower the limit.",
+      "The result is too large to show in full; narrow the filters or lower the limit (for example limit 20).",
     );
   }
   return { content };
 }
 
-export function pageOf<T>(
-  items: readonly T[],
+function pageBody<T>(
+  meta: Record<string, unknown>,
+  rows: readonly T[],
+  offset: number,
+  count: number,
+  shortened: boolean,
+): Record<string, unknown> {
+  const end = offset + count;
+  return {
+    ...meta,
+    items: rows.slice(offset, end),
+    total: rows.length,
+    nextOffset: end < rows.length ? end : null,
+    ...(shortened
+      ? {
+          shortened: true,
+          note: "Page shortened to fit; continue from nextOffset.",
+        }
+      : {}),
+  };
+}
+
+/**
+ * A page of `rows` as a tool result. When the requested page would not fit the
+ * model's limits it returns as many rows as do fit, with nextOffset pointing
+ * at the rest, so a large page never dead-ends the model in a retry loop.
+ */
+export function pagedResult<T>(
+  meta: Record<string, unknown>,
+  rows: readonly T[],
   offset = 0,
   limit = MAX_LIST_ROWS,
-): { items: T[]; total: number; nextOffset: number | null } {
-  const end = offset + limit;
-  return {
-    items: items.slice(offset, end),
-    total: items.length,
-    nextOffset: end < items.length ? end : null,
-  };
+): EmbedderToolResult {
+  const available = Math.max(0, Math.min(limit, rows.length - offset));
+  const full = formatForModel(pageBody(meta, rows, offset, available, false));
+  if (fitsModel(full)) return { content: full };
+  let count = available - 1;
+  while (count > 0) {
+    const content = formatForModel(pageBody(meta, rows, offset, count, true));
+    if (fitsModel(content)) return { content };
+    count = Math.min(count - 1, Math.floor(count * 0.75));
+  }
+  return errorResult(
+    "A single row is too large to show; use a narrower filter or get_strategy for one item.",
+  );
 }
 
 export const PagingSchemaFields = {

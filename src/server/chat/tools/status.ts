@@ -8,7 +8,7 @@ import {
   jsonResult,
   MAX_LIST_ROWS,
   PagingSchemaFields,
-  pageOf,
+  pagedResult,
   refuseInvalidInput,
   UNTRUSTED,
 } from "./shared.js";
@@ -42,7 +42,7 @@ function listImportsTool(ctx: ChatToolContext): ChatTool {
             status,
           }))
           .reverse();
-        return jsonResult(pageOf(rows, q.offset, q.limit));
+        return pagedResult({}, rows, q.offset, q.limit);
       }),
   };
 }

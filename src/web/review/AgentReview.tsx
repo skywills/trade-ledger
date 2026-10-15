@@ -17,10 +17,16 @@ const PROFILE_CODES = new Set([
   "PROFILE_NOT_VERIFIED",
 ]);
 
+/**
+ * The thread is already seeded with the issue keys, so the draft only needs to
+ * say what to do; listing every key made a multi-kilobyte URL and message.
+ */
 function prefillFor(issueKeys: string[]): string {
-  return issueKeys.length === 0
-    ? "Review the open issues and propose reconciliations."
-    : `Help me reconcile these review issues: ${issueKeys.join(", ")}.`;
+  if (issueKeys.length === 0) {
+    return "Review the open issues and propose reconciliations.";
+  }
+  const noun = issueKeys.length === 1 ? "issue" : "issues";
+  return `Help me reconcile the ${issueKeys.length} open review ${noun} on this page and propose fixes.`;
 }
 
 /** Opens a chat thread seeded with the current review issues. */

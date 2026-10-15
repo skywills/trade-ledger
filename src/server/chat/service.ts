@@ -360,7 +360,11 @@ export class ChatService {
         await this.finishCancelled(thread, assistantMessageId);
         return;
       }
-      live.turn.current = { proposalRunId: null, proposalCount: 0 };
+      live.turn.current = {
+        turnId: randomUUID(),
+        proposalRunId: null,
+        proposalCount: 0,
+      };
       live.accumulator = new TurnAccumulator(assistantMessageId);
       const run = runTurn({
         store: this.deps.store,
@@ -429,7 +433,7 @@ export class ChatService {
       cloudConfirmed: thread.cloudConfirmed,
     });
     const turn: { current: TurnScope } = {
-      current: { proposalRunId: null, proposalCount: 0 },
+      current: { turnId: "", proposalRunId: null, proposalCount: 0 },
     };
     const tools = createChatTools({
       store: this.deps.store,

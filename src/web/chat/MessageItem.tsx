@@ -1,47 +1,68 @@
 import type { ChatMessageDto, ToolRecordDto } from "../../shared/chat-api.js";
+import { CheckIcon, ShieldIcon, WrenchIcon, XIcon } from "./icons.js";
+import { Markdown } from "./Markdown.js";
+import { type ChipTone, groupTools } from "./toolGroups.js";
 
-/** Plain-text rendering with paragraph and code-fence support. No HTML injection. */
-function Body({ text }: { text: string }) {
-  const parts = text.split(/```/);
-  return (
-    <>
-      {parts.map((part, index) =>
-        index % 2 === 1 ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional split of immutable text
-          <pre key={index}>
-            <code>{part.replace(/^\w*\n/, "")}</code>
-          </pre>
-        ) : (
-          part
-            .split(/\n{2,}/)
-            .filter((p) => p.trim() !== "")
-            .map((p, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: positional split of immutable text
-              <p key={`${index}-${i}`} className="pre-wrap">
-                {p}
-              </p>
-            ))
-        ),
-      )}
-    </>
-  );
+function ChipIcon({ tone }: { tone: ChipTone }) {
+  if (tone === "ok") return <CheckIcon />;
+  if (tone === "error" || tone === "denied") return <XIcon />;
+  return <span className="chip-spinner" aria-hidden="true" />;
 }
 
 function ToolChips({ tools }: { tools: ToolRecordDto[] }) {
   if (tools.length === 0) return null;
   return (
-    <ul className="tool-chips">
-      {tools.map((tool) => (
+    <ul className="tool-chips" aria-label="Tools used">
+      {groupTools(tools).map((group) => (
         <li
-          key={tool.callId}
+          key={group.key}
           data-testid="tool-chip"
-          className={tool.isError ? "tool-chip error" : "tool-chip"}
+          className={`tool-chip tone-${group.state.tone}`}
         >
-          {tool.name} · {tool.approval ?? tool.status}
+          {group.gated ? <ShieldIcon /> : <WrenchIcon />}
+          <span className="tool-name">{group.name}</span>
+          {group.count > 1 ? (
+            <span className="tool-count">
+              ×{group.count}
+              <span className="sr-only"> calls</span>
+            </span>
+          ) : null}
+          <span className="tool-state">
+            <ChipIcon tone={group.state.tone} />
+            {group.state.label}
+          </span>
         </li>
       ))}
     </ul>
   );
+}
+
+function StatusLine({
+  message,
+  text,
+}: {
+  message: ChatMessageDto;
+  text: string;
+}) {
+  if (message.status === "streaming" && text === "") {
+    return (
+      <p className="thinking">
+        <span className="dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        Thinking…
+      </p>
+    );
+  }
+  if (message.status === "failed") {
+    return (
+      <p className="error-text">Failed: {message.error ?? "unknown error"}</p>
+    );
+  }
+  if (message.status === "cancelled") return <p className="muted">Stopped.</p>;
+  return null;
 }
 
 export function MessageItem({
@@ -53,27 +74,21 @@ export function MessageItem({
   text: string;
   tools: ToolRecordDto[];
 }) {
+  const isUser = message.role === "user";
   return (
     <article
       className={`chat-message chat-${message.role}`}
       data-testid={`message-${message.role}`}
+      aria-label={isUser ? "You" : "Agent"}
     >
       {message.attachments.length > 0 ? (
-        <p className="muted">
+        <p className="attached">
           Attached: {message.attachments.map((a) => a.filename).join(", ")}
         </p>
       ) : null}
       <ToolChips tools={tools} />
-      <Body text={text} />
-      {message.status === "streaming" && text === "" ? (
-        <p className="muted">Thinking…</p>
-      ) : null}
-      {message.status === "failed" ? (
-        <p className="error-text">Failed: {message.error ?? "unknown error"}</p>
-      ) : null}
-      {message.status === "cancelled" ? (
-        <p className="muted">Stopped.</p>
-      ) : null}
+      {isUser ? <p className="pre-wrap">{text}</p> : <Markdown text={text} />}
+      <StatusLine message={message} text={text} />
     </article>
   );
 }
