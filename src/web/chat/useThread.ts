@@ -15,6 +15,8 @@ import {
   withDetail,
 } from "./threadController.js";
 
+const REFETCH_EVENTS = new Set(["message", "thread", "proposal", "error"]);
+
 const FRAME_EVENTS = [
   "delta",
   "reset",
@@ -70,6 +72,9 @@ export function useThread(threadId: string) {
           return;
         }
         setState((s) => applyFrame(s, name, data));
+        // Refetch frames call reload directly: the reloader coalesces calls
+        // made during an in-flight load into exactly one rerun.
+        if (REFETCH_EVENTS.has(name)) reloader.reload(threadId);
       });
     }
     return () => {
@@ -77,10 +82,6 @@ export function useThread(threadId: string) {
       reloader.deactivate();
     };
   }, [threadId, reloader]);
-
-  useEffect(() => {
-    if (state.needsRefetch) reload();
-  }, [state.needsRefetch, reload]);
 
   const send = useCallback(
     async (text: string, attachments: AttachmentDto[]) => {
