@@ -123,17 +123,51 @@ export function jsonResult(payload: unknown): EmbedderToolResult {
   return { content };
 }
 
-export function pageOf<T>(
-  items: readonly T[],
+function pageBody<T>(
+  meta: Record<string, unknown>,
+  rows: readonly T[],
+  offset: number,
+  count: number,
+  shortened: boolean,
+): Record<string, unknown> {
+  const end = offset + count;
+  return {
+    ...meta,
+    items: rows.slice(offset, end),
+    total: rows.length,
+    nextOffset: end < rows.length ? end : null,
+    ...(shortened
+      ? {
+          shortened: true,
+          note: "Page shortened to fit; continue from nextOffset.",
+        }
+      : {}),
+  };
+}
+
+/**
+ * A page of `rows` as a tool result. When the requested page would not fit the
+ * model's limits it returns as many rows as do fit, with nextOffset pointing
+ * at the rest, so a large page never dead-ends the model in a retry loop.
+ */
+export function pagedResult<T>(
+  meta: Record<string, unknown>,
+  rows: readonly T[],
   offset = 0,
   limit = MAX_LIST_ROWS,
-): { items: T[]; total: number; nextOffset: number | null } {
-  const end = offset + limit;
-  return {
-    items: items.slice(offset, end),
-    total: items.length,
-    nextOffset: end < items.length ? end : null,
-  };
+): EmbedderToolResult {
+  const available = Math.max(0, Math.min(limit, rows.length - offset));
+  const full = formatForModel(pageBody(meta, rows, offset, available, false));
+  if (fitsModel(full)) return { content: full };
+  let count = available - 1;
+  while (count > 0) {
+    const content = formatForModel(pageBody(meta, rows, offset, count, true));
+    if (fitsModel(content)) return { content };
+    count = Math.min(count - 1, Math.floor(count * 0.75));
+  }
+  return errorResult(
+    "A single row is too large to show; use a narrower filter or get_strategy for one item.",
+  );
 }
 
 export const PagingSchemaFields = {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Execution } from "../../../shared/domain.js";
 import { AppError } from "../../../shared/errors.js";
 import {
   activeBuildMeta,
@@ -12,7 +13,7 @@ import {
   jsonResult,
   MAX_LIST_ROWS,
   PagingSchemaFields,
-  pageOf,
+  pagedResult,
   refuseInvalidInput,
   UNTRUSTED,
 } from "./shared.js";
@@ -94,11 +95,12 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
           .sort((a, b) =>
             (b.openingDate ?? "").localeCompare(a.openingDate ?? ""),
           );
-        return jsonResult({
-          buildId: active.buildId,
-          stale: active.stale,
-          ...pageOf(rows, q.offset, q.limit),
-        });
+        return pagedResult(
+          { buildId: active.buildId, stale: active.stale },
+          rows,
+          q.offset,
+          q.limit,
+        );
       }),
   };
 }
@@ -143,6 +145,33 @@ function getStrategyTool(ctx: ChatToolContext): ChatTool {
   };
 }
 
+/**
+ * The model-facing view of an execution: everything needed to reason about and
+ * propose allocations (key, sources, quantity, money, P&L, open/close marker),
+ * without broker order ids, raw timestamps or the account, which roughly
+ * halves the bytes per row.
+ */
+function transactionView(e: Execution) {
+  return {
+    key: e.key,
+    date: e.date,
+    symbol: e.instrument.symbol,
+    underlying: e.instrument.underlying,
+    assetClass: e.instrument.assetClass,
+    quantity: e.quantity,
+    price: e.price,
+    currency: e.currency,
+    netCash: e.netCash,
+    proceeds: e.proceeds,
+    commission: e.commission,
+    basis: e.basis,
+    brokerPnl: e.brokerPnl,
+    action: e.action,
+    event: e.event,
+    sources: e.sources,
+  };
+}
+
 function listTransactionsTool(ctx: ChatToolContext): ChatTool {
   return {
     name: "list_transactions",
@@ -169,10 +198,12 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
           )
           .filter((e) => within(e.date, q.from, q.to))
           .sort((a, b) => b.date.localeCompare(a.date));
-        return jsonResult({
-          ...activeBuildMeta(ctx.store),
-          ...pageOf(rows, q.offset, q.limit),
-        });
+        return pagedResult(
+          activeBuildMeta(ctx.store),
+          rows.map(transactionView),
+          q.offset,
+          q.limit,
+        );
       }),
   };
 }
@@ -200,11 +231,12 @@ function listReviewIssuesTool(ctx: ChatToolContext): ChatTool {
             (q.severity === undefined || i.severity === q.severity) &&
             (q.code === undefined || i.code === q.code),
         );
-        return jsonResult({
-          buildId: active.buildId,
-          stale: active.stale,
-          ...pageOf(rows, q.offset, q.limit),
-        });
+        return pagedResult(
+          { buildId: active.buildId, stale: active.stale },
+          rows,
+          q.offset,
+          q.limit,
+        );
       }),
   };
 }

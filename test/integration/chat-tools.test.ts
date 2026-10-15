@@ -237,3 +237,82 @@ describe("tool results fit nax-agent's model-facing limits", () => {
     expect(jsonResult(huge)).toMatchObject({ isError: true });
   });
 });
+
+describe("list tools never dead-end on a large page", () => {
+  it("shortens a page that would not fit and points nextOffset at the rest", async () => {
+    const { MODEL_MAX_BYTES, MODEL_MAX_LINE_CHARS } = await import(
+      "@nathapp/nax-agent"
+    );
+    const { pagedResult } = await import(
+      "../../src/server/chat/tools/shared.js"
+    );
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      i,
+      blob: "y".repeat(1500),
+    }));
+    const first = pagedResult({ buildId: "b" }, rows, 10, 50);
+    expect(first.isError).toBeUndefined();
+    expect(Buffer.byteLength(first.content)).toBeLessThan(MODEL_MAX_BYTES);
+    const lines = first.content.split("\n");
+    expect(Math.max(...lines.map((l) => l.length))).toBeLessThanOrEqual(
+      MODEL_MAX_LINE_CHARS,
+    );
+    const page = JSON.parse(first.content) as {
+      items: { i: number }[];
+      total: number;
+      nextOffset: number;
+      shortened: boolean;
+    };
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeLessThan(50);
+    expect(page.items[0]?.i).toBe(10);
+    expect(page.nextOffset).toBe(10 + page.items.length);
+    expect(page).toMatchObject({ total: 200, shortened: true });
+  });
+
+  it("keeps a page that fits unchanged", async () => {
+    const { pagedResult } = await import(
+      "../../src/server/chat/tools/shared.js"
+    );
+    const page = JSON.parse(
+      pagedResult({}, [1, 2, 3], 0, 50).content,
+    ) as Record<string, unknown>;
+    expect(page).toEqual({ items: [1, 2, 3], total: 3, nextOffset: null });
+  });
+
+  it("returns slim transaction rows that still carry what proposals need", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    await seedLedger(t.store);
+    const result = await call(
+      journalTools(toolContext(t.store)),
+      "list_transactions",
+      {},
+    );
+    const row = (
+      JSON.parse(result.content) as { items: Record<string, unknown>[] }
+    ).items[0];
+    expect(row).toBeDefined();
+    for (const key of [
+      "key",
+      "date",
+      "symbol",
+      "quantity",
+      "netCash",
+      "brokerPnl",
+      "action",
+      "sources",
+    ]) {
+      expect(row).toHaveProperty(key);
+    }
+    for (const key of [
+      "brokerIds",
+      "rawDateTime",
+      "timezone",
+      "account",
+      "instrument",
+    ]) {
+      expect(row).not.toHaveProperty(key);
+    }
+  });
+});
