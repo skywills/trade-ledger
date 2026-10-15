@@ -1,5 +1,7 @@
 // src/server/chat/service.ts
 import { randomUUID } from "node:crypto";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { AnswerReply, AnswerStatus } from "@nathapp/nax-agent";
 import type { Id } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
@@ -88,6 +90,7 @@ function busyError(): AppError {
 }
 
 export function cancelActiveChats(): void {
+  for (const claim of CLAIMS.values()) claim.cancelRequested = true;
   for (const live of ACTIVE_CHATS.values()) {
     try {
       live.hosted.session.cancel("cancelled");
@@ -294,6 +297,22 @@ export class ChatService {
       );
     await this.closeLive(threadId);
     await removeThread(this.deps.store, threadId);
+    await this.removeTranscripts(thread.sessionId);
+  }
+
+  /** Best-effort: nax-agent names files `<sessionId>.transcript[.failed-*].json`. */
+  private async removeTranscripts(sessionId: string): Promise<void> {
+    const dir = join(this.deps.store.dataDir, "transcripts", "chat");
+    try {
+      const names = await readdir(dir);
+      await Promise.all(
+        names
+          .filter((n) => n.startsWith(`${sessionId}.transcript`))
+          .map((n) => rm(join(dir, n), { force: true })),
+      );
+    } catch {
+      /* transcript cleanup must never fail a delete */
+    }
   }
 
   async sweepIdle(idleMs: number = CHAT_SESSION_IDLE_MS): Promise<void> {
@@ -307,6 +326,7 @@ export class ChatService {
   async close(): Promise<void> {
     cancelActiveChats();
     await drainActiveChats();
+    await Promise.allSettled([...OPENING.values()]);
     for (const id of [...ACTIVE_CHATS.keys()]) await this.closeLive(id);
   }
 

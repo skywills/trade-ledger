@@ -36,7 +36,7 @@ afterEach(async () => {
 async function harness(
   plan: InferencePlanStep[],
   limits: Partial<ChatLimits> = {},
-  server: { delayMs?: number } = {},
+  server: { delayMs?: number; planDelayMs?: number } = {},
 ) {
   const t = await createTestStore();
   stores.push(t);
@@ -238,6 +238,24 @@ describe("ChatService read-only turns", () => {
     );
     expect(assistant?.status).toBe("cancelled");
   });
+});
+
+describe("shutdown", () => {
+  it("stops a turn that is still opening or in its first round", async () => {
+    const h = await harness(
+      [{ kind: "text", text: "slow" }],
+      {},
+      { planDelayMs: 20_000 },
+    );
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    await h.chat.sendMessage(thread.id, { clientMessageId: "s", text: "hi" });
+    const started = Date.now();
+    await h.chat.close();
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const after = readThread(h.store, thread.id);
+    expect(after?.status).not.toBe("running");
+    expect(after?.status).not.toBe("waiting");
+  }, 30_000);
 });
 
 describe("write tools need the user's approval", () => {

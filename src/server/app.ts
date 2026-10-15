@@ -186,7 +186,9 @@ export async function createApp(
     });
 
     const chat = new ChatService({ store, secrets, scheduler, jobs });
-    const sweep = setInterval(() => void chat.sweepIdle(), 60_000);
+    const sweep = setInterval(() => {
+      chat.sweepIdle().catch(() => undefined);
+    }, 60_000);
     sweep.unref();
 
     app.addHook("onClose", async () => {
