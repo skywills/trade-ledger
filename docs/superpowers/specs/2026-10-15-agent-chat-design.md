@@ -69,7 +69,7 @@ React /chat ──REST──▶ http/routes-chat.ts ──▶ chat/service.ts �
 
 Shared and model-agnostic. Responsibilities:
 - `resolveProfile(store, profileId | null, { cloudConfirmed })`: default profile, enabled, verified, cloud-confirm checks. Throws the existing `AppError` codes (`NO_PROFILE`, `PROFILE_DISABLED`, `PROFILE_NOT_VERIFIED`, `CLOUD_CONFIRMATION_REQUIRED`).
-- `openHostedSession({ store, profile, secrets, sessionId, resume, instructions, tools, transcriptsSubdir, turnTimeoutSeconds, approvalTimeoutMs?, metadata })` → `{ session, close() }`. It wraps `openModelConnection` + `createAgentSession`/`resumeAgentSession` + `createFileTranscriptStore(DATA_DIR/transcripts/<subdir>)`, and `close()` closes both the session and the gateway.
+- `openHostedSession({ store, profile, secrets, sessionId, instructions, tools, transcriptsSubdir, turnTimeoutSeconds, approvalTimeoutMs?, metadata })` → `{ session, close() }`. It wraps `openModelConnection` + create-or-resume (try `resumeAgentSession`; on `AGENT_SESSION_NOT_FOUND`, `createAgentSession`) + `createFileTranscriptStore(DATA_DIR/transcripts/<subdir>)`, and `close()` closes both the session and the gateway.
 - `UsageMeter`: folds `usage`/`turn_end` events into `RunUsage` + cost and reports limit breaches (`max_rounds`, `max_output_tokens`, `max_generated_tokens`). The logic moves out of `handleEvent`/`executeTurn`.
 
 `analysis.ts` is reduced to what legacy runs still need: `readAnalysisRun`. Its start/answer/subscribe/cancel/drain functions are deleted.
@@ -256,7 +256,7 @@ All mutating routes sit behind the existing origin guard.
 |---|---|
 | `ready` | `{threadStatus}` |
 | `delta` | `{messageId, text}` |
-| `reset` | `{messageId}` (from `stream_reset`) |
+| `reset` | `{messageId, text}` (from `stream_reset`; `text` is the message text with the voided round removed) |
 | `tool` | `{messageId, callId, name, phase: "call"\|"result", isError?}` |
 | `approval` | `{requestId, tool, summary, detail, expiresAt}` |
 | `question` | `{requestId, text, expiresAt}` |
@@ -295,7 +295,7 @@ The client refetches the thread over REST on `message`, `thread`, or reconnect. 
 **API typing.** `api.ts` gains zod schemas for thread, message and frames.
 
 **Review page.**
-- `AnalysisPanel` is replaced by "Ask agent (N selected issues)". It calls `POST /api/chat/threads {seed}` and navigates to `/chat/:id` with the first message prefilled (not auto-sent).
+- `AnalysisPanel` is replaced by an "Ask agent about these issues" button. The Review page has no row selection, so it seeds the thread with the issue keys on the current page. It calls `POST /api/chat/threads {seed}` and navigates to `/chat/:id` with the first message prefilled (not auto-sent).
 - A "Past analyses" list shows legacy runs, and their pending proposals stay actionable with `ProposalCard`.
 
 **Cloud profiles.** When the selected profile is cloud, thread creation shows the existing cloud-confirmation checkbox.
