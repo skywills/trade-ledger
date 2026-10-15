@@ -46,6 +46,41 @@ async function configureModel(
   expect(selected.ok()).toBe(true);
 }
 
+test("the app lands on the agent home and starts a conversation from it", async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  inference = await startInferenceServer({
+    mode: "tool-call",
+    planGateTool: "get_pnl_summary",
+    plan: [{ kind: "text", text: "Hello from the agent." }],
+  });
+  await configureModel(request, baseURL ?? "", inference.url);
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Ask about your journal" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Agent" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page
+    .getByRole("button", { name: "Which positions are still open?" })
+    .click();
+  await expect(page.getByTestId("composer-input")).toHaveValue(
+    "Which positions are still open?",
+  );
+  await page.getByTestId("composer-send").click();
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]+$/);
+  await expect(page.getByTestId("message-assistant").last()).toContainText(
+    "Hello from the agent.",
+  );
+  await expect(page.getByTestId("thread-list")).toContainText(
+    "Which positions are still open?",
+  );
+});
+
 test("asks a P&L question and gets a tool-backed answer", async ({
   page,
   request,
