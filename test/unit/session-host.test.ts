@@ -1,11 +1,15 @@
 import type { SessionEvent } from "@nathapp/nax-agent";
 import { describe, expect, it } from "vitest";
-import { saveProfile } from "../../src/server/ai/profiles.js";
+import {
+  recordProfileCheck,
+  saveProfile,
+} from "../../src/server/ai/profiles.js";
 import {
   DEFAULT_TURN_LIMITS,
   resolveProfile,
   UsageMeter,
 } from "../../src/server/ai/session-host.js";
+import type { Store } from "../../src/server/storage/database.js";
 import { profileInput } from "../helpers/chat.js";
 import { createTestStore } from "../helpers/store.js";
 
@@ -93,23 +97,51 @@ describe("UsageMeter", () => {
 });
 
 describe("resolveProfile", () => {
-  it("requires cloud confirmation and a verified profile", async () => {
+  async function cloudProfile(store: Store, name: string) {
+    return saveProfile(
+      store,
+      { ...profileInput(name, "https://example.invalid/v1"), mode: "cloud" },
+      null,
+    );
+  }
+
+  it("refuses an unverified profile and a missing selection", async () => {
     const t = await createTestStore();
     try {
-      const cloud = await saveProfile(
-        t.store,
-        {
-          ...profileInput("cloud", "https://example.invalid/v1"),
-          mode: "cloud",
-        },
-        null,
-      );
+      const unverified = await cloudProfile(t.store, "unverified");
       expect(() =>
-        resolveProfile(t.store, cloud.id, { cloudConfirmed: true }),
+        resolveProfile(t.store, unverified.id, { cloudConfirmed: true }),
       ).toThrow(expect.objectContaining({ code: "PROFILE_NOT_VERIFIED" }));
       expect(() =>
         resolveProfile(t.store, null, { cloudConfirmed: false }),
       ).toThrow(expect.objectContaining({ code: "NO_PROFILE" }));
+    } finally {
+      await t.dispose();
+    }
+  });
+
+  it("requires explicit confirmation for a verified cloud profile", async () => {
+    const t = await createTestStore();
+    try {
+      const cloud = await cloudProfile(t.store, "cloud");
+      await recordProfileCheck(t.store, {
+        profileId: cloud.id,
+        profileRevision: cloud.revision,
+        status: "verified",
+        reason: null,
+        endpoint: cloud.endpoint,
+        modelId: cloud.modelId,
+        checkedAt: new Date().toISOString(),
+        durationMs: 1,
+      });
+      expect(() =>
+        resolveProfile(t.store, cloud.id, { cloudConfirmed: false }),
+      ).toThrow(
+        expect.objectContaining({ code: "CLOUD_CONFIRMATION_REQUIRED" }),
+      );
+      expect(
+        resolveProfile(t.store, cloud.id, { cloudConfirmed: true }).id,
+      ).toBe(cloud.id);
     } finally {
       await t.dispose();
     }
