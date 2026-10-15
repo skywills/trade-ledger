@@ -57,9 +57,12 @@ describe("journal read tools", () => {
       (await call(tools, "get_strategy", { strategyId: id })).content,
     );
     expect(detail.strategy.id).toBe(id);
-    expect(
-      JSON.parse((await call(tools, "list_transactions", {})).content).total,
-    ).toBeGreaterThan(0);
+    const txns = JSON.parse(
+      (await call(tools, "list_transactions", {})).content,
+    );
+    expect(txns.total).toBeGreaterThan(0);
+    expect(txns).toHaveProperty("buildId");
+    expect(typeof txns.stale).toBe("boolean");
     expect(
       JSON.parse((await call(tools, "list_review_issues", {})).content),
     ).toHaveProperty("items");
