@@ -32,6 +32,11 @@ export interface EvidenceRow {
   readonly price: string | null;
   readonly currency: string;
   readonly netCash: string;
+  /** Broker-reported amounts; a non-null brokerPnl marks a closing trade. */
+  readonly proceeds: string | null;
+  readonly commission: string | null;
+  readonly basis: string | null;
+  readonly brokerPnl: string | null;
   readonly event: string;
   readonly action: string;
   readonly rowHash: string;
@@ -94,6 +99,10 @@ function executionRow(execution: Execution): EvidenceRow {
     price: execution.price,
     currency: execution.currency,
     netCash: execution.netCash,
+    proceeds: execution.proceeds,
+    commission: execution.commission,
+    basis: execution.basis,
+    brokerPnl: execution.brokerPnl,
     event: execution.event,
     action: execution.action,
   };

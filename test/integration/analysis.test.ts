@@ -302,6 +302,34 @@ describe("bounded analysis produces review proposals", () => {
     expect(inference.receivedRequests()).toHaveLength(0);
   });
 
+  it("exposes broker P/L so a closing trade is distinguishable", async () => {
+    const store = await testStore();
+    const { buildId } = await seedFrom(
+      store,
+      buildExecutionTable([
+        executionRow({
+          ClientAccountID: "SIM-X",
+          AssetClass: "STK",
+          Symbol: "AAA",
+          Conid: "1",
+          CurrencyPrimary: "USD",
+          TradeDate: "2026-09-03",
+          DateTime: "2026-09-03 10:00:00",
+          Quantity: "-1",
+          TradePrice: "12",
+          NetCash: "12",
+          FifoPnlRealized: "2",
+          "Notes/Codes": "C",
+          IBExecID: "CLOSE1",
+          TradeID: "TC1",
+          Multiplier: "1",
+        }),
+      ]),
+    );
+    const snapshot = buildEvidenceSnapshot(store, { buildId, issueKeys: [] });
+    expect(snapshot.rows[0]).toMatchObject({ brokerPnl: "2" });
+  });
+
   it("survives cross-batch source references and rejects oversized rows", async () => {
     const store = await testStore();
     const rows: ReturnType<typeof executionRow>[] = [];
