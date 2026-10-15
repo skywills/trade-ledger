@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ThreadDetailDto } from "../../shared/chat-api.js";
 import { ApiError } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
@@ -52,12 +52,11 @@ function ThreadHeader({
 /** Announces turn progress once, instead of every streamed delta. */
 function TurnAnnouncer({ running }: { running: boolean }) {
   const [said, setSaid] = useState("");
+  const wasRunning = useRef(running);
   useEffect(() => {
-    setSaid(running ? "The agent is replying." : "");
-    if (!running) {
-      const timer = setTimeout(() => setSaid("The agent replied."), 50);
-      return () => clearTimeout(timer);
-    }
+    if (running) setSaid("The agent is replying.");
+    else if (wasRunning.current) setSaid("The agent replied.");
+    wasRunning.current = running;
   }, [running]);
   return (
     <p className="sr-only" role="status">

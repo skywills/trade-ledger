@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useMemo } from "react";
 import {
   type Align,
   type Block,
@@ -93,9 +93,10 @@ function BlockView({ block }: { block: Block }) {
 }
 
 export function Markdown({ text }: { text: string }) {
+  const blocks = useMemo(() => parseBlocks(text), [text]);
   return (
     <div className="md">
-      {parseBlocks(text).map((block, i) => (
+      {blocks.map((block, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: positional blocks of immutable text
         <BlockView key={i} block={block} />
       ))}

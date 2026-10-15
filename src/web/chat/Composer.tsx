@@ -1,4 +1,4 @@
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { AttachmentDto } from "../../shared/chat-api.js";
 import { ApiError, PreviewResponseSchema, requestMultipart } from "../api.js";
 import { PaperclipIcon, SendIcon, XIcon } from "./icons.js";
@@ -62,6 +62,7 @@ export function Composer({
   placeholder = "Ask about your trades, P&L or imports…",
   autoFocus = false,
   footer,
+  prefill,
 }: {
   disabled: boolean;
   initialText: string;
@@ -69,6 +70,8 @@ export function Composer({
   placeholder?: string;
   autoFocus?: boolean;
   footer?: ReactNode;
+  /** Replaces the text (keeping attachments) whenever `nonce` changes. */
+  prefill?: { text: string; nonce: number };
 }) {
   const [text, setText] = useState(initialText);
   const [staged, setStaged] = useState<Staged[]>([]);
@@ -77,6 +80,14 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const textArea = useRef<HTMLTextAreaElement>(null);
+  const prefillNonce = prefill?.nonce ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the nonce is the trigger
+  useEffect(() => {
+    if (prefill === undefined || prefillNonce === 0) return;
+    setText(prefill.text);
+    textArea.current?.focus();
+  }, [prefillNonce]);
 
   async function upload(files: FileList | null) {
     const csvs = Array.from(files ?? []).filter((f) =>
@@ -139,6 +150,7 @@ export function Composer({
       ) : null}
       <div className="composer-box">
         <textarea
+          ref={textArea}
           data-testid="composer-input"
           aria-label="Message"
           placeholder={placeholder}

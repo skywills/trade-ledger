@@ -31,7 +31,9 @@ function toolContext(store: Store): ChatToolContext {
     thread: () => {
       throw new Error("no thread in this test");
     },
-    turn: { current: { proposalRunId: null, proposalCount: 0 } },
+    turn: {
+      current: { turnId: "turn-1", proposalRunId: null, proposalCount: 0 },
+    },
     emitProposal: () => undefined,
     now: () => new Date("2026-10-15T00:00:00Z"),
   };
@@ -317,6 +319,18 @@ describe("list tools never dead-end on a large page", () => {
   });
 });
 
+async function waitForJob(ctx: ChatToolContext, jobId: string) {
+  const { isTerminalJobStatus } = await import(
+    "../../src/server/jobs/service.js"
+  );
+  for (let i = 0; i < 200; i += 1) {
+    const status = ctx.jobs.read(jobId)?.status;
+    if (status !== undefined && isTerminalJobStatus(status)) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`job ${jobId} did not finish`);
+}
+
 describe("repeat-call guard", () => {
   async function guardedTools() {
     const t = await createTestStore();
@@ -354,12 +368,12 @@ describe("repeat-call guard", () => {
 
   it("caps calls to one read tool per turn even with different inputs", async () => {
     const { tools } = await guardedTools();
-    for (let offset = 0; offset < 15; offset += 1) {
+    for (let offset = 0; offset < 30; offset += 1) {
       expect(
         await call(tools, "list_strategies", { offset, limit: 1 }),
       ).not.toMatchObject({ isError: true });
     }
-    const over = await call(tools, "list_strategies", { offset: 15, limit: 1 });
+    const over = await call(tools, "list_strategies", { offset: 30, limit: 1 });
     expect(over).toMatchObject({ isError: true });
     expect(over.content).toContain("answer with what you have");
   });
@@ -370,7 +384,11 @@ describe("repeat-call guard", () => {
     expect(await call(tools, "list_imports", {})).toMatchObject({
       isError: true,
     });
-    ctx.turn.current = { proposalRunId: null, proposalCount: 0 };
+    ctx.turn.current = {
+      turnId: "turn-2",
+      proposalRunId: null,
+      proposalCount: 0,
+    };
     expect(await call(tools, "list_imports", {})).not.toMatchObject({
       isError: true,
     });
@@ -387,13 +405,36 @@ describe("repeat-call guard", () => {
   });
 
   it("allows re-reading after a successful write in the same turn", async () => {
-    const { tools } = await guardedTools();
+    const { ctx, tools } = await guardedTools();
     for (let i = 0; i < 2; i += 1) await call(tools, "list_imports", {});
-    expect(await call(tools, "create_backup", {})).not.toMatchObject({
-      isError: true,
-    });
+    const backup = await call(tools, "create_backup", {});
+    expect(backup).not.toMatchObject({ isError: true });
     expect(await call(tools, "list_imports", {})).not.toMatchObject({
       isError: true,
     });
+    // Let the background backup finish before the store is torn down.
+    const { jobId } = JSON.parse(backup.content) as { jobId: string };
+    await waitForJob(ctx, jobId);
+  });
+
+  it("keeps counting when the turn scope is replaced mid-turn", async () => {
+    // submit_proposal replaces ctx.turn.current with a spread copy.
+    const { ctx, tools } = await guardedTools();
+    await call(tools, "list_imports", {});
+    ctx.turn.current = { ...ctx.turn.current, proposalCount: 1 };
+    await call(tools, "list_imports", {});
+    expect(await call(tools, "list_imports", {})).toMatchObject({
+      isError: true,
+    });
+  });
+});
+
+describe("formatForModel", () => {
+  it("omits undefined fields so the result is valid JSON", async () => {
+    const { formatForModel } = await import(
+      "../../src/server/chat/tools/shared.js"
+    );
+    const text = formatForModel({ a: 1, b: undefined, items: [1] });
+    expect(JSON.parse(text)).toEqual({ a: 1, items: [1] });
   });
 });

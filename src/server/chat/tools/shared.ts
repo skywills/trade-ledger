@@ -19,6 +19,8 @@ export const UNTRUSTED =
 export const MAX_LIST_ROWS = 50;
 
 export interface TurnScope {
+  /** Identifies the turn; stays the same when the scope is copied mid-turn. */
+  readonly turnId: string;
   readonly proposalRunId: Id | null;
   readonly proposalCount: number;
 }
@@ -89,9 +91,9 @@ export function formatForModel(payload: unknown): string {
   ) {
     return JSON.stringify(payload, null, 1);
   }
-  const fields = Object.entries(payload as Record<string, unknown>).map(
-    ([key, value]) => fieldLines(key, value),
-  );
+  const fields = Object.entries(payload as Record<string, unknown>)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => fieldLines(key, value));
   const body = fields.map((lines, i) =>
     i < fields.length - 1
       ? [...lines.slice(0, -1), `${lines[lines.length - 1]},`]

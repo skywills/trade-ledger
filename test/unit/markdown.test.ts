@@ -75,3 +75,11 @@ describe("parseInline", () => {
     ]);
   });
 });
+
+describe("parseBlocks performance", () => {
+  it("stays linear on a long whitespace line after a pipe line", () => {
+    const started = performance.now();
+    parseBlocks(`a | b\n${" ".repeat(30_000)}|\n`);
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+});

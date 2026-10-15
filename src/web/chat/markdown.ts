@@ -23,7 +23,14 @@ const FENCE = /^\s*```/;
 const HEADING = /^(#{1,4})\s+(.+)$/;
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
-const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const SEPARATOR_CELL = /^:?-{3,}:?$/;
+
+/** `|---|:--:|` style row. A split-and-test check, linear in the line length. */
+function isTableSeparator(line: string): boolean {
+  if (!line.includes("-")) return false;
+  const cells = splitRow(line);
+  return cells.length > 0 && cells.every((cell) => SEPARATOR_CELL.test(cell));
+}
 
 function splitRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
@@ -44,7 +51,7 @@ function isTableStart(lines: string[], i: number): boolean {
   return (
     (lines[i] ?? "").includes("|") &&
     next !== undefined &&
-    TABLE_SEPARATOR.test(next)
+    isTableSeparator(next)
   );
 }
 

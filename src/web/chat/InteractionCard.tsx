@@ -69,7 +69,13 @@ export function InteractionCard({
   const [text, setText] = useState("");
   const { busy, error, run } = useAnswer(onAnswer);
   const card = useRef<HTMLElement>(null);
-  useEffect(() => card.current?.focus(), []);
+  useEffect(() => {
+    const active = document.activeElement;
+    const typing =
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLInputElement;
+    if (!typing) card.current?.focus();
+  }, []);
   const approval = pending.kind === "approval";
   return (
     <section

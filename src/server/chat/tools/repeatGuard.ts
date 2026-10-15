@@ -1,20 +1,16 @@
 import type { EmbedderToolResult } from "@nathapp/nax-agent";
-import {
-  type ChatTool,
-  type ChatToolContext,
-  errorResult,
-  type TurnScope,
-} from "./shared.js";
+import { type ChatTool, type ChatToolContext, errorResult } from "./shared.js";
 
 /**
  * Stops a model from looping on read tools. Weak or confused models re-issue
  * the same call, or page one row at a time, until the turn limits cut them
- * off without an answer. Counts live per turn: the service replaces
- * `ctx.turn.current` at every turn start, so keying on that object resets
- * them, and a successful write clears them because the data just changed.
+ * off without an answer. Counts live per turn: they are keyed on
+ * the turn id the service assigns at every turn start (copies of the turn
+ * scope made mid-turn keep it), and a successful write clears them because
+ * the data just changed.
  */
 export const MAX_IDENTICAL_CALLS = 2;
-export const MAX_CALLS_PER_TOOL = 15;
+export const MAX_CALLS_PER_TOOL = 30;
 
 /** Status reads whose answer changes while a job runs; polling them is fine. */
 const POLLING_TOOLS = new Set(["get_job", "get_build_status"]);
@@ -24,15 +20,21 @@ interface Counts {
   readonly perTool: Map<string, number>;
 }
 
-const COUNTS = new WeakMap<TurnScope, Counts>();
+/** Per tool-context (one per live session): the turn being counted and its counts. */
+const COUNTS = new WeakMap<
+  ChatToolContext,
+  { readonly turnId: string; readonly counts: Counts }
+>();
 
 function countsFor(ctx: ChatToolContext): Counts {
-  const scope = ctx.turn.current;
-  const existing = COUNTS.get(scope);
-  if (existing !== undefined) return existing;
-  const created: Counts = { identical: new Map(), perTool: new Map() };
-  COUNTS.set(scope, created);
-  return created;
+  const turnId = ctx.turn.current.turnId;
+  const existing = COUNTS.get(ctx);
+  if (existing !== undefined && existing.turnId === turnId) {
+    return existing.counts;
+  }
+  const counts: Counts = { identical: new Map(), perTool: new Map() };
+  COUNTS.set(ctx, { turnId, counts });
+  return counts;
 }
 
 /** JSON with object keys sorted, so `{a,b}` and `{b,a}` are the same call. */
@@ -54,12 +56,12 @@ function refusal(
 ): EmbedderToolResult | null {
   if (identical > MAX_IDENTICAL_CALLS) {
     return errorResult(
-      `You already called ${name} with this exact input ${MAX_IDENTICAL_CALLS} times in this turn. Its result is earlier in the conversation; answer from it instead of calling again.`,
+      `You already called ${name} with this exact input ${MAX_IDENTICAL_CALLS} times in this turn. Answer from that result. If it is no longer in the conversation, summarise what you know and ask the user how to continue instead of calling again.`,
     );
   }
   if (perTool > MAX_CALLS_PER_TOOL) {
     return errorResult(
-      `${name} has been called ${MAX_CALLS_PER_TOOL} times in this turn. Stop calling it and answer with what you have, or ask the user to narrow the question.`,
+      `${name} has been called ${MAX_CALLS_PER_TOOL} times in this turn. Stop calling it: answer with what you have, or ask the user to narrow the question (for example a date range or status filter).`,
     );
   }
   return null;
@@ -100,7 +102,7 @@ export function resetAfterWrite(
     ...tool,
     run: async (input, runCtx) => {
       const result = await tool.run(input, runCtx);
-      if (result.isError !== true) COUNTS.delete(ctx.turn.current);
+      if (result.isError !== true) COUNTS.delete(ctx);
       return result;
     },
   };

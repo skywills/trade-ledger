@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ModelsResponseSchema } from "../../shared/api.js";
 import {
   type AttachmentDto,
@@ -14,7 +14,7 @@ const SUGGESTIONS = [
   "What is my realised P&L by month this year?",
   "Which positions are still open?",
   "Summarise the review issues I should fix first.",
-  "Import the attached CSV and tell me what changed.",
+  "Summarise my imports and whether the build is current.",
 ] as const;
 
 type Model = {
@@ -77,30 +77,32 @@ function NoModel() {
   );
 }
 
-async function startConversation(
-  text: string,
-  attachments: AttachmentDto[],
-  cloudConfirmed: boolean,
-): Promise<void> {
+/**
+ * Creates the thread (once) and sends the first message. The thread id is
+ * returned before sending so a failed send can be retried into the same
+ * thread instead of leaving an empty "New conversation" behind each time.
+ */
+async function createThread(cloudConfirmed: boolean): Promise<string> {
   const { thread } = await requestJson(
     "/api/chat/threads",
     ThreadEnvelopeSchema,
     "POST",
-    {
-      cloudConfirmed,
-    },
+    { cloudConfirmed },
   );
+  return thread.id;
+}
+
+async function sendFirstMessage(
+  threadId: string,
+  text: string,
+  attachments: AttachmentDto[],
+): Promise<void> {
   await requestJson(
-    `/api/chat/threads/${thread.id}/messages`,
+    `/api/chat/threads/${threadId}/messages`,
     SendMessageResponseSchema,
     "POST",
-    {
-      clientMessageId: crypto.randomUUID(),
-      text,
-      attachments,
-    },
+    { clientMessageId: crypto.randomUUID(), text, attachments },
   );
-  navigate(`/chat/${thread.id}`);
 }
 
 function CloudConsent({
@@ -128,10 +130,15 @@ export function AgentHome({ onStarted }: { onStarted: () => void }) {
   const [draft, setDraft] = useState({ text: "", nonce: 0 });
   const [cloudConfirmed, setCloudConfirmed] = useState(false);
   const cloud = model?.mode === "cloud";
+  const pendingThread = useRef<string | null>(null);
   const send = async (text: string, attachments: AttachmentDto[]) => {
     try {
-      await startConversation(text, attachments, cloudConfirmed);
+      pendingThread.current ??= await createThread(cloudConfirmed);
+      const threadId = pendingThread.current;
+      await sendFirstMessage(threadId, text, attachments);
+      pendingThread.current = null;
       onStarted();
+      navigate(`/chat/${threadId}`);
     } catch (err) {
       throw err instanceof ApiError
         ? err
@@ -157,9 +164,9 @@ export function AgentHome({ onStarted }: { onStarted: () => void }) {
       ) : (
         <>
           <Composer
-            key={draft.nonce}
             disabled={loading || (cloud && !cloudConfirmed)}
-            initialText={draft.text}
+            initialText=""
+            prefill={draft}
             onSend={send}
             autoFocus
             footer={

@@ -1183,9 +1183,9 @@ button.stop-button {
 button.chip-remove {
   display: inline-grid;
   place-items: center;
-  width: 32px;
-  min-width: 32px;
-  min-height: 32px;
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
   padding: 0;
   border: 0;
   border-radius: 50%;
