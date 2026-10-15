@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AnswerResponseSchema,
   type AttachmentDto,
@@ -7,6 +7,7 @@ import {
   ThreadDetailSchema,
 } from "../../shared/chat-api.js";
 import { ApiError, request, requestJson } from "../api.js";
+import { createReloader } from "./reloader.js";
 import {
   applyFrame,
   initialThreadState,
@@ -27,40 +28,37 @@ const FRAME_EVENTS = [
   "error",
 ];
 
+function loadFailure(err: unknown): string {
+  return err instanceof ApiError
+    ? err.message
+    : "Failed to load the conversation.";
+}
+
 export function useThread(threadId: string) {
   const [state, setState] = useState<ThreadState>(initialThreadState);
-  const loading = useRef(false);
+  const [reloader] = useState(() =>
+    createReloader({
+      fetch: (id: string) =>
+        request(`/api/chat/threads/${id}`, ThreadDetailSchema),
+      apply: (_id, detail) => setState((s) => withDetail(s, detail)),
+      fail: (_id, err) => setState((s) => ({ ...s, error: loadFailure(err) })),
+    }),
+  );
 
-  const reload = useCallback(async () => {
-    if (loading.current) return;
-    loading.current = true;
-    try {
-      const detail = await request(
-        `/api/chat/threads/${threadId}`,
-        ThreadDetailSchema,
-      );
-      setState((s) => withDetail(s, detail));
-    } catch (err) {
-      setState((s) => ({
-        ...s,
-        error:
-          err instanceof ApiError
-            ? err.message
-            : "Failed to load the conversation.",
-      }));
-    } finally {
-      loading.current = false;
-    }
-  }, [threadId]);
+  const reload = useCallback(
+    () => reloader.reload(threadId),
+    [reloader, threadId],
+  );
 
   useEffect(() => {
+    reloader.activate(threadId);
     setState(initialThreadState());
-    void reload();
-    if (typeof EventSource === "undefined") return;
+    reloader.reload(threadId);
+    if (typeof EventSource === "undefined") return () => reloader.deactivate();
     const source = new EventSource(`/api/chat/threads/${threadId}/events`);
     let opened = false;
     source.addEventListener("ready", () => {
-      if (opened) void reload(); // a reconnect: REST is the source of truth
+      if (opened) reloader.reload(threadId); // a reconnect: REST is the source of truth
       opened = true;
     });
     for (const name of FRAME_EVENTS) {
@@ -74,11 +72,14 @@ export function useThread(threadId: string) {
         setState((s) => applyFrame(s, name, data));
       });
     }
-    return () => source.close();
-  }, [threadId, reload]);
+    return () => {
+      source.close();
+      reloader.deactivate();
+    };
+  }, [threadId, reloader]);
 
   useEffect(() => {
-    if (state.needsRefetch) void reload();
+    if (state.needsRefetch) reload();
   }, [state.needsRefetch, reload]);
 
   const send = useCallback(
@@ -90,7 +91,7 @@ export function useThread(threadId: string) {
         "POST",
         { clientMessageId, text, attachments },
       );
-      await reload();
+      reload();
     },
     [threadId, reload],
   );

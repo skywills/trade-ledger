@@ -37,6 +37,7 @@ export function withDetail(
     live: {},
     liveTools: {},
     pending: detail.thread.pending,
+    error: null,
     needsRefetch: false,
   };
 }

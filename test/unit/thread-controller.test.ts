@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createReloader } from "../../src/web/chat/reloader.js";
 import {
   applyFrame,
   initialThreadState,
@@ -121,5 +122,77 @@ describe("threadController", () => {
   it("ignores malformed frames", () => {
     const s = applyFrame(initialThreadState(), "delta", { nope: 1 });
     expect(s).toEqual(initialThreadState());
+  });
+});
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("createReloader", () => {
+  it("runs exactly one more fetch when reload is requested during an in-flight load", async () => {
+    const pending: Array<ReturnType<typeof deferred<string>>> = [];
+    const fetched: string[] = [];
+    const applied: string[] = [];
+    const reloader = createReloader<string>({
+      fetch: (id) => {
+        fetched.push(id);
+        const d = deferred<string>();
+        pending.push(d);
+        return d.promise;
+      },
+      apply: (_id, value) => applied.push(value),
+      fail: () => undefined,
+    });
+    reloader.activate("t");
+    reloader.reload("t");
+    reloader.reload("t");
+    reloader.reload("t");
+    expect(fetched).toEqual(["t"]);
+    pending[0]?.resolve("first");
+    await flush();
+    expect(fetched).toEqual(["t", "t"]);
+    pending[1]?.resolve("second");
+    await flush();
+    expect(applied).toEqual(["first", "second"]);
+    expect(fetched).toHaveLength(2);
+  });
+
+  it("does not apply a response for a previous thread after switching", async () => {
+    const pending = new Map<string, ReturnType<typeof deferred<string>>>();
+    const applied: Array<[string, string]> = [];
+    const reloader = createReloader<string>({
+      fetch: (id) => {
+        const d = deferred<string>();
+        pending.set(id, d);
+        return d.promise;
+      },
+      apply: (id, value) => applied.push([id, value]),
+      fail: () => undefined,
+    });
+    reloader.activate("a");
+    reloader.reload("a");
+    reloader.activate("b");
+    reloader.reload("b");
+    pending.get("a")?.resolve("data-a");
+    await flush();
+    expect(applied).toEqual([]);
+    pending.get("b")?.resolve("data-b");
+    await flush();
+    expect(applied).toEqual([["b", "data-b"]]);
+  });
+});
+
+describe("withDetail error handling", () => {
+  it("clears a previous error on a successful load", () => {
+    const failed = { ...initialThreadState(), error: "boom" };
+    const next = withDetail(failed, detail as never);
+    expect(next.error).toBeNull();
   });
 });
