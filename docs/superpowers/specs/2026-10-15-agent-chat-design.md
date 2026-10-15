@@ -69,7 +69,7 @@ React /chat ──REST──▶ http/routes-chat.ts ──▶ chat/service.ts �
 
 Shared and model-agnostic. Responsibilities:
 - `resolveProfile(store, profileId | null, { cloudConfirmed })`: default profile, enabled, verified, cloud-confirm checks. Throws the existing `AppError` codes (`NO_PROFILE`, `PROFILE_DISABLED`, `PROFILE_NOT_VERIFIED`, `CLOUD_CONFIRMATION_REQUIRED`).
-- `openHostedSession({ store, profile, secrets, sessionId, resume, instructions, tools, transcriptsSubdir, turnTimeoutSeconds, metadata })` → `{ session, close() }`. It wraps `openModelConnection` + `createAgentSession`/`resumeAgentSession` + `createFileTranscriptStore(DATA_DIR/transcripts/<subdir>)`, and `close()` closes both the session and the gateway.
+- `openHostedSession({ store, profile, secrets, sessionId, resume, instructions, tools, transcriptsSubdir, turnTimeoutSeconds, approvalTimeoutMs?, metadata })` → `{ session, close() }`. It wraps `openModelConnection` + `createAgentSession`/`resumeAgentSession` + `createFileTranscriptStore(DATA_DIR/transcripts/<subdir>)`, and `close()` closes both the session and the gateway.
 - `UsageMeter`: folds `usage`/`turn_end` events into `RunUsage` + cost and reports limit breaches (`max_rounds`, `max_output_tokens`, `max_generated_tokens`). The logic moves out of `handleEvent`/`executeTurn`.
 
 `analysis.ts` is reduced to what legacy runs still need: `readAnalysisRun`. Its start/answer/subscribe/cancel/drain functions are deleted.
@@ -101,11 +101,19 @@ Shared and model-agnostic. Responsibilities:
 
 **Turns are serialized per thread.** A send while a turn is running returns 409 `THREAD_BUSY`. The client disables the composer while a turn runs.
 
-**Shutdown.** `maintenance/shutdown.ts` swaps `cancelActiveAnalyses`/`drainActiveAnalyses` for `chatService.cancelAll()`/`chatService.drain()`.
+**Shutdown.** `shutdown(store)` works through process-wide registries, not instances. So `chat/service.ts` keeps a module-level `ACTIVE_CHATS` map and `IN_FLIGHT` set (the same pattern as `analysis.ts`) and exports `cancelActiveChats()` / `drainActiveChats()`. `ShutdownOptions.cancelAnalyses` / `drainAnalyses` are renamed to `cancelChats` / `drainChats`. No test passes the old option names; only `shutdown.ts` uses them.
+
+**Model pinning.** `resumeAgentSession` throws `AGENT_SESSION_MODEL_MISMATCH` if the model differs from the stored transcript. To prevent that:
+- A thread's profile is fixed at creation (PATCH changes only the title).
+- The thread stores `model_ref` (the `${provider}/${modelId}` used).
+- If the profile's model was edited since then, a send returns 409 `THREAD_MODEL_CHANGED`, and the UI offers "Start new thread".
+
+**Final text.** Deltas are provisional and `stream_reset` voids the current round's deltas. The persisted assistant `content` is `turn_end.output` when the turn completes. Otherwise it is the accumulated delta text, with message status `failed` or `cancelled`.
 
 ### 3.4 Limits
 
-- **Per turn:** the existing `DEFAULT_ANALYSIS_LIMITS`, renamed `DEFAULT_TURN_LIMITS` (600s timeout, 4096 max output per response, 200 rounds, 100k generated tokens).
+- **Per turn:** the existing `DEFAULT_ANALYSIS_LIMITS`, renamed `DEFAULT_TURN_LIMITS` (4096 max output per response, 200 rounds, 100k generated tokens). Chat uses `turnTimeoutSeconds: 900` and `approvalTimeoutMs: 300000`. nax-agent's default approval wait (600s) would otherwise equal the whole turn budget.
+- **Cost accounting:** `usage` / `turn_end` with `costSource: "unpriced"` are never added to cost (nax-agent contract). For unpriced local models the cost cap is inert, and the token cap is the backstop.
 - **Per thread:** `maxThreadCostUsd` (default 5.00, matching Koda) and `maxThreadGeneratedTokens` (default 1,000,000).
   - The checks are cumulative across turns.
   - When a cap is exceeded, the turn is cancelled and further sends are refused with 409 `THREAD_LIMIT_REACHED`.
@@ -120,6 +128,7 @@ CREATE TABLE chat_threads (
   title TEXT NOT NULL,
   session_id TEXT NOT NULL UNIQUE,
   profile_id TEXT REFERENCES llm_profiles(id) ON DELETE RESTRICT,
+  model_ref TEXT NOT NULL,         -- "${provider}/${modelId}" at creation; resume must match
   cloud_confirmed INTEGER NOT NULL CHECK(cloud_confirmed IN (0,1)),
   status TEXT NOT NULL,            -- idle | running | waiting | limit_reached | failed
   pending_json TEXT,               -- {kind:"approval"|"question", requestId, tool?, summary, text?, expiresAt} | NULL
@@ -185,25 +194,31 @@ ALTER TABLE ai_runs ADD COLUMN thread_id TEXT REFERENCES chat_threads(id) ON DEL
 
 | Tool | Input | Effect |
 |---|---|---|
-| `commit_import` | `{previewId}` | `commitImport(store, previewId)` → `{importId, duplicate}`. The tool description tells the model to call `get_import_preview` first and to report its counts and issues to the user. |
-| `rebuild` | `{mode: "full"\|"projection"}` | `scheduler.submit({mode, parserVersion: FLEX_PARSER_VERSION, algorithmVersion: ALGORITHM_VERSION, signal})` → `{jobId}`. The model may poll `get_job`. |
+| `commit_import` | `{previewId}` | `commitImport(store, previewId)`, then a `full` rebuild submitted exactly as `rebuild` does. This mirrors the Imports page, which commits then rebuilds `full`, so P&L is never left stale behind one approval. Returns `{importId, duplicate, jobId}`. The tool description tells the model to call `get_import_preview` first and to report its counts and issues to the user. |
+| `rebuild` | `{mode: "full"\|"projection"}` | `scheduler.submit({mode, parserVersion: LEDGER_PARSER_VERSION (ledger/normalize.ts), algorithmVersion: ALGORITHM_VERSION, signal: new AbortController().signal})` → `{jobId}`. This is the same call `POST /api/builds` makes. The model may poll `get_job`. |
 | `create_backup` | `{}` | Same job body as `POST /api/maintenance/backups`, extracted into `maintenance/backup-job.ts` and reused by both. Returns `{jobId}`. |
 
-**Approval card.** The `summary` comes from nax-agent's `approval_requested.summary`, plus a tool-specific detail that the service renders from the input:
-- import: filename and counts;
-- rebuild: mode;
-- backup: no detail.
+**Approval card.** Each write tool implements nax-agent's `EmbedderTool.describe(input)`, which becomes `approval_requested.summary`, so the card needs no service-side rendering:
+- `commit_import`: `Commit import "<filename>" (<executions> executions, <quarantined> quarantined) and rebuild`, read from the staged preview;
+- `rebuild`: `Rebuild ledger (<mode>)`;
+- `create_backup`: `Create a backup`.
 
-**Allow** → the tool runs and the card turns "Allowed". **Deny** → the tool returns denied to the model, the card turns "Denied", and nothing is written.
+**Allow** → the tool runs. **Deny** → nax-agent returns `Denied: …` to the model, and nothing is written. The card's final state comes from the `approval_resolved` event, where `decidedBy` maps to the label:
+- `human` + `allow` → "Allowed"
+- `human` + `deny` → "Denied"
+- `timeout` → "Expired"
+- `cancelled` → "Cancelled"
+
+Write tools are gated by nax-agent independently of the session profile: `runEmbedderTool` asks whenever `approval === "always"`, so `profile: "none"` stays.
 
 ### 5.3 Proposal tool (`approval: "never"`; acceptance is the user step)
 
 `submit_proposal` keeps the existing schema and `tryParseProposal` validation.
 
 **Batch run per turn**
-- The first call in a turn creates an `ai_runs` row with `thread_id`, an evidence snapshot from `buildEvidenceSnapshot(store, {buildId: active, issueKeys: thread.seed.issueKeys ?? []})`, and status `running`.
-- Later calls in the same turn append to that run (cap 20 per run).
-- At turn end the run becomes `proposal_ready` with its usage.
+- The first call in a turn creates an `ai_runs` row with `thread_id`, an evidence snapshot from `buildEvidenceSnapshot(store, {buildId: active, issueKeys: thread.seed.issueKeys ?? []})`, and status `proposal_ready`. With no active build, `buildEvidenceSnapshot` throws, and that reaches the model as `isError`.
+- **Each proposal is persisted at once.** A new `appendRunProposal(store, runId, submitted)` in `runs.ts` does a read-modify-write inside the writer queue: it re-reads the row, appends, and writes `proposal_json`. Later calls in the same turn append to the same run (cap 20 per run).
+- **The turn never rewrites `proposal_json` or `status` at turn end.** It writes usage and cost only. Reason: the user can accept a card while the turn is still running, and `acceptProposal` sets `accepted: true` and possibly `status: "accepted"`. Analysis's write-everything-at-turn-end (`updateRun(..., {proposals, status})`) would overwrite that, so it is not reused.
 - The SSE `proposal` frame carries `{runId, proposalId}`.
 
 **Cards.** Proposals render as cards in the thread with:
@@ -245,7 +260,7 @@ All mutating routes sit behind the existing origin guard.
 | `tool` | `{messageId, callId, name, phase: "call"\|"result", isError?}` |
 | `approval` | `{requestId, tool, summary, detail, expiresAt}` |
 | `question` | `{requestId, text, expiresAt}` |
-| `resolved` | `{requestId}` |
+| `resolved` | `{requestId, decision?, decidedBy?}` (from `approval_resolved`, or a question answered) |
 | `proposal` | `{runId, proposalId}` |
 | `message` | `{messageId}` (final) |
 | `thread` | `{status, usage, cost}` |
@@ -291,13 +306,14 @@ The client refetches the thread over REST on `message`, `thread`, or reconnect. 
 |---|---|
 | Profile invalid, unverified, or cloud-unconfirmed | 409 at thread create **and** at send (the profile may change in between). The UI links to Maintenance → Models. |
 | Tool failure | `isError` result reaches the model; chip turns red; the turn continues. |
-| Turn `errored` / `timed_out` / limit cancel | Assistant message `failed` with the reason; thread back to `idle`; partial text kept. |
+| Turn `errored` / `timed_out` / `interrupted` / limit cancel | Assistant message `failed`, with the reason (`turn_end.error.code` when present); thread back to `idle`; partial text kept. |
+| `AGENT_SESSION_MODEL_MISMATCH` on resume | 409 `THREAD_MODEL_CHANGED` (see 3.3). |
 | User cancel | Message `cancelled`, thread `idle`. |
 | Gateway or connection failure | `error` frame plus failed message; the cached session is dropped, so the next send resumes cleanly. |
 | `AGENT_SESSION_BUSY` | Cannot happen, because the per-thread lock prevents it; mapped to `THREAD_BUSY` defensively. |
 | Approval expired | The card shows "Expired". nax-agent resolves the tool as denied. |
 | Server restart mid-turn | Recovery marks the thread and message failed with `INTERRUPTED`; the next send resumes. |
-| Logging | Errors are logged server-side through the existing logger with `threadId` and `turnId`. Tool-result content is not logged (it is broker data). |
+| Logging | The server has no logger (`Fastify({ logger: false })`), and none is added. Failures are persisted on the message (`error`) and the thread status, and sent as an `error` frame. Tool-result content is never persisted outside the transcript. |
 
 ## 9. Security
 
@@ -325,6 +341,11 @@ The model is faked with the existing `test/helpers/inference-server.ts`, which a
 - Approval allow commits an import; deny leaves `imports` unchanged.
 - Question answer.
 - `submit_proposal` creates an `ai_runs` row with `thread_id`; accept appends a decision.
+- Accepting a proposal **while the turn is still running** stays accepted after the turn ends (regression test for the turn-end overwrite).
+- `commit_import` allow → import committed **and** a full build job submitted.
+- A profile whose model changed after thread creation → send returns 409 `THREAD_MODEL_CHANGED`.
+- An `unpriced` usage event does not increase thread cost.
+- Final message content equals `turn_end.output` even after a `stream_reset`.
 - Per-thread cost cap.
 - Idle close then resume continues the transcript.
 - Restart recovery marks the thread interrupted.
