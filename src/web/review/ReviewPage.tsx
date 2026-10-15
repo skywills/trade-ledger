@@ -1,6 +1,7 @@
 import { ReviewEnvelope, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link } from "../navigation.js";
+import { AskAgent, PastAnalyses } from "./AgentReview.js";
 import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
 
 /** Review queue plus the manual reconciliation editor and revision history. */
@@ -71,6 +72,11 @@ export function ReviewPage() {
           ) : null}
         </>
       )}
+
+      <AskAgent
+        issueKeys={(remote.data?.items ?? []).map((issue) => issue.key)}
+      />
+      <PastAnalyses />
 
       <DecisionEditor />
 

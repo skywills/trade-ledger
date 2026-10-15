@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { listEnvelopeSchema } from "../shared/api.js";
+import { listEnvelopeSchema, RunSummarySchema } from "../shared/api.js";
 
 /**
  * Browser API client. Every monetary value crosses the wire as a string; the
@@ -196,6 +196,7 @@ export const TransactionsEnvelope = listEnvelopeSchema(ExecutionSchema);
 export const LotsEnvelope = listEnvelopeSchema(LotSchema);
 export const ImportsEnvelope = listEnvelopeSchema(ImportSummarySchema);
 export const ReviewEnvelope = listEnvelopeSchema(IssueSchema);
+export const RunSummariesEnvelope = listEnvelopeSchema(RunSummarySchema);
 export const ImportRowsEnvelope = listEnvelopeSchema(ImportRowViewSchema);
 export const PreviewResponseSchema = z.object({
   previews: z.array(ImportPreviewSchema),
