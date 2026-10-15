@@ -63,10 +63,10 @@ export interface AnalysisLimits {
 }
 
 export const DEFAULT_ANALYSIS_LIMITS: AnalysisLimits = {
-  jobTimeoutSeconds: 120,
+  jobTimeoutSeconds: 600,
   maxOutputTokens: 4096,
   maxModelRounds: 200,
-  maxTotalGeneratedTokens: 16384,
+  maxTotalGeneratedTokens: 100_000,
   maxEvidenceRowsPerBatch: MAX_EVIDENCE_ROWS_PER_BATCH,
   maxReadPayloadBytes: MAX_READ_PAYLOAD_BYTES,
 };
