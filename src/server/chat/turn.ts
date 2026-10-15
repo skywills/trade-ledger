@@ -85,13 +85,11 @@ export async function runTurn(input: TurnInput): Promise<void> {
   await finishTurn(input, meter, cancelReason, failure);
 }
 
-async function finishTurn(
-  input: TurnInput,
-  meter: UsageMeter,
+function outcomeOf(
+  acc: TurnAccumulator,
   cancelReason: string | null,
   failure: string | null,
-): Promise<void> {
-  const { store, bus, thread, accumulator: acc } = input;
+): { status: "complete" | "cancelled" | "failed"; error: string | null } {
   const end = acc.end;
   const status =
     end?.status === "completed" && failure === null
@@ -107,6 +105,28 @@ async function finishTurn(
         end?.errorCode ??
         end?.status ??
         "TURN_FAILED");
+  return { status, error };
+}
+
+function addUsage(current: ChatThread["usage"], turn: UsageMeter["usage"]) {
+  return {
+    rounds: current.rounds + turn.rounds,
+    inputTokens: current.inputTokens + turn.inputTokens,
+    outputTokens: current.outputTokens + turn.outputTokens,
+    generatedTokens: current.generatedTokens + turn.generatedTokens,
+    cacheReadTokens: current.cacheReadTokens + turn.cacheReadTokens,
+    cacheWriteTokens: current.cacheWriteTokens + turn.cacheWriteTokens,
+  };
+}
+
+async function finishTurn(
+  input: TurnInput,
+  meter: UsageMeter,
+  cancelReason: string | null,
+  failure: string | null,
+): Promise<void> {
+  const { store, bus, thread, accumulator: acc } = input;
+  const { status, error } = outcomeOf(acc, cancelReason, failure);
   const turnCost =
     meter.costSource === "unpriced"
       ? "0"
@@ -120,17 +140,7 @@ async function finishTurn(
     cost: turnCost,
   }).catch(() => undefined);
   const current = readThread(store, thread.id) ?? thread;
-  const usage = {
-    rounds: current.usage.rounds + meter.usage.rounds,
-    inputTokens: current.usage.inputTokens + meter.usage.inputTokens,
-    outputTokens: current.usage.outputTokens + meter.usage.outputTokens,
-    generatedTokens:
-      current.usage.generatedTokens + meter.usage.generatedTokens,
-    cacheReadTokens:
-      current.usage.cacheReadTokens + meter.usage.cacheReadTokens,
-    cacheWriteTokens:
-      current.usage.cacheWriteTokens + meter.usage.cacheWriteTokens,
-  };
+  const usage = addUsage(current.usage, meter.usage);
   const cost = new Decimal(current.cost).plus(turnCost).toFixed();
   const threadStatus: ThreadStatus =
     cancelReason?.startsWith("limit:thread_") === true

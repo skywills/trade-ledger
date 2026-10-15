@@ -71,6 +71,21 @@ interface LiveThread {
 /** Process-wide registries so `shutdown(store)` can stop chats without an instance. */
 const ACTIVE_CHATS = new Map<Id, LiveThread>();
 const IN_FLIGHT = new Set<Promise<void>>();
+/** A thread with a send in progress, from admission until its turn settles. */
+interface Claim {
+  cancelRequested: boolean;
+}
+const CLAIMS = new Map<Id, Claim>();
+/** In-flight session opens, so concurrent callers share one session. */
+const OPENING = new Map<Id, Promise<LiveThread>>();
+
+function busyError(): AppError {
+  return new AppError(
+    "THREAD_BUSY",
+    "A reply is still in progress in this thread.",
+    409,
+  );
+}
 
 export function cancelActiveChats(): void {
   for (const live of ACTIVE_CHATS.values()) {
@@ -129,10 +144,9 @@ export class ChatService {
       attachments?: Attachment[];
     },
   ): Promise<{ userMessageId: Id; assistantMessageId: Id }> {
-    const { store } = this.deps;
     const thread = this.requireThread(threadId);
     const existing = findMessageByClientId(
-      store,
+      this.deps.store,
       threadId,
       input.clientMessageId,
     );
@@ -141,20 +155,41 @@ export class ChatService {
         userMessageId: existing.id,
         assistantMessageId: this.assistantAfter(threadId, existing.seq),
       };
+    // Claim synchronously, before any await, so concurrent sends cannot both pass.
+    if (CLAIMS.has(threadId)) throw busyError();
+    const claim: Claim = { cancelRequested: false };
+    CLAIMS.set(threadId, claim);
+    try {
+      this.assertSendable(thread, input);
+      const started = await this.recordTurnStart(thread, input);
+      this.launch(started.running, started.assistantId, started.prompt, claim);
+      return {
+        userMessageId: started.userId,
+        assistantMessageId: started.assistantId,
+      };
+    } catch (error) {
+      CLAIMS.delete(threadId);
+      throw error;
+    }
+  }
+
+  private assertSendable(
+    thread: ChatThread,
+    input: {
+      clientMessageId: string;
+      text: string;
+      attachments?: Attachment[];
+    },
+  ): void {
     this.validateInput(input);
-    if (busy(thread))
-      throw new AppError(
-        "THREAD_BUSY",
-        "A reply is still in progress in this thread.",
-        409,
-      );
+    if (busy(thread)) throw busyError();
     if (thread.status === "limit_reached")
       throw new AppError(
         "THREAD_LIMIT_REACHED",
         "This thread reached its usage limit; start a new thread.",
         409,
       );
-    const profile = resolveProfile(store, thread.profileId, {
+    const profile = resolveProfile(this.deps.store, thread.profileId, {
       cloudConfirmed: thread.cloudConfirmed,
     });
     if (modelRefFor(profile) !== thread.modelRef) {
@@ -164,8 +199,24 @@ export class ChatService {
         409,
       );
     }
+  }
+
+  private async recordTurnStart(
+    thread: ChatThread,
+    input: {
+      clientMessageId: string;
+      text: string;
+      attachments?: Attachment[];
+    },
+  ): Promise<{
+    userId: Id;
+    assistantId: Id;
+    running: ChatThread;
+    prompt: string;
+  }> {
+    const { store } = this.deps;
     const attachments = input.attachments ?? [];
-    const user = await appendMessage(store, threadId, {
+    const user = await appendMessage(store, thread.id, {
       role: "user",
       content: input.text,
       attachments,
@@ -173,7 +224,7 @@ export class ChatService {
       clientMessageId: input.clientMessageId,
       now: this.now(),
     });
-    const assistant = await appendMessage(store, threadId, {
+    const assistant = await appendMessage(store, thread.id, {
       role: "assistant",
       content: "",
       attachments: [],
@@ -182,22 +233,32 @@ export class ChatService {
       now: this.now(),
     });
     const title = thread.nextSeq === 0 ? input.text.slice(0, 60) : undefined;
-    const running = await updateThread(store, threadId, {
+    const running = await updateThread(store, thread.id, {
       status: "running",
       ...(title === undefined ? {} : { title }),
       now: this.now(),
     });
-    this.bus.resetReplay(threadId);
-    this.bus.emit(threadId, {
+    this.bus.resetReplay(thread.id);
+    this.bus.emit(thread.id, {
       event: "thread",
       data: { status: "running", usage: running.usage, cost: running.cost },
     });
-    this.launch(running, assistant.id, this.prompt(input.text, attachments));
-    return { userMessageId: user.id, assistantMessageId: assistant.id };
+    return {
+      userId: user.id,
+      assistantId: assistant.id,
+      running,
+      prompt: this.prompt(input.text, attachments),
+    };
   }
 
   cancel(threadId: Id): void {
-    ACTIVE_CHATS.get(threadId)?.hosted.session.cancel("cancelled");
+    const claim = CLAIMS.get(threadId);
+    if (claim !== undefined) claim.cancelRequested = true;
+    try {
+      ACTIVE_CHATS.get(threadId)?.hosted.session.cancel("cancelled");
+    } catch {
+      /* not yet running; the claim flag covers it */
+    }
   }
 
   answer(threadId: Id, requestId: string, reply: AnswerReply): AnswerStatus {
@@ -253,20 +314,32 @@ export class ChatService {
     thread: ChatThread,
     assistantMessageId: Id,
     prompt: string,
+    claim: Claim,
   ): void {
-    const work = this.executeTurn(thread, assistantMessageId, prompt);
+    const work = this.executeTurn(thread, assistantMessageId, prompt, claim);
     IN_FLIGHT.add(work);
-    void work.finally(() => IN_FLIGHT.delete(work));
+    void work
+      .catch(() => undefined)
+      .finally(() => {
+        IN_FLIGHT.delete(work);
+        CLAIMS.delete(thread.id);
+      });
   }
 
+  /** Never rejects. */
   private async executeTurn(
     thread: ChatThread,
     assistantMessageId: Id,
     prompt: string,
+    claim: Claim,
   ): Promise<void> {
     let live: LiveThread | null = null;
     try {
       live = await this.liveFor(thread);
+      if (claim.cancelRequested) {
+        await this.finishCancelled(thread, assistantMessageId);
+        return;
+      }
       live.turn.current = { proposalRunId: null, proposalCount: 0 };
       live.accumulator = new TurnAccumulator(assistantMessageId);
       const run = runTurn({
@@ -283,8 +356,10 @@ export class ChatService {
       live.running = run;
       await run;
     } catch (error) {
-      await this.failBeforeTurn(thread, assistantMessageId, error);
-      await this.closeLive(thread.id);
+      await this.failBeforeTurn(thread, assistantMessageId, error).catch(
+        () => undefined,
+      );
+      await this.closeLive(thread.id).catch(() => undefined);
     } finally {
       if (live !== null) {
         live.running = null;
@@ -294,9 +369,42 @@ export class ChatService {
     }
   }
 
+  private async finishCancelled(
+    thread: ChatThread,
+    assistantMessageId: Id,
+  ): Promise<void> {
+    await updateMessage(this.deps.store, assistantMessageId, {
+      status: "cancelled",
+      error: null,
+    }).catch(() => undefined);
+    const saved = await updateThread(this.deps.store, thread.id, {
+      status: "idle",
+      pending: null,
+      now: this.now(),
+    }).catch(() => thread);
+    this.bus.emit(thread.id, {
+      event: "message",
+      data: { messageId: assistantMessageId },
+    });
+    this.bus.emit(thread.id, {
+      event: "thread",
+      data: { status: saved.status, usage: saved.usage, cost: saved.cost },
+    });
+  }
+
   private async liveFor(thread: ChatThread): Promise<LiveThread> {
     const cached = ACTIVE_CHATS.get(thread.id);
     if (cached !== undefined) return cached;
+    const opening = OPENING.get(thread.id);
+    if (opening !== undefined) return opening;
+    const pending = this.openLive(thread).finally(() =>
+      OPENING.delete(thread.id),
+    );
+    OPENING.set(thread.id, pending);
+    return pending;
+  }
+
+  private async openLive(thread: ChatThread): Promise<LiveThread> {
     const profile = resolveProfile(this.deps.store, thread.profileId, {
       cloudConfirmed: thread.cloudConfirmed,
     });

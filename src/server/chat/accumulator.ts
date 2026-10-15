@@ -55,87 +55,15 @@ export class TurnAccumulator {
           },
         ];
       case "tool_call":
-        this.toolList = [
-          ...this.toolList,
-          {
-            callId: event.callId,
-            name: event.name,
-            status: "running",
-            isError: false,
-            approval: null,
-          },
-        ];
-        return [
-          {
-            event: "tool",
-            data: {
-              messageId: this.messageId,
-              callId: event.callId,
-              name: event.name,
-              phase: "call",
-            },
-          },
-        ];
+        return this.toolCalled(event);
       case "tool_result":
-        this.patchTool(event.callId, {
-          status: "done",
-          isError: event.isError,
-        });
-        return [
-          {
-            event: "tool",
-            data: {
-              messageId: this.messageId,
-              callId: event.callId,
-              name: this.toolName(event.callId),
-              phase: "result",
-              isError: event.isError,
-            },
-          },
-        ];
+        return this.toolResulted(event);
       case "approval_requested":
-        if (event.answerable === false) return [];
-        if (event.callId !== undefined)
-          this.approvalCalls.set(event.requestId, event.callId);
-        this.pendingAsk = {
-          kind: "approval",
-          requestId: event.requestId,
-          tool: event.tool,
-          text: event.summary,
-          expiresAt: event.expiresAt,
-        };
-        return [
-          {
-            event: "approval",
-            data: {
-              requestId: event.requestId,
-              tool: event.tool,
-              summary: event.summary,
-              expiresAt: event.expiresAt,
-            },
-          },
-        ];
+        return this.approvalRequested(event);
       case "approval_resolved":
         return this.resolved(event.requestId, event.decision, event.decidedBy);
       case "question":
-        if (event.answerable === false) return [];
-        this.pendingAsk = {
-          kind: "question",
-          requestId: event.requestId,
-          tool: null,
-          text: event.text,
-          expiresAt: event.expiresAt,
-        };
-        return [
-          {
-            event: "question",
-            data: {
-              requestId: event.requestId,
-              text: event.text,
-              expiresAt: event.expiresAt,
-            },
-          },
-        ];
+        return this.questionAsked(event);
       case "turn_end":
         this.ended = {
           status: event.status,
@@ -147,6 +75,99 @@ export class TurnAccumulator {
       default:
         return [];
     }
+  }
+
+  private toolCalled(
+    event: Extract<SessionEvent, { type: "tool_call" }>,
+  ): ChatFrame[] {
+    this.toolList = [
+      ...this.toolList,
+      {
+        callId: event.callId,
+        name: event.name,
+        status: "running",
+        isError: false,
+        approval: null,
+      },
+    ];
+    return [
+      {
+        event: "tool",
+        data: {
+          messageId: this.messageId,
+          callId: event.callId,
+          name: event.name,
+          phase: "call",
+        },
+      },
+    ];
+  }
+
+  private toolResulted(
+    event: Extract<SessionEvent, { type: "tool_result" }>,
+  ): ChatFrame[] {
+    this.patchTool(event.callId, { status: "done", isError: event.isError });
+    return [
+      {
+        event: "tool",
+        data: {
+          messageId: this.messageId,
+          callId: event.callId,
+          name: this.toolName(event.callId),
+          phase: "result",
+          isError: event.isError,
+        },
+      },
+    ];
+  }
+
+  private approvalRequested(
+    event: Extract<SessionEvent, { type: "approval_requested" }>,
+  ): ChatFrame[] {
+    if (event.answerable === false) return [];
+    if (event.callId !== undefined)
+      this.approvalCalls.set(event.requestId, event.callId);
+    this.pendingAsk = {
+      kind: "approval",
+      requestId: event.requestId,
+      tool: event.tool,
+      text: event.summary,
+      expiresAt: event.expiresAt,
+    };
+    return [
+      {
+        event: "approval",
+        data: {
+          requestId: event.requestId,
+          tool: event.tool,
+          summary: event.summary,
+          expiresAt: event.expiresAt,
+        },
+      },
+    ];
+  }
+
+  private questionAsked(
+    event: Extract<SessionEvent, { type: "question" }>,
+  ): ChatFrame[] {
+    if (event.answerable === false) return [];
+    this.pendingAsk = {
+      kind: "question",
+      requestId: event.requestId,
+      tool: null,
+      text: event.text,
+      expiresAt: event.expiresAt,
+    };
+    return [
+      {
+        event: "question",
+        data: {
+          requestId: event.requestId,
+          text: event.text,
+          expiresAt: event.expiresAt,
+        },
+      },
+    ];
   }
 
   /** A question answered through the service (there is no `question_resolved` event). */

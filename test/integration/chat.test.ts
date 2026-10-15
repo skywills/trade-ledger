@@ -193,4 +193,42 @@ describe("ChatService read-only turns", () => {
     for (const name of FORBIDDEN_TOOL_NAMES)
       expect(offered.has(name)).toBe(false);
   });
+
+  it("admits exactly one of two concurrent sends", async () => {
+    const h = await harness(
+      [{ kind: "text", text: "slow" }],
+      {},
+      { delayMs: 300 },
+    );
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    const results = await Promise.allSettled([
+      h.chat.sendMessage(thread.id, { clientMessageId: "x1", text: "hi" }),
+      h.chat.sendMessage(thread.id, { clientMessageId: "x2", text: "hi" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected",
+    );
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: "THREAD_BUSY" });
+    await waitIdle(h.store, thread.id);
+    expect(
+      listMessages(h.store, thread.id).filter((m) => m.role === "user"),
+    ).toHaveLength(1);
+  });
+
+  it("cancels a send requested before the session opens", async () => {
+    const h = await harness([{ kind: "text", text: "never" }]);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    const { assistantMessageId } = await h.chat.sendMessage(thread.id, {
+      clientMessageId: "c",
+      text: "hi",
+    });
+    h.chat.cancel(thread.id);
+    expect((await waitIdle(h.store, thread.id)).status).toBe("idle");
+    const assistant = listMessages(h.store, thread.id).find(
+      (m) => m.id === assistantMessageId,
+    );
+    expect(assistant?.status).toBe("cancelled");
+  });
 });
