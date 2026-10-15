@@ -64,6 +64,8 @@ export function Composer({
   const [staged, setStaged] = useState<Staged[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function upload(files: FileList | null) {
@@ -85,7 +87,9 @@ export function Composer({
 
   async function submit() {
     const trimmed = text.trim();
-    if (trimmed === "" || disabled || uploading) return;
+    if (trimmed === "" || disabled || uploading || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
     try {
       await onSend(
         trimmed,
@@ -95,6 +99,9 @@ export function Composer({
       setStaged([]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Send failed.");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   }
 
@@ -160,7 +167,7 @@ export function Composer({
         <button
           type="submit"
           data-testid="composer-send"
-          disabled={disabled || uploading || text.trim() === ""}
+          disabled={disabled || uploading || sending || text.trim() === ""}
         >
           Send
         </button>

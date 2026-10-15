@@ -166,6 +166,7 @@ export class UsageMeter {
   private totals: RunUsage = emptyUsage();
   private cost = 0;
   private source: string | null = null;
+  private sawPriced = false;
 
   constructor(private readonly limits: TurnLimits) {}
 
@@ -190,8 +191,10 @@ export class UsageMeter {
         cacheWriteTokens:
           this.totals.cacheWriteTokens + (event.cacheWrite ?? 0),
       };
-      this.source = event.costSource ?? "computed";
-      if (event.costSource !== "unpriced") this.cost += event.costUsd;
+      if (event.costSource !== "unpriced") {
+        this.cost += event.costUsd;
+        this.markPriced(event.costSource);
+      } else if (!this.sawPriced) this.source = "unpriced";
       if (event.round > this.limits.maxModelRounds) return "limit:max_rounds";
       if (event.outputTokens > this.limits.maxOutputTokens)
         return "limit:max_output_tokens";
@@ -215,9 +218,17 @@ export class UsageMeter {
         cacheReadTokens: end.cacheReadTokens ?? 0,
         cacheWriteTokens: end.cacheWriteTokens ?? 0,
       };
-      this.source = event.costSource ?? "computed";
-      this.cost = event.costSource === "unpriced" ? 0 : event.costUsd;
+      if (event.costSource !== "unpriced") {
+        this.cost = event.costUsd;
+        this.markPriced(event.costSource);
+      } else if (!this.sawPriced) this.source = "unpriced";
     }
     return null;
+  }
+
+  /** Once any priced usage is seen, the turn is never reported as unpriced. */
+  private markPriced(source: string | undefined): void {
+    this.sawPriced = true;
+    this.source = source ?? "computed";
   }
 }

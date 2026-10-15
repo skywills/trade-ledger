@@ -58,6 +58,14 @@ describe("UsageMeter", () => {
     expect(meter.costSource).toBe("unpriced");
   });
 
+  it("keeps the priced cost when a later round is unpriced", () => {
+    const meter = new UsageMeter(DEFAULT_TURN_LIMITS);
+    meter.observe(usage(1, 10, 0.05));
+    meter.observe(usage(2, 10, 99, "unpriced"));
+    expect(meter.costUsd).toBeCloseTo(0.05);
+    expect(meter.costSource).toBe("computed");
+  });
+
   it("reports each limit breach", () => {
     const limits = {
       maxOutputTokens: 100,

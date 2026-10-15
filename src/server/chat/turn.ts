@@ -127,10 +127,7 @@ async function finishTurn(
 ): Promise<void> {
   const { store, bus, thread, accumulator: acc } = input;
   const { status, error } = outcomeOf(acc, cancelReason, failure);
-  const turnCost =
-    meter.costSource === "unpriced"
-      ? "0"
-      : new Decimal(meter.costUsd).toFixed();
+  const turnCost = new Decimal(meter.costUsd).toFixed();
   await updateMessage(store, input.assistantMessageId, {
     content: acc.finalContent(),
     tools: acc.tools,

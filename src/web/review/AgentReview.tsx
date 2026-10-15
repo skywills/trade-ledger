@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnalysisEnvelopeSchema } from "../../shared/api.js";
 import { ThreadEnvelopeSchema } from "../../shared/chat-api.js";
 import {
@@ -30,7 +30,13 @@ export function AskAgent({ issueKeys }: { issueKeys: string[] }) {
     code: string | null;
   } | null>(null);
 
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
   async function open() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     setError(null);
     try {
       const { thread } = await requestJson(
@@ -48,12 +54,19 @@ export function AskAgent({ issueKeys }: { issueKeys: string[] }) {
           ? { message: err.message, code: err.code }
           : { message: "Could not open the agent.", code: null },
       );
+      busyRef.current = false;
+      setBusy(false);
     }
   }
 
   return (
     <section>
-      <button type="button" data-testid="ask-agent" onClick={() => void open()}>
+      <button
+        type="button"
+        data-testid="ask-agent"
+        disabled={busy}
+        onClick={() => void open()}
+      >
         Ask agent about these issues
       </button>
       {error !== null ? (
