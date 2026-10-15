@@ -15,9 +15,12 @@ import {
   type BuildServiceOptions,
   recoverBuilds,
 } from "./builds/service.js";
+import { ChatService } from "./chat/service.js";
+import { recoverChatThreads } from "./chat/threads.js";
 import type { AppConfig } from "./config.js";
 import { createOriginGuard } from "./http/origin.js";
 import { registerAnalysisRoutes } from "./http/routes-analysis.js";
+import { registerChatRoutes } from "./http/routes-chat.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
@@ -39,6 +42,7 @@ export interface AppContext {
   readonly store: Store;
   readonly jobs: JobService;
   readonly scheduler: BuildScheduler;
+  readonly chat: ChatService;
 }
 
 export interface AppOptions {
@@ -166,6 +170,7 @@ export async function createApp(
     // idempotent and safe on a fresh store.
     await recoverBuilds(store);
     await recoverImportFiles(store);
+    await recoverChatThreads(store, new Date());
 
     const jobs = new JobService(store);
     const scheduler = new BuildScheduler(
@@ -174,7 +179,19 @@ export async function createApp(
       jobs,
     );
 
+    const secrets = createSecretResolver({
+      env: process.env,
+      allowedFileRoots:
+        config.secretsDir === undefined ? [] : [config.secretsDir],
+    });
+
+    const chat = new ChatService({ store, secrets, scheduler, jobs });
+    const sweep = setInterval(() => void chat.sweepIdle(), 60_000);
+    sweep.unref();
+
     app.addHook("onClose", async () => {
+      clearInterval(sweep);
+      await chat.close();
       await closeStore(store);
       lock.release();
     });
@@ -226,12 +243,6 @@ export async function createApp(
       return { status: "ok" };
     });
 
-    const secrets = createSecretResolver({
-      env: process.env,
-      allowedFileRoots:
-        config.secretsDir === undefined ? [] : [config.secretsDir],
-    });
-
     await registerImportRoutes(app, store);
     await registerJournalRoutes(app, store);
     await registerReviewRoutes(app, store);
@@ -239,8 +250,9 @@ export async function createApp(
     await registerModelRoutes(app, store, secrets);
     await registerAnalysisRoutes(app, store);
     await registerMaintenanceRoutes(app, store, jobs);
+    await registerChatRoutes(app, store, chat);
 
-    options.onReady?.({ store, jobs, scheduler });
+    options.onReady?.({ store, jobs, scheduler, chat });
 
     return app;
   } catch (error) {
