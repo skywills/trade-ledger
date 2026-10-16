@@ -6,7 +6,6 @@ import { useQuery } from "../navigation.js";
 import { ProposalList } from "../review/ProposalList.js";
 import { Composer } from "./Composer.js";
 import { InteractionCard } from "./InteractionCard.js";
-import { StopIcon } from "./icons.js";
 import { MessageItem } from "./MessageItem.js";
 import {
   messageText,
@@ -15,15 +14,7 @@ import {
 } from "./threadController.js";
 import { useThread } from "./useThread.js";
 
-function ThreadHeader({
-  thread,
-  running,
-  onStop,
-}: {
-  thread: ThreadDetailDto["thread"];
-  running: boolean;
-  onStop: () => void;
-}) {
+function ThreadHeader({ thread }: { thread: ThreadDetailDto["thread"] }) {
   const tokens = thread.usage.generatedTokens;
   return (
     <header className="thread-header">
@@ -34,17 +25,6 @@ function ThreadHeader({
           {tokens > 0 ? ` · ${tokens.toLocaleString("en-US")} tokens` : ""}
         </p>
       </div>
-      {running ? (
-        <button
-          type="button"
-          className="secondary stop-button"
-          data-testid="stop-turn"
-          onClick={onStop}
-        >
-          <StopIcon />
-          Stop
-        </button>
-      ) : null}
     </header>
   );
 }
@@ -88,15 +68,20 @@ function MessageList({
 
 function useStop(cancel: () => Promise<unknown>) {
   const [stopError, setStopError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const stop = () => {
+    if (stopping) return;
+    setStopping(true);
     setStopError(null);
-    cancel().catch((err: unknown) =>
-      setStopError(
-        err instanceof ApiError ? err.message : "Could not stop the turn.",
-      ),
-    );
+    cancel()
+      .catch((err: unknown) =>
+        setStopError(
+          err instanceof ApiError ? err.message : "Could not stop the turn.",
+        ),
+      )
+      .finally(() => setStopping(false));
   };
-  return { stop, stopError };
+  return { stop, stopError, stopping };
 }
 
 function Notices({
@@ -135,7 +120,7 @@ export function ThreadView({
 }) {
   const { state, send, cancel, answer, reload } = useThread(threadId);
   const query = useQuery();
-  const { stop, stopError } = useStop(cancel);
+  const { stop, stopError, stopping } = useStop(cancel);
   const title = state.detail?.thread.title;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the title is the trigger
   useEffect(() => {
@@ -154,7 +139,7 @@ export function ThreadView({
   const pending = state.pending;
   return (
     <section className="thread-view">
-      <ThreadHeader thread={thread} running={running} onStop={stop} />
+      <ThreadHeader thread={thread} />
       <TurnAnnouncer running={running} />
       <MessageList state={state} detail={state.detail} />
       {runs
@@ -181,6 +166,8 @@ export function ThreadView({
           initialText={query.get("prefill") ?? ""}
           placeholder={running ? "The agent is replying…" : "Ask a follow-up…"}
           onSend={send}
+          onStop={running ? stop : undefined}
+          stopping={stopping}
         />
       </div>
     </section>

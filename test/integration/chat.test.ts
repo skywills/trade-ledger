@@ -495,3 +495,47 @@ describe("chat model output limits", () => {
     },
   );
 });
+
+describe("chat cancellation reaches inference", () => {
+  it.each([
+    { action: "stop", phase: "streaming" },
+    { action: "timeout", phase: "streaming" },
+    { action: "stop", phase: "headers" },
+    { action: "timeout", phase: "headers" },
+  ] as const)(
+    "$action while awaiting $phase aborts upstream inference and prevents further rounds",
+    async ({ action, phase }) => {
+      const h = await harness(
+        [
+          { kind: "tool-call", toolName: "get_pnl_summary", arguments: {} },
+          { kind: "text", text: "must not run" },
+        ],
+        { turnTimeoutSeconds: action === "timeout" ? 1 : 10 },
+        phase === "headers" ? { delayMs: 2500 } : { planDelayMs: 2500 },
+      );
+      const baseline = h.inference.receivedRequests().length;
+      const thread = await h.chat.createThread({ profileId: h.profile.id });
+      const { assistantMessageId } = await h.chat.sendMessage(thread.id, {
+        clientMessageId: action,
+        text: "What is my P&L?",
+      });
+      await expect
+        .poll(() => h.inference.receivedRequests().length)
+        .toBe(baseline + 1);
+      if (action === "stop") h.chat.cancel(thread.id);
+      await waitIdle(h.store, thread.id);
+      expect(
+        listMessages(h.store, thread.id).find(
+          (m) => m.id === assistantMessageId,
+        ),
+      ).toMatchObject({ status: action === "stop" ? "cancelled" : "failed" });
+      await expect
+        .poll(() => h.inference.interruptedRequests(), { timeout: 1000 })
+        .toBe(1);
+      // Let the original response delay expire: no tool round may follow it.
+      await new Promise((resolve) => setTimeout(resolve, 2700));
+      expect(h.inference.receivedRequests()).toHaveLength(baseline + 1);
+    },
+    15_000,
+  );
+});

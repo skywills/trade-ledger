@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { AttachmentDto } from "../../shared/chat-api.js";
 import { ApiError, PreviewResponseSchema, requestMultipart } from "../api.js";
-import { PaperclipIcon, SendIcon, XIcon } from "./icons.js";
+import { PaperclipIcon, SendIcon, StopIcon, XIcon } from "./icons.js";
 
 interface Staged extends AttachmentDto {
   executions: number;
@@ -63,8 +63,12 @@ export function Composer({
   autoFocus = false,
   footer,
   prefill,
+  onStop,
+  stopping = false,
 }: {
   disabled: boolean;
+  onStop?: (() => void) | undefined;
+  stopping?: boolean;
   initialText: string;
   onSend: (text: string, attachments: AttachmentDto[]) => Promise<void>;
   placeholder?: string;
@@ -197,15 +201,28 @@ export function Composer({
               ? "Uploading…"
               : "Enter to send · Shift+Enter for a new line"}
           </span>
-          <button
-            type="submit"
-            className="send-button"
-            data-testid="composer-send"
-            disabled={disabled || uploading || sending || text.trim() === ""}
-          >
-            <SendIcon />
-            Send
-          </button>
+          {onStop !== undefined ? (
+            <button
+              type="button"
+              className="secondary stop-button"
+              data-testid="stop-turn"
+              disabled={stopping}
+              onClick={onStop}
+            >
+              <StopIcon />
+              {stopping ? "Stopping…" : "Stop"}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="send-button"
+              data-testid="composer-send"
+              disabled={disabled || uploading || sending || text.trim() === ""}
+            >
+              <SendIcon />
+              Send
+            </button>
+          )}
         </div>
       </div>
       {footer}

@@ -195,7 +195,11 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const target = `${upstream.origin}${basePath}${url.pathname}${url.search}`;
     const controller = new AbortController();
     const onClose = (): void => controller.abort();
-    request.once("close", onClose);
+    // IncomingMessage closes when its request body has been consumed. The
+    // response stays open for the entire inference stream, including the wait
+    // for upstream headers, so it owns downstream cancellation.
+    response.once("close", onClose);
+    if (response.destroyed) controller.abort();
     const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
     const signal = AbortSignal.any([controller.signal, timeoutSignal]);
 
@@ -211,7 +215,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     try {
       upstreamResponse = await fetch(target, init);
     } catch (error) {
-      request.removeListener("close", onClose);
+      response.removeListener("close", onClose);
       const timedOut = timeoutSignal.aborted;
       failure = timedOut ? "timeout" : "upstream_unreachable";
       if (!response.headersSent) {
@@ -238,7 +242,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       } else {
         crossOrigin = true;
       }
-      request.removeListener("close", onClose);
+      response.removeListener("close", onClose);
       failure = crossOrigin ? "cross_origin_redirect" : "redirect_rejected";
       sendJson(response, 502, { error: failure });
       return;
@@ -251,6 +255,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     response.writeHead(upstreamResponse.status, relayed);
 
     if (upstreamResponse.body === null) {
+      response.removeListener("close", onClose);
       response.end();
       return;
     }
@@ -272,7 +277,8 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     } catch {
       response.destroy();
     } finally {
-      request.removeListener("close", onClose);
+      controller.abort();
+      response.removeListener("close", onClose);
     }
   }
 
