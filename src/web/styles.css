@@ -1147,7 +1147,8 @@ button.icon-button:hover:not(:disabled) {
   color: var(--text);
 }
 
-button.send-button {
+button.send-button,
+button.stop-button {
   margin-left: auto;
 }
 

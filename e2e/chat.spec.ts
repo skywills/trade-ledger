@@ -127,3 +127,33 @@ test("attaching a CSV shows a preview chip", async ({
   });
   await expect(page.getByTestId("attachment-chip")).toContainText("spread.csv");
 });
+
+test("stops an active reply from the composer", async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  inference = await startInferenceServer({
+    mode: "tool-call",
+    planGateTool: "get_pnl_summary",
+    planDelayMs: 2500,
+    plan: [{ kind: "text", text: "Should be cancelled" }],
+  });
+  await configureModel(request, baseURL ?? "", inference.url);
+  await page.goto("/");
+  await page.getByTestId("composer-input").fill("Run until I stop you");
+  await page.getByTestId("composer-send").click();
+  const stop = page
+    .locator(".composer-dock")
+    .getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible();
+  await stop.click();
+  await expect(stop).toBeHidden();
+  await expect(page.getByTestId("composer-input")).toHaveAttribute(
+    "placeholder",
+    "Ask a follow-up…",
+  );
+  await expect(page.getByTestId("message-assistant").last()).toContainText(
+    "Stopped.",
+  );
+});

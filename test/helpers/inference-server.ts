@@ -75,6 +75,7 @@ export interface InferenceServer {
   /** Origin plus `/v1`, the OpenAI-style base URL. */
   readonly url: string;
   receivedRequests(): readonly RecordedInferenceRequest[];
+  interruptedRequests(): number;
   close(): Promise<void>;
 }
 
@@ -109,8 +110,12 @@ export async function startInferenceServer(
   const modelId = options.modelId ?? "test-local-a";
   const toolName = options.toolName ?? "journal_probe";
   let planIndex = 0;
+  let interrupted = 0;
 
   const server = createServer((request, response) => {
+    response.once("close", () => {
+      if (!response.writableFinished) interrupted += 1;
+    });
     void (async () => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) {
@@ -312,6 +317,7 @@ export async function startInferenceServer(
     origin,
     url: `${origin}/v1`,
     receivedRequests: () => requests,
+    interruptedRequests: () => interrupted,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
