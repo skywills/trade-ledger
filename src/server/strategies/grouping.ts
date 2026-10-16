@@ -129,6 +129,88 @@ function compareExecutionTime(
 }
 
 /**
+ * Simultaneous, untouched single-leg lots with identical economics are
+ * interchangeable for a whole-lot trade close. Break that tie by execution
+ * key, never by a generated strategy ID or by assuming broker IDs encode time.
+ */
+function equivalentOpeningLot(
+  candidates: readonly StrategyDraft[],
+  close: Execution,
+  closeQuantity: string,
+  executionByKey: ReadonlyMap<Id, Execution>,
+): StrategyDraft | undefined {
+  if (close.event !== "trade" || close.action !== "close") return undefined;
+  const hasLotReference = (execution: Execution): boolean =>
+    ["OrigTradeID", "RelatedTradeID", "PositionActionID"].some((key) => {
+      const value = execution.brokerIds[key]?.trim();
+      return value !== undefined && value !== "" && value !== "0";
+    });
+  if (hasLotReference(close)) return undefined;
+  const lots: { draft: StrategyDraft; opening: Execution }[] = [];
+  for (const draft of candidates) {
+    if (draft.unresolved || draft.blocking || draft.issues.length > 0)
+      return undefined;
+    const leg = draft.legs[0];
+    if (draft.legs.length !== 1 || leg?.role !== "open") return undefined;
+    const opening = executionByKey.get(leg.executionKey);
+    if (
+      opening === undefined ||
+      opening.event !== "trade" ||
+      opening.action !== "open" ||
+      opening.price === null ||
+      hasLotReference(opening) ||
+      !new Decimal(leg.quantity).eq(opening.quantity) ||
+      !new Decimal(leg.netCash).eq(opening.netCash) ||
+      !new Decimal(leg.quantity).abs().eq(new Decimal(closeQuantity).abs())
+    )
+      return undefined;
+    lots.push({ draft, opening });
+  }
+  // A weak instrument can match either of two conflicting known contracts;
+  // it must not make those contracts equivalent to one another.
+  const knownContracts = new Set(
+    lots
+      .map(({ opening }) => opening.instrument.conid)
+      .filter((conid) => conid !== null),
+  );
+  if (knownContracts.size > 1) return undefined;
+  const first = lots[0]?.opening;
+  if (first === undefined) return undefined;
+  const sameDecimal = (left: string | null, right: string | null): boolean =>
+    left === null || right === null
+      ? left === right
+      : new Decimal(left).eq(right);
+  if (
+    close.basis !== null &&
+    first.basis !== null &&
+    !new Decimal(close.basis).abs().eq(new Decimal(first.basis).abs())
+  )
+    return undefined;
+  for (const { opening } of lots) {
+    if (
+      compareExecutionTime(first, opening) !== 0 ||
+      !sameInstrument(first.instrument, opening.instrument) ||
+      !sameDecimal(
+        first.instrument.multiplier,
+        opening.instrument.multiplier,
+      ) ||
+      !sameDecimal(first.quantity, opening.quantity) ||
+      !sameDecimal(first.price, opening.price) ||
+      !sameDecimal(first.netCash, opening.netCash) ||
+      !sameDecimal(first.basis, opening.basis) ||
+      !sameDecimal(first.proceeds, opening.proceeds) ||
+      !sameDecimal(first.commission, opening.commission) ||
+      !sameDecimal(first.taxes, opening.taxes) ||
+      !sameDecimal(first.brokerPnl, opening.brokerPnl)
+    )
+      return undefined;
+  }
+  return lots.sort((left, right) =>
+    left.opening.key < right.opening.key ? -1 : 1,
+  )[0]?.draft;
+}
+
+/**
  * Orders known chronological constraints without treating uncertain pairs as
  * pairwise key comparisons. A stable topological ordering is transitive even
  * when some executions cannot be compared safely.
@@ -245,9 +327,9 @@ function lifecycleEventFor(group: readonly Execution[]): string {
 /**
  * Pure, synchronous, in-memory grouping of a normalized ledger plus retained
  * effective decisions into a strategy projection. BrokerageOrderID proposes
- * opening groups; lot evidence and unique compatible exposure resolve closes;
- * ambiguous matches require decisions; lifecycle and roll links are recorded
- * without merging P/L. Financial amounts and persistence belong to later tasks.
+ * opening groups; lot evidence, unique compatible exposure, and economically
+ * equivalent simultaneous lots resolve closes; other ambiguities require decisions.
+ * Lifecycle and roll links are recorded without merging P/L. Financial amounts and persistence belong to later tasks.
  */
 export function groupStrategies(
   ledger: LedgerSnapshot,
@@ -785,6 +867,16 @@ export function groupStrategies(
         );
         if (narrowed.length > 0) candidates = narrowed;
       }
+    }
+
+    if (candidates.length > 1 && lot === undefined) {
+      const equivalent = equivalentOpeningLot(
+        candidates,
+        close,
+        closeQuantity,
+        executionByKey,
+      );
+      if (equivalent !== undefined) candidates = [equivalent];
     }
 
     if (candidates.length === 1) {

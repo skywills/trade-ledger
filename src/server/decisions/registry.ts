@@ -26,6 +26,17 @@ export function strategyAnchorKey(anchor: StrategyAnchor): string {
     .digest("hex");
 }
 
+/** Reads a previously registered identity without allocating one. */
+export function findStrategyId(
+  store: Store,
+  anchor: StrategyAnchor,
+): Id | null {
+  const existing = store.db
+    .prepare(`SELECT id FROM strategy_identities WHERE stable_anchor_key = ?`)
+    .get(strategyAnchorKey(anchor)) as IdentityRow | undefined;
+  return existing?.id ?? null;
+}
+
 /**
  * Resolves the durable strategy ID for an anchor, allocating a fresh identity
  * the first time the anchor is seen and reusing the existing one across
@@ -38,10 +49,8 @@ export async function strategyId(
 ): Promise<Id> {
   const anchorKey = strategyAnchorKey(anchor);
   return write(store, () => {
-    const existing = store.db
-      .prepare(`SELECT id FROM strategy_identities WHERE stable_anchor_key = ?`)
-      .get(anchorKey) as IdentityRow | undefined;
-    if (existing !== undefined) return existing.id;
+    const existing = findStrategyId(store, anchor);
+    if (existing !== null) return existing;
     const id = randomUUID();
     store.db
       .prepare(

@@ -8,6 +8,7 @@ import type {
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import {
+  findStrategyId,
   type StrategyAnchor,
   strategyAnchorKey,
   strategyId,
@@ -131,7 +132,12 @@ export async function computeProjection(
   const decisions = effectiveDecisions(readDecisions(store, watermark));
   const anchors = new Map<string, StrategyAnchor>();
   const resolveId = (account: string, keys: string[]): Id => {
-    const key = strategyAnchorKey({ account, openingKeys: keys });
+    const anchor = { account, openingKeys: keys };
+    // Retained bindings already use durable IDs. Resolve known anchors before
+    // grouping so their openings and bound closes share the same draft.
+    const existing = findStrategyId(store, anchor);
+    if (existing !== null) return existing;
+    const key = strategyAnchorKey(anchor);
     anchors.set(key, { account, openingKeys: [...keys] });
     return key;
   };

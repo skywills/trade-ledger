@@ -18,6 +18,7 @@ const executionHeaders = [
   "Proceeds",
   "IBCommission",
   "NetCash",
+  "CostBasis",
   "FifoPnlRealized",
   "Notes/Codes",
   "IBOrderID",
@@ -30,6 +31,7 @@ const executionHeaders = [
   "Multiplier",
   "LevelOfDetail",
   "OpenDateTime",
+  "RelatedTradeID",
 ] as const;
 
 type Header = (typeof executionHeaders)[number];
