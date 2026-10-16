@@ -416,6 +416,10 @@ function combineSignals(signals: readonly AbortSignal[]): AbortSignal {
  * so cancelling the job stops the build before it can activate.
  */
 export class BuildScheduler {
+  hasActiveWork(): boolean {
+    return this.scheduled || this.flushing || this.pending.length > 0;
+  }
+
   private pending: PendingRequest[] = [];
   private scheduled = false;
   private flushing = false;

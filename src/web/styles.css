@@ -1213,6 +1213,7 @@ button.chip-remove {
 
 .thread-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
@@ -1568,4 +1569,24 @@ button.chip-remove {
   .chip-spinner {
     animation: none;
   }
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+
+.thread-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thread-actions input {
+  max-width: 100%;
+}
+
+.thread-actions p {
+  overflow-wrap: anywhere;
 }

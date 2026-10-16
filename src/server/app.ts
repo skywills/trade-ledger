@@ -31,6 +31,7 @@ import { registerReviewRoutes } from "./http/routes-review.js";
 import { recoverImportFiles } from "./imports/service.js";
 import { JobService } from "./jobs/service.js";
 import { acquireDataDirLock } from "./maintenance/lock.js";
+import { registerJournalReset } from "./maintenance/reset.js";
 import {
   checkDataAccess,
   closeStore,
@@ -246,6 +247,7 @@ export async function createApp(
       return { status: "ok" };
     });
 
+    registerJournalReset(app, store, jobs, scheduler, chat);
     await registerImportRoutes(app, store);
     await registerJournalRoutes(app, store);
     await registerAnalyticsRoutes(app, store);

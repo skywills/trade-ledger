@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 import {
+  ModelConfigurationSchema,
   ProfileInputSchema,
   SelectDefaultSchema,
   UpdateProfileSchema,
@@ -10,6 +11,7 @@ import { testProfile } from "../ai/compatibility.js";
 import type { SecretResolver } from "../ai/credentials.js";
 import {
   defaultProfileId,
+  importProfiles,
   type LlmProfile,
   listProfiles,
   readCompatibility,
@@ -56,6 +58,28 @@ export async function registerModelRoutes(
       ),
       defaultProfileId: defaultProfileId(store),
     };
+  });
+
+  app.get("/api/models/configuration", async (_request, reply) => {
+    const configuration = ModelConfigurationSchema.parse({
+      version: 1,
+      profiles: listProfiles(store).map((profile) =>
+        ProfileInputSchema.parse(profile),
+      ),
+    });
+    reply.header(
+      "content-disposition",
+      'attachment; filename="model-configuration.json"',
+    );
+    reply.header("cache-control", "no-store");
+    return configuration;
+  });
+
+  app.post("/api/models/configuration", async (request, reply) => {
+    const configuration = parse(ModelConfigurationSchema, request.body);
+    const imported = await importProfiles(store, configuration.profiles);
+    reply.code(201);
+    return { imported };
   });
 
   app.post("/api/models", async (request, reply) => {

@@ -11,6 +11,8 @@ import {
 import { ApiError, requestJson, useJson } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
 
+import { ModelConfiguration } from "./ModelConfiguration.js";
+
 interface Draft {
   name: string;
   mode: "local" | "cloud";
@@ -223,6 +225,7 @@ export function ModelsPanel() {
   return (
     <section>
       <h3>Model profiles</h3>
+      <ModelConfiguration onImported={models.reload} />
       <p>
         Local inference is the default; no cloud provider is selected
         automatically. Enter a model id manually and point at a local endpoint.

@@ -103,6 +103,7 @@ bounded read-only tools.
 - Decisions are never written by the agent directly; they are only created from
   proposals you accept.
 - CSV files can be attached to a message for an import preview.
+- Open a conversation to **Rename conversation** or **Delete conversation** in its header. Stop an active reply first. Deleting a conversation removes its messages and chat transcripts; accepted journal decisions remain.
 - Each thread is capped at $5 of estimated cost and 1M generated tokens.
 
 ## Local inference
@@ -191,6 +192,32 @@ the store.
   ```
 
 - After restore, reconfigure credentials: secrets are never stored in a backup.
+
+## Reset journal data and reuse model settings
+
+In **Maintenance → Reset journal data**, review the counts, type `RESET`, and
+choose **Confirm reset**. This permanently clears imports, staged uploads,
+accounts, derived trades/builds, review decisions, analysis runs, conversations,
+original CSV files, transcripts and job history. Model profiles, their current
+compatibility checks/default selection, and existing backup archives are kept.
+Create and download a backup first if you may need the journal again. Reset
+refuses while uploads, model checks, replies or background jobs are active;
+a cancelled job must finish stopping before reset can proceed.
+
+For a separate fresh database, use **Maintenance → Model profiles → Export model
+configuration**, then **Import model configuration** in the new instance. The
+versioned JSON includes profile settings, pricing and credential references
+(`env:NAME` / `file:/path`), never resolved keys or verification results. Supply
+the referenced environment variables or secret files on the new instance, run
+**Test**, and choose **Make default**. Import adds profiles atomically; an invalid
+entry or an existing/duplicate name rejects the entire file without overwriting
+anything. Rename conflicting entries in the JSON before importing. Export/import
+does not automatically select a default or authorize cloud use.
+
+Reset changes the running app's data without requiring a container restart.
+It keeps the existing database file and schema; it does not erase retained backups.
+If file cleanup fails after records are cleared, the app reports this explicitly;
+fix data-directory permissions and repeat reset to finish removing the files.
 
 ## Health
 

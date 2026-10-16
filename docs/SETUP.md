@@ -337,3 +337,28 @@ npm run test:build-smoke   # build then smoke the compiled server + SIGTERM
 
 `.github/workflows/ibkr-journal.yml` runs the same gates on Node 22.19.0 for
 changes to the app, packaging, docs and specs. No release tooling is required.
+
+
+## Reset data or transfer model configuration
+
+To start over with your current model setup, open **Maintenance → Reset journal
+data**. Create/download a backup first if needed. Review the deletion counts,
+type `RESET` and click **Confirm reset**. This clears imports (including staged
+uploads and original CSVs), trades/builds, accounts, decisions, analysis runs,
+conversations, transcripts and job history. It keeps model profiles, their
+compatibility checks, the selected default, and existing backups. Wait for
+uploads, replies, model checks and jobs to finish, including cancellation cleanup.
+You can then upload your CSV files again without reconfiguring inference.
+
+To move just model settings to a fresh database, use **Maintenance → Model
+profiles → Export model configuration**. On the new instance, use **Import model
+configuration** to choose the JSON file. Credential references and pricing are
+included; API keys and verification results are excluded. Configure the referenced
+environment variables or mounted files on the new instance, **Test** each profile,
+then **Make default**. Imports add profiles and do not overwrite existing names.
+Any invalid entry or name conflict rejects the whole file; rename conflicting
+entries in the JSON before retrying. A default/cloud selection is never automatic.
+
+Conversations also have **Rename conversation** and **Delete conversation**
+controls in their header. Stop an active reply first. Conversation deletion
+preserves accepted journal decisions.

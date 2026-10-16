@@ -14,6 +14,7 @@ import {
 } from "../api.js";
 import { BuildBadge, ErrorPanel } from "../components.js";
 import { ModelsPanel } from "./ModelsPanel.js";
+import { ResetJournal } from "./ResetJournal.js";
 
 /**
  * Maintenance owns rebuild/rollback, backup, and offline restore controls, plus
@@ -265,6 +266,16 @@ export function MaintenancePage() {
 
       {error !== null ? <ErrorPanel message={error} /> : null}
 
+      <ResetJournal
+        onReset={() => {
+          journal.reload();
+          setJob(null);
+          setBackupJob(null);
+          setRollbackId("");
+          setNotice(null);
+          setError(null);
+        }}
+      />
       <ModelsPanel />
     </section>
   );

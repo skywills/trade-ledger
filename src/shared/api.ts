@@ -144,6 +144,27 @@ export const ProfileInputSchema = z.object({
   pricing: ProfilePricingSchema.nullable().optional(),
 });
 
+/** Portable settings only: no ids, checks, defaults, or resolved credentials. */
+export const ModelConfigurationSchema = z
+  .object({
+    version: z.literal(1),
+    profiles: z.array(ProfileInputSchema.strict()),
+  })
+  .strict();
+export const ImportModelConfigurationResponseSchema = z.object({
+  imported: z.number().int().nonnegative(),
+});
+export const ResetPreviewSchema = z.object({
+  imports: z.number().int().nonnegative(),
+  conversations: z.number().int().nonnegative(),
+  decisions: z.number().int().nonnegative(),
+  builds: z.number().int().nonnegative(),
+});
+export const ResetJournalBodySchema = z
+  .object({ confirmation: z.literal("RESET") })
+  .strict();
+export const ResetJournalResponseSchema = z.object({ reset: z.literal(true) });
+
 export const UpdateProfileSchema = ProfileInputSchema.extend({
   expectedRevision: z.number().int().positive(),
 });
