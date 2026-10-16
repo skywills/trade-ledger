@@ -608,3 +608,27 @@ test("rollback requires an explicit confirmation", async ({ page }) => {
     page.getByRole("button", { name: "Confirm rollback" }),
   ).toHaveCount(0);
 });
+
+test("Berkshire aliases find the journal entry while transactions retain the contract symbol", async ({ page }) => {
+  const symbol = "BRK B  261218C00500000";
+  await confirmImport(page, [csvFile("berkshire.csv", buildExecutionTable([
+    optionLeg("BRK-NORMALIZE", "BRK-NORMALIZE-1", {
+      Symbol: symbol,
+      UnderlyingSymbol: "BRK B",
+      Conid: "999500",
+      Strike: "500",
+      TradeDate: "2020-01-02",
+    }),
+  ]))]);
+  await page.goto("/journal");
+  for (const alias of ["BRK B", "BRK.B", "BRK-B"]) {
+    await page.getByRole("searchbox", { name: "Search strategies" }).fill(alias);
+    await expect(page.getByRole("link", { name: "BRK.B long option", exact: true })).toBeVisible();
+  }
+  await page.goto("/transactions");
+  const table = page.getByRole("table", { name: "Transactions", exact: true });
+  await expect(table.getByRole("columnheader", { name: "Underlying", exact: true })).toBeVisible();
+  const row = table.getByRole("row").filter({ has: page.getByRole("cell", { name: symbol, exact: true }) });
+  await expect(row.getByRole("cell", { name: symbol, exact: true })).toBeVisible();
+  await expect(row.getByRole("cell", { name: "BRK.B", exact: true })).toBeVisible();
+});

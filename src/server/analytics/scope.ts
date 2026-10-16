@@ -1,5 +1,10 @@
 import { type AnalyticsQuery, validDay } from "../../shared/analytics.js";
 import type { Execution, Strategy } from "../../shared/domain.js";
+import {
+  normalizeSymbol,
+  normalizeUnderlyingKey,
+  underlyingSymbol,
+} from "../../shared/symbols.js";
 import { invalid } from "./query.js";
 import type { AnalyticsSnapshot } from "./snapshot.js";
 export const bucket = (values: readonly string[]): string => {
@@ -70,9 +75,7 @@ export function strategyUnderlying(
 ): string {
   const { members } = index(snapshot);
   return bucket(
-    (members.get(strategyId) ?? []).map(
-      (e) => e.instrument.underlying ?? e.instrument.symbol,
-    ),
+    (members.get(strategyId) ?? []).map((e) => underlyingSymbol(e.instrument)),
   );
 }
 export function resolveScope(
@@ -88,9 +91,7 @@ export function resolveScope(
       s.id,
       {
         underlying: bucket(
-          (members.get(s.id) ?? []).map(
-            (e) => e.instrument.underlying ?? e.instrument.symbol,
-          ),
+          (members.get(s.id) ?? []).map((e) => underlyingSymbol(e.instrument)),
         ),
         assetClass: bucket(
           (members.get(s.id) ?? []).map((e) => e.instrument.assetClass),
@@ -101,23 +102,28 @@ export function resolveScope(
   const keys = sorted(
     [...attribution.values()]
       .map((x) => x.underlying)
-      .concat(
-        executions.map(
-          (e) => `value:${e.instrument.underlying ?? e.instrument.symbol}`,
-        ),
-      ),
+      .concat(executions.map((e) => `value:${underlyingSymbol(e.instrument)}`)),
   );
   const options: AnalyticsOptions = {
     currencies: sorted([
       ...all.map((s) => s.currency),
       ...executions.map((e) => e.currency),
     ]),
-    symbols: sorted(executions.map((e) => e.instrument.symbol)),
+    symbols: sorted(
+      executions.map((e) => normalizeSymbol(e.instrument.symbol)),
+    ),
     underlyings: keys.map((key) => ({ key, label: bucketLabel(key) })),
     strategyTypes: sorted(all.map((s) => s.type)),
     assetClasses: sorted(executions.map((e) => e.instrument.assetClass)),
   };
-  const query = { ...input, currency: input.currency ?? options.currencies[0] };
+  const query = {
+    ...input,
+    ...(input.symbol ? { symbol: normalizeSymbol(input.symbol) } : {}),
+    ...(input.underlying
+      ? { underlying: normalizeUnderlyingKey(input.underlying) }
+      : {}),
+    currency: input.currency ?? options.currencies[0],
+  };
   if (query.currency && !options.currencies.includes(query.currency))
     invalid("Currency is not present in this snapshot.");
   const selected = all.filter(
@@ -128,7 +134,7 @@ export function resolveScope(
         attribution.get(s.id)?.underlying === query.underlying) &&
       (!query.symbol ||
         (members.get(s.id) ?? []).some(
-          (e) => e.instrument.symbol === query.symbol,
+          (e) => normalizeSymbol(e.instrument.symbol) === query.symbol,
         )) &&
       (!query.assetClass ||
         (members.get(s.id) ?? []).some(
@@ -148,7 +154,8 @@ export function resolveScope(
     (e) =>
       e.currency === query.currency &&
       inPeriod(e.date, query) &&
-      (!query.symbol || e.instrument.symbol === query.symbol) &&
+      (!query.symbol ||
+        normalizeSymbol(e.instrument.symbol) === query.symbol) &&
       (!query.assetClass || e.instrument.assetClass === query.assetClass),
   );
   const strategySpecific = Boolean(query.strategyType || query.underlying);
@@ -158,8 +165,7 @@ export function resolveScope(
       (!query.underlying ||
         query.underlying === "__multi__" ||
         query.underlying === "__unknown__" ||
-        `value:${e.instrument.underlying ?? e.instrument.symbol}` ===
-          query.underlying),
+        `value:${underlyingSymbol(e.instrument)}` === query.underlying),
   );
   return {
     snapshot,

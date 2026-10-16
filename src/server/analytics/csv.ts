@@ -2,6 +2,7 @@ import {
   AnalyticsQuerySchema,
   type ExportQuery,
 } from "../../shared/analytics.js";
+import { underlyingSymbol } from "../../shared/symbols.js";
 import { aggregateAnalytics } from "./aggregate.js";
 import { checkBuild, selectAnalyticsDetails } from "./details.js";
 import { parseDetailQuery } from "./query.js";
@@ -173,6 +174,7 @@ export function serializeAnalyticsCsv(
             "date",
             "rawDateTime",
             "symbol",
+            "underlying",
             "assetClass",
             "event",
             "action",
@@ -191,6 +193,7 @@ export function serializeAnalyticsCsv(
         : details.items.map((e) => ({
             ...e,
             symbol: e.instrument.symbol,
+            underlying: underlyingSymbol(e.instrument),
             assetClass: e.instrument.assetClass,
             sources: JSON.stringify(e.sources),
             ...meta,

@@ -2,6 +2,10 @@ import {
   type AnalyticsQuery,
   AnalyticsQuerySchema,
 } from "../../shared/analytics.js";
+import {
+  normalizeSymbol,
+  normalizeUnderlyingKey,
+} from "../../shared/symbols.js";
 export type DashboardView = "overview" | "analysis" | "reports";
 export type Preset =
   | "all"
@@ -65,6 +69,8 @@ export function readDashboardQuery(
     raw.from = start.toISOString().slice(0, 10);
     raw.to = end.toISOString().slice(0, 10);
   }
+  if (raw.symbol) raw.symbol = normalizeSymbol(raw.symbol);
+  if (raw.underlying) raw.underlying = normalizeUnderlyingKey(raw.underlying);
   const parsed = AnalyticsQuerySchema.safeParse(raw);
   const detail = Object.fromEntries(
     [
@@ -83,6 +89,9 @@ export function readDashboardQuery(
       .filter((k) => params.has(k))
       .map((k) => [k, params.get(k) ?? ""]),
   );
+  if (detail.groupBy === "underlying" && detail.group) {
+    detail.group = normalizeUnderlyingKey(detail.group);
+  }
   return {
     query: parsed.success
       ? parsed.data

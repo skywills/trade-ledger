@@ -3,6 +3,10 @@ import type {
   DetailQuery,
 } from "../../shared/analytics.js";
 import { AppError } from "../../shared/errors.js";
+import {
+  normalizeUnderlyingKey,
+  underlyingSymbol,
+} from "../../shared/symbols.js";
 import { strategyResult } from "./aggregate.js";
 import { Money } from "./performance.js";
 import { invalid } from "./query.js";
@@ -25,6 +29,13 @@ export function selectAnalyticsDetails(
 ): AnalyticsDetailsResponse {
   checkBuild(snapshot, query.expectedBuildId);
   const scope = resolveScope(snapshot, query);
+  query = {
+    ...query,
+    ...scope.query,
+    ...(query.groupBy === "underlying" && query.group
+      ? { group: normalizeUnderlyingKey(query.group) }
+      : {}),
+  };
   const meta = {
     buildId: snapshot.buildId,
     ledgerId: snapshot.ledgerId,
@@ -125,8 +136,7 @@ export function selectAnalyticsDetails(
           ? e.event
           : query.groupBy === "assetClass"
             ? e.instrument.assetClass
-            : `value:${e.instrument.underlying ?? e.instrument.symbol}`) ===
-          query.group),
+            : `value:${underlyingSymbol(e.instrument)}`) === query.group),
   );
   const key = query.sort ?? "date";
   const value = (e: (typeof rows)[number]) =>

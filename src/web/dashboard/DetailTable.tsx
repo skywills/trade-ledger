@@ -1,5 +1,6 @@
 import type { DetailQuery } from "../../shared/analytics.js";
 import { formatMoney } from "../../shared/money.js";
+import { underlyingSymbol } from "../../shared/symbols.js";
 import { ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link, navigate, useLocation } from "../navigation.js";
 import { useAnalyticsDetails } from "./api.js";
@@ -121,6 +122,7 @@ export function DetailTable({
               <tr>
                 {sortHeader("date", "Date")}
                 {sortHeader("symbol", "Symbol")}
+                <th>Underlying</th>
                 <th>Asset class</th>
                 <th>Action / event</th>
                 {sortHeader("quantity", "Quantity")}
@@ -152,6 +154,7 @@ export function DetailTable({
                   <tr key={e.key}>
                     <td>{e.date}</td>
                     <td>{e.instrument.symbol}</td>
+                    <td>{underlyingSymbol(e.instrument)}</td>
                     <td>{e.instrument.assetClass}</td>
                     <td>
                       {e.action} / {e.event.replaceAll("_", " ")}

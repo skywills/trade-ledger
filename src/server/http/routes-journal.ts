@@ -7,6 +7,7 @@ import {
   toEnvelope,
 } from "../../shared/api.js";
 import { AppError } from "../../shared/errors.js";
+import { normalizeStrategyDescription } from "../../shared/symbols.js";
 import {
   activeBuildMeta,
   activeLedgerSnapshot,
@@ -69,7 +70,12 @@ export async function registerJournalRoutes(
       "openingDate",
     );
     const active = activeProjection(store);
-    const strategies = active.projection?.strategies ?? [];
+    const strategies = (active.projection?.strategies ?? []).map(
+      (strategy) => ({
+        ...strategy,
+        description: normalizeStrategyDescription(strategy.description),
+      }),
+    );
     const all = sortWithAllowlist(strategies, sort, {
       id: (entry) => entry.id,
       openingDate: (entry) => entry.openingDate ?? "",
@@ -107,7 +113,10 @@ export async function registerJournalRoutes(
     );
     const metadata = readStrategyMetadata(store, id);
     return {
-      strategy,
+      strategy: {
+        ...strategy,
+        description: normalizeStrategyDescription(strategy.description),
+      },
       allocations,
       links,
       metadata,
