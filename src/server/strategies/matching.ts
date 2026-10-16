@@ -29,7 +29,10 @@ export function isStock(instrument: Instrument): boolean {
  * first; when a weak row lacks a conid the contract-defining fields decide.
  */
 export function sameInstrument(left: Instrument, right: Instrument): boolean {
-  if (left.key === right.key) return true;
+  if (left.assetClass !== right.assetClass) return false;
+  if (left.conid !== null && right.conid !== null)
+    return left.conid === right.conid;
+  if (left.symbol !== right.symbol) return false;
   return (
     left.assetClass === right.assetClass &&
     left.underlying === right.underlying &&
@@ -69,7 +72,14 @@ export function yearOf(expiry: string | null): number | null {
 export function classifyLegs(legs: readonly Leg[]): string {
   if (legs.length === 0) return "unresolved";
   if (legs.every((leg) => isStock(leg.instrument))) return "stock";
-  if (!legs.every((leg) => isDerivative(leg.instrument))) return "custom";
+  if (legs.every((leg) => leg.instrument.assetClass === "FUT")) {
+    if (legs.length !== 1) return "custom";
+    return signOf(legs[0]?.quantity ?? "0") >= 0
+      ? "long_future"
+      : "short_future";
+  }
+  if (!legs.every((leg) => leg.instrument.assetClass === "OPT"))
+    return "custom";
 
   const underlying = legs[0]?.instrument.underlying ?? null;
   const expiry = legs[0]?.instrument.expiry ?? null;

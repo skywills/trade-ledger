@@ -798,9 +798,9 @@ describe("normalizeExecution", () => {
     });
   });
 
-  it("normalizes instrument fields and warns on missing multipliers", () => {
+  it("normalizes instrument fields and warns when multiplier evidence is absent", () => {
     const result = normalizeExecution(
-      rawRow(validExecutionFields({ Multiplier: "" })),
+      rawRow(validExecutionFields({ Multiplier: "", Proceeds: "" })),
       ref,
       null,
     );

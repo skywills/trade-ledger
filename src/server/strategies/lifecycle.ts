@@ -48,11 +48,12 @@ export function validateLifecycle(
   }
 
   if (event === "assignment" || event === "exercise") {
-    const option = isDerivative(source.instrument)
-      ? source
-      : isDerivative(target.instrument)
-        ? target
-        : null;
+    const option =
+      source.instrument.assetClass === "OPT"
+        ? source
+        : target.instrument.assetClass === "OPT"
+          ? target
+          : null;
     const stock = isStock(source.instrument)
       ? source
       : isStock(target.instrument)
@@ -69,6 +70,14 @@ export function validateLifecycle(
       optionUnderlying !== stockUnderlying
     ) {
       return inconsistent("error", `${source.key}:underlying`);
+    }
+    // An adjusted option's premium multiplier is not its share deliverable.
+    // Until deliverable metadata is available, do not certify a stock link
+    // from the premium multiplier (e.g. SQQQ2 may deliver fewer than 100 shares).
+    const symbol = option.instrument.symbol.trim();
+    const root = /^(\S{1,6}?)\s*\d{6}[CP]\d{8}$/.exec(symbol)?.[1] ?? symbol;
+    if (/\d$/.test(root) && root !== optionUnderlying) {
+      return inconsistent("warning", `${source.key}:deliverable`);
     }
     const multiplier = option.instrument.multiplier;
     if (multiplier === null) {

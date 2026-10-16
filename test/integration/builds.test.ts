@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   ALGORITHM_VERSION,
@@ -707,3 +707,31 @@ describe("provisional identity wiring", () => {
       expect(remapped.some((id) => anchors.has(id))).toBe(false);
     }));
 });
+
+it("requires full normalization for a ledger built before multiplier/expiry resolution", async () =>
+  withStore(async (store) => {
+    await commitBytes(store, "spread.csv", fixtures.spread);
+    await rebuild(store, input("full"));
+    const imports = store.db
+      .prepare(
+        "SELECT id, sha256 FROM imports WHERE status = 'committed' ORDER BY id",
+      )
+      .all();
+    const oldHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          parserVersion: LEDGER_PARSER_VERSION,
+          decisionWatermark: 0,
+          imports,
+        }),
+      )
+      .digest("hex");
+    store.db
+      .prepare("UPDATE ledger_builds SET input_manifest_hash = ? WHERE id = ?")
+      .run(oldHash, activeLedgerId(store));
+    await expect(rebuild(store, input("projection"))).rejects.toMatchObject({
+      code: "BUILD_INPUTS_CHANGED",
+    });
+    await rebuild(store, input("full"));
+    await expect(rebuild(store, input("projection"))).resolves.toBeDefined();
+  }));
