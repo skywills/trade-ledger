@@ -37,6 +37,7 @@ async function harness(
   plan: InferencePlanStep[],
   limits: Partial<ChatLimits> = {},
   server: { delayMs?: number; planDelayMs?: number } = {},
+  profileMaxTokens?: number,
 ) {
   const t = await createTestStore();
   stores.push(t);
@@ -48,7 +49,26 @@ async function harness(
     ...server,
   });
   servers.push(inference);
-  const profile = await verifiedProfile(t.store, inference);
+  const profile =
+    profileMaxTokens === undefined
+      ? await verifiedProfile(t.store, inference)
+      : await saveProfile(
+          t.store,
+          {
+            ...profileInput("chat-local", inference.url),
+            contextWindow: 65536,
+            maxTokens: profileMaxTokens,
+          },
+          null,
+        );
+  if (profileMaxTokens !== undefined) {
+    const check = await testProfile(
+      t.store,
+      profile.id,
+      new AbortController().signal,
+    );
+    expect(check.status).toBe("verified");
+  }
   const jobs = new JobService(t.store);
   const chat = new ChatService({
     store: t.store,
@@ -426,4 +446,52 @@ describe("proposals from chat", () => {
     expect(run?.status).toBe("accepted");
     expect(listRunsForThread(t.store, thread.id)).toHaveLength(1);
   });
+});
+
+describe("chat model output limits", () => {
+  it.each([
+    { profileMaxTokens: 32000, override: {}, status: "complete", error: null },
+    {
+      profileMaxTokens: 2048,
+      override: {},
+      status: "failed",
+      error: "limit:max_output_tokens",
+    },
+    {
+      profileMaxTokens: 32000,
+      override: { maxOutputTokens: 1000 },
+      status: "failed",
+      error: "limit:max_output_tokens",
+    },
+  ])(
+    "uses the profile limit $profileMaxTokens with override $override",
+    async ({ profileMaxTokens, override, status, error }) => {
+      const h = await harness(
+        [
+          {
+            kind: "tool-call",
+            toolName: "list_transactions",
+            arguments: {},
+            outputTokens: 4202,
+            reasoningTokens: 4095,
+          },
+          { kind: "text", text: "Finished checking transactions." },
+        ],
+        override,
+        {},
+        profileMaxTokens,
+      );
+      const thread = await h.chat.createThread({ profileId: h.profile.id });
+      const { assistantMessageId } = await h.chat.sendMessage(thread.id, {
+        clientMessageId: "output-limit",
+        text: "Check transactions",
+      });
+      await waitIdle(h.store, thread.id);
+      expect(
+        listMessages(h.store, thread.id).find(
+          (m) => m.id === assistantMessageId,
+        ),
+      ).toMatchObject({ status, error });
+    },
+  );
 });

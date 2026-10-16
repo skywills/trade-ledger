@@ -1,8 +1,10 @@
 import type { EmbedderTool } from "@nathapp/nax-agent";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { BuildScheduler } from "../../src/server/builds/service.js";
 import { journalTools } from "../../src/server/chat/tools/journal.js";
 import { pnlTools } from "../../src/server/chat/tools/pnl.js";
+import { proposalTools } from "../../src/server/chat/tools/proposals.js";
 import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
 import { statusTools } from "../../src/server/chat/tools/status.js";
 import { writeTools } from "../../src/server/chat/tools/writes.js";
@@ -436,5 +438,40 @@ describe("formatForModel", () => {
     );
     const text = formatForModel({ a: 1, b: undefined, items: [1] });
     expect(JSON.parse(text)).toEqual({ a: 1, items: [1] });
+  });
+});
+
+describe("proposal tool contract", () => {
+  it("advertises payload fields instead of accepting the failed multiplier payload", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    const tool = proposalTools(toolContext(t.store))[0];
+    if (!tool) throw new Error("missing proposal tool");
+    const advertised = z.fromJSONSchema(tool.inputSchema);
+    expect(
+      advertised.safeParse({
+        kind: "identity_binding",
+        payload: { instrumentKey: "symbol:OPTION", multiplier: "100" },
+      }).success,
+    ).toBe(false);
+    expect(
+      advertised.safeParse({
+        kind: "identity_binding",
+        payload: {
+          source: { importId: "import", rowNumber: 13 },
+          canonicalIdentity: "symbol:OPTION",
+          expectedQuantity: "2",
+        },
+      }).success,
+    ).toBe(true);
+    for (const kind of [
+      "manual_allocation",
+      "notes",
+      "group_explicit",
+      "lifecycle",
+      "stop_loss",
+    ]) {
+      expect(advertised.safeParse({ kind, payload: {} }).success).toBe(false);
+    }
   });
 });

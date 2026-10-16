@@ -28,6 +28,7 @@ export interface ToolRecord {
   readonly name: string;
   readonly status: "running" | "done";
   readonly isError: boolean;
+  readonly error?: string;
   readonly approval: "allowed" | "denied" | "expired" | "cancelled" | null;
 }
 export interface ChatThread {

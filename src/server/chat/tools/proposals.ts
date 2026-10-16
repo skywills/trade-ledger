@@ -1,7 +1,8 @@
 // src/server/chat/tools/proposals.ts
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { buildEvidenceSnapshot } from "../../ai/evidence.js";
-import { tryParseProposal } from "../../ai/proposals.js";
+import { ProposalSchema, tryParseProposal } from "../../ai/proposals.js";
 import {
   appendRunProposal,
   insertRun,
@@ -47,7 +48,18 @@ const SUBMIT_SCHEMA = {
       },
     },
     strategyIds: { type: "array", items: { type: "string" } },
-    payload: { type: "object" },
+    payload: {
+      type: "object",
+      description:
+        "Use the payload variant matching kind. All quantities and money are decimal strings.",
+      anyOf: ProposalSchema.options.map((option) => ({
+        ...z.toJSONSchema(option.shape.payload, {
+          io: "input",
+          target: "draft-7",
+        }),
+        description: `Payload for kind ${option.shape.kind.value}`,
+      })),
+    },
   },
   required: ["kind", "payload"],
   additionalProperties: false,
@@ -87,7 +99,7 @@ export function proposalTools(ctx: ChatToolContext): ChatTool[] {
     {
       name: "submit_proposal",
       description:
-        "Record a reconciliation proposal for the user to accept or reject. This does not write a decision. Allocations must conserve each execution's signed quantity and net cash.",
+        "Record a reconciliation proposal for the user to accept or reject. This does not write a decision. Match payload to kind using the schema; never probe with empty payloads. identity_binding binds a source row to a canonical identity and expected quantity. No supported kind changes contract multipliers or fixes MISSING_MULTIPLIER; explain that limitation instead of submitting a proposal. Allocations must conserve each execution's signed quantity and net cash.",
       inputSchema: SUBMIT_SCHEMA,
       approval: "never",
       run: (input) =>

@@ -32,6 +32,7 @@ export const ToolRecordSchema = z.object({
   name: z.string(),
   status: z.enum(["running", "done"]),
   isError: z.boolean(),
+  error: z.string().optional(),
   approval: z.enum(["allowed", "denied", "expired", "cancelled"]).nullable(),
 });
 export const ChatThreadSchema = z.object({

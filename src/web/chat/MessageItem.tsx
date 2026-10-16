@@ -87,6 +87,14 @@ export function MessageItem({
         </p>
       ) : null}
       <ToolChips tools={tools} />
+      {tools
+        .filter((tool) => tool.isError && tool.error)
+        .map((tool) => (
+          <details key={tool.callId} className="error-text">
+            <summary>{tool.name}: error details</summary>
+            <p className="pre-wrap">{tool.error}</p>
+          </details>
+        ))}
       {isUser ? <p className="pre-wrap">{text}</p> : <Markdown text={text} />}
       <StatusLine message={message} text={text} />
     </article>
