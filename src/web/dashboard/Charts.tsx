@@ -31,7 +31,7 @@ export function AnalyticsChart({
       connected = false;
       continue;
     }
-    path += `${connected ? "L" : "M"}${p.x},${p.y} `;
+    path += `${connected && !p.breakBefore ? "L" : "M"}${p.x},${p.y} `;
     connected = true;
   }
   const display = (v: string | null) =>
@@ -191,7 +191,7 @@ export function AnalyticsChart({
                 {points.slice(page * 25, (page + 1) * 25).map((p) => (
                   <tr key={p.key}>
                     <td>{p.label}</td>
-                    <td>{display(p.value)}</td>
+                    <td>{p.value ?? "Unavailable"}</td>
                     {onSelect && (
                       <td>
                         <button type="button" onClick={() => onSelect(p.key)}>

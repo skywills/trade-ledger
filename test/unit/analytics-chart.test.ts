@@ -37,3 +37,16 @@ describe("chart normalization", () => {
     expect(source[3000]?.value).toBe("9999");
   });
 });
+
+it("retains a break for every omitted missing bucket between sampled extrema", () => {
+  const source = Array.from({ length: 6000 }, (_, i) => ({
+    key: String(i),
+    label: String(i),
+    value:
+      i === 2 || i === 8 ? null : i === 5 ? "-100" : i === 10 ? "100" : "0",
+  }));
+  const model = buildChartModel(source, 1000);
+  expect(model.points.find((p) => p.index === 5)).toBeDefined();
+  expect(model.points.find((p) => p.index === 10)?.breakBefore).toBe(true);
+  expect(model.points.length).toBeLessThanOrEqual(1002);
+});

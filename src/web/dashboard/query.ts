@@ -93,7 +93,7 @@ export function readDashboardQuery(
     preset,
     section:
       params.get("section") === "transactions" ? "transactions" : "performance",
-    detail,
+    detail: view === "analysis" ? detail : {},
     error: !["all", "this-month", "last-month", "this-year", "custom"].includes(
       preset,
     )
@@ -111,7 +111,8 @@ export function dashboardHref(
   p.set("preset", state.preset);
   for (const [k, v] of Object.entries(state.query)) if (v) p.set(k, v);
   if (view === "analysis") p.set("section", state.section);
-  for (const [k, v] of Object.entries(state.detail)) p.set(k, v);
+  if (view === "analysis")
+    for (const [k, v] of Object.entries(state.detail)) p.set(k, v);
   return `/dashboard${view === "overview" ? "" : `/${view}`}?${p}`;
 }
 export function changeDashboard(

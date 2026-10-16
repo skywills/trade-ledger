@@ -5,7 +5,12 @@ export interface ChartPoint {
   value: string | null;
 }
 export interface ChartModel {
-  points: { index: number; x: number; y: number | null }[];
+  points: {
+    index: number;
+    x: number;
+    y: number | null;
+    breakBefore: boolean;
+  }[];
   zeroY: number;
   min: string;
   max: string;
@@ -63,15 +68,21 @@ export function buildChartModel(
     indices.add(low);
     indices.add(high);
   }
+  const selectedIndices = [...indices].sort((a, b) => a - b);
+  const missingPrefix = [0];
+  for (const point of points)
+    missingPrefix.push(
+      (missingPrefix.at(-1) ?? 0) + (point.value === null ? 1 : 0),
+    );
   return {
-    points: [...indices]
-      .sort((a, b) => a - b)
-      .map((index) => ({
-        index,
-        x:
-          40 + (points.length <= 1 ? 280 : (index / (points.length - 1)) * 560),
-        y: points[index]?.value == null ? null : y(new D(points[index].value)),
-      })),
+    points: selectedIndices.map((index, selectedIndex) => ({
+      breakBefore:
+        (missingPrefix[index] ?? 0) >
+        (missingPrefix[(selectedIndices[selectedIndex - 1] ?? -1) + 1] ?? 0),
+      index,
+      x: 40 + (points.length <= 1 ? 280 : (index / (points.length - 1)) * 560),
+      y: points[index]?.value == null ? null : y(new D(points[index].value)),
+    })),
     zeroY: y(new D(0)),
     min: min.toFixed(),
     max: max.toFixed(),

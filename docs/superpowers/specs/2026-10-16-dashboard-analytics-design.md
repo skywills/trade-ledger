@@ -1,7 +1,7 @@
 # Dashboard and transaction analytics
 
 Date: 2026-10-16
-Status: reviewed for implementation planning at the user's request; implementation has not started.
+Status: implemented, independently reviewed, and verified; branch integration pending.
 Product: TradeLedger (package/repository slug: trade-ledger).
 
 ## Intent and agreed scope

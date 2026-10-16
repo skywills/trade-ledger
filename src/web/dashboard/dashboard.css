@@ -885,3 +885,34 @@
     overflow-wrap: normal;
   }
 }
+.dashboard-quality {
+  margin-bottom: var(--space-6);
+  font-size: var(--text-sm);
+}
+.dashboard-quality h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+.dashboard-quality p {
+  margin: var(--space-2) 0;
+}
+.dashboard-report-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.dashboard-report-active-filters:empty {
+  display: none;
+}
+@media print {
+  .dashboard-quality {
+    display: none;
+  }
+  .dashboard-report-active-filters {
+    font-size: 9pt;
+    color: var(--text);
+  }
+}

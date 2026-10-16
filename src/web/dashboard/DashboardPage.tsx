@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { ExportQuerySchema } from "../../shared/analytics.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
-import { Link, useLocation } from "../navigation.js";
+import { Link, navigate, useLocation } from "../navigation.js";
 import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
 import { DashboardFilters } from "./DashboardFilters.js";
+import { DataQuality } from "./DataQuality.js";
 import { ExportButton } from "./ExportButton.js";
 import { Overview } from "./Overview.js";
 import {
@@ -49,9 +50,15 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         ...data.filters,
         ...exportDetail,
         dataset: exportDataset,
-        expectedBuildId: data.buildId ?? undefined,
+        expectedBuildId:
+          state.detail.expectedBuildId ?? data.buildId ?? undefined,
       })
     : null;
+  function refreshAnalytics() {
+    const { expectedBuildId: _old, ...detail } = state.detail;
+    navigate(dashboardHref(view, { ...state, detail }));
+    remote.reload();
+  }
   return (
     <section className="dashboard">
       <div className="dashboard-title">
@@ -87,6 +94,7 @@ export function DashboardPage({ view }: { view: DashboardView }) {
           key={search}
           query={exportQuery.data}
           dataset={exportDataset}
+          onRefresh={refreshAnalytics}
         />
       )}
       <DashboardFilters
@@ -119,6 +127,7 @@ export function DashboardPage({ view }: { view: DashboardView }) {
               P&amp;L · {data.filters.currency ?? "No currency"}
             </span>
           </div>
+          <DataQuality data={data} />
           {!data.buildId ? (
             <div className="dashboard-empty">
               <h3>Start your trading story</h3>

@@ -35,6 +35,27 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
         Generated {data.generatedAt}
         {data.stale ? " · Stale: inputs changed since this build" : ""}
       </p>
+      <div
+        className="dashboard-report-active-filters"
+        data-testid="report-active-filters"
+      >
+        {[
+          data.filters.symbol ? `Symbol: ${data.filters.symbol}` : null,
+          data.filters.underlying
+            ? `Underlying: ${data.options.underlyings.find((item) => item.key === data.filters.underlying)?.label ?? (data.filters.underlying === "__multi__" ? "Multi-underlying" : data.filters.underlying === "__unknown__" ? "Unknown" : data.filters.underlying.replace(/^value:/, ""))}`
+            : null,
+          data.filters.strategyType
+            ? `Strategy type: ${data.filters.strategyType}`
+            : null,
+          data.filters.assetClass
+            ? `Asset class: ${data.filters.assetClass}`
+            : null,
+        ]
+          .filter(Boolean)
+          .map((filter) => (
+            <span key={filter}>{filter}</span>
+          ))}
+      </div>
       <Overview data={data} />
       <div className="dashboard-two-column">
         <article className="dashboard-panel">

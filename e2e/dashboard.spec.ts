@@ -489,3 +489,179 @@ test("themes, keyboard controls and responsive layouts remain readable", async (
     page.getByRole("table", { name: "Cumulative realized P&L data" }),
   ).toBeVisible();
 });
+
+test("saved detail export preserves the old build until explicit refresh", async ({
+  page,
+}) => {
+  await stub(page);
+  let expected = "";
+  await page.route("**/api/analytics/details?*", (r) =>
+    r.fulfill({
+      status: 409,
+      json: {
+        code: "ANALYTICS_BUILD_CHANGED",
+        message: "Refresh the changed build.",
+      },
+    }),
+  );
+  await page.route("**/api/analytics/export?*", (r) => {
+    expected =
+      new URL(r.request().url()).searchParams.get("expectedBuildId") ?? "";
+    return r.fulfill({
+      status: 409,
+      json: {
+        code: "ANALYTICS_BUILD_CHANGED",
+        message: "Refresh the changed build.",
+      },
+    });
+  });
+  await page.goto(
+    "/dashboard/analysis?currency=USD&kind=strategies&outcome=win&expectedBuildId=old",
+  );
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  expect(expected).toBe("old");
+});
+test("export build conflict has a refresh action that reloads the summary", async ({
+  page,
+}) => {
+  let build = "old",
+    exported = "";
+  const requests: string[] = [];
+  await page.route("**/api/analytics?*", (r) => {
+    requests.push(build);
+    return r.fulfill({ json: { ...data, buildId: build } });
+  });
+  await page.route("**/api/analytics/export?*", (r) => {
+    exported =
+      new URL(r.request().url()).searchParams.get("expectedBuildId") ?? "";
+    return exported === build
+      ? r.fulfill({
+          contentType: "text/csv",
+          headers: {
+            "content-disposition": 'attachment; filename="report.csv"',
+          },
+          body: '"pnl"\r\n"10456.24"\r\n',
+        })
+      : r.fulfill({
+          status: 409,
+          json: {
+            code: "ANALYTICS_BUILD_CHANGED",
+            message: "The active build changed.",
+          },
+        });
+  });
+  await page.goto("/dashboard?currency=USD&preset=all");
+  await expect(page.getByTestId("metric-pnl")).toBeVisible();
+  build = "new";
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Refresh analytics", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Refresh analytics", exact: true })
+    .click();
+  await expect(page.getByTestId("build-id")).toContainText("new");
+  expect(requests).toEqual(["old", "new"]);
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  await download;
+  expect(exported).toBe("new");
+});
+test("shared quality notices disclose and link excluded strategy scopes", async ({
+  page,
+}) => {
+  await page.route("**/api/analytics?*", (r) =>
+    r.fulfill({
+      json: {
+        ...data,
+        quality: {
+          undatedClosed: 2,
+          unresolved: 3,
+          estimatedClosed: 4,
+          excludedUnallocated: 5,
+        },
+      },
+    }),
+  );
+  await page.goto("/dashboard?currency=USD&preset=all");
+  await expect(
+    page.getByRole("link", {
+      name: "2 closed trades with unknown dates",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", /scope=undated-closed.*expectedBuildId=build/);
+  await expect(
+    page.getByRole("link", { name: "3 unresolved strategies", exact: true }),
+  ).toHaveAttribute("href", /scope=unresolved/);
+  await expect(
+    page.getByText("4 closed trades include estimated broker P&L", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("5 unallocated executions excluded by strategy filters", {
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+test("printed reports identify every active membership filter", async ({
+  page,
+}) => {
+  await page.route("**/api/analytics?*", (r) =>
+    r.fulfill({
+      json: {
+        ...data,
+        filters: {
+          ...data.filters,
+          symbol: "AXON",
+          underlying: "value:A",
+          strategyType: "stock",
+          assetClass: "STK",
+        },
+      },
+    }),
+  );
+  await page.goto(
+    "/dashboard/reports?currency=USD&preset=all&symbol=AXON&underlying=value%3AA&strategyType=stock&assetClass=STK",
+  );
+  await page.emulateMedia({ media: "print" });
+  const context = page.getByTestId("report-active-filters");
+  for (const filter of [
+    "Symbol: AXON",
+    "Underlying: A",
+    "Strategy type: stock",
+    "Asset class: STK",
+  ])
+    await expect(context).toContainText(filter);
+  await expect(context).toBeVisible();
+});
+test("chart data tables preserve non-zero amounts smaller than a currency minor unit", async ({
+  page,
+}) => {
+  await page.route("**/api/analytics?*", (r) =>
+    r.fulfill({
+      json: {
+        ...data,
+        daily: [
+          {
+            date: "2026-09-20",
+            pnl: "0.001",
+            cumulative: "0.001",
+            drawdown: "0",
+            eligible: 1,
+            missing: 0,
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/dashboard?currency=USD");
+  await page
+    .getByRole("button", {
+      name: "Show data table for Cumulative realized P&L",
+    })
+    .click();
+  await expect(
+    page.getByRole("table", { name: "Cumulative realized P&L data" }),
+  ).toContainText("0.001");
+});

@@ -44,3 +44,24 @@ describe("dashboard URL state", () => {
     expect(s.query.from).toBe("2026-10-20");
   });
 });
+
+it("clears detail-only scopes when leaving Analysis while retaining membership filters", () => {
+  const state = readDashboardQuery(
+    "?currency=USD&symbol=A&kind=strategies&outcome=win&expectedBuildId=old",
+    "analysis",
+    "2026-10-16",
+  );
+  for (const view of ["overview", "reports"] as const) {
+    const href = dashboardHref(view, state);
+    expect(href).toContain("symbol=A");
+    expect(href).not.toContain("outcome=");
+    expect(href).not.toContain("kind=");
+    expect(
+      readDashboardQuery(
+        "?currency=USD&kind=strategies&outcome=win",
+        view,
+        "2026-10-16",
+      ).detail,
+    ).toEqual({});
+  }
+});
