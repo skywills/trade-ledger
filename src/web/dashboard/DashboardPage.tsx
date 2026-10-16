@@ -3,6 +3,7 @@ import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { Link, useLocation } from "../navigation.js";
 import { useAnalytics } from "./api.js";
 import { DashboardFilters } from "./DashboardFilters.js";
+import { Overview } from "./Overview.js";
 import {
   type DashboardView,
   dashboardHref,
@@ -95,13 +96,15 @@ export function DashboardPage({ view }: { view: DashboardView }) {
             </div>
           ) : (
             <div data-testid="dashboard-content">
-              <p>
-                {view === "overview"
-                  ? "Performance overview"
-                  : view === "analysis"
+              {view === "overview" ? (
+                <Overview data={data} />
+              ) : (
+                <p>
+                  {view === "analysis"
                     ? "Trade and transaction analysis"
                     : "Trading report"}
-              </p>
+                </p>
+              )}
             </div>
           )}
         </>

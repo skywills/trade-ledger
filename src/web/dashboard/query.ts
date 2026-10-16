@@ -123,3 +123,18 @@ export function changeDashboard(
     error: null,
   };
 }
+export function detailHref(
+  data: { filters: AnalyticsQuery; buildId: string | null },
+  detail: Record<string, string>,
+): string {
+  return dashboardHref("analysis", {
+    query: data.filters,
+    preset: data.filters.from || data.filters.to ? "custom" : "all",
+    section: detail.kind === "transactions" ? "transactions" : "performance",
+    detail: {
+      ...detail,
+      ...(data.buildId ? { expectedBuildId: data.buildId } : {}),
+    },
+    error: null,
+  });
+}
