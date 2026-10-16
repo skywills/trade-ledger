@@ -199,7 +199,7 @@ function readRetainedLedger(
   ) {
     throw new AppError(
       "BUILD_INPUTS_CHANGED",
-      "The retained ledger no longer matches current imports or identity/inclusion decisions. Run a full rebuild before a projection rebuild.",
+      "The retained ledger no longer matches current normalization rules, imports, or identity/inclusion decisions. Run a full rebuild before a projection rebuild.",
       409,
     );
   }

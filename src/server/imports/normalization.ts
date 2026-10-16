@@ -258,7 +258,7 @@ export function normalizeExecution(
     decimalFrom(name, canonicalDecimal(fields[name]));
 
   const account = requireText("ClientAccountID");
-  const assetClass = requireText("AssetClass");
+  const assetClass = requireText("AssetClass")?.toUpperCase() ?? null;
   const symbol = requireText("Symbol");
   const currency = requireText("CurrencyPrimary");
 
@@ -325,7 +325,36 @@ export function normalizeExecution(
       : null;
   if (expiry === null && occ !== null) expiry = occ.expiry;
   const strike = optionalDecimal("Strike") ?? occ?.strike ?? null;
-  const multiplier = optionalDecimal("Multiplier");
+  let multiplier = optionalDecimal("Multiplier");
+  if (multiplier !== null && !new Decimal(multiplier).gt(0)) {
+    fail("invalid_multiplier");
+  }
+  if (multiplier === null && (fields["Multiplier"] ?? "").trim() === "") {
+    if (assetClass === "STK" || assetClass === "STOCK") multiplier = "1";
+    else if (
+      (assetClass === "OPT" || assetClass === "FUT") &&
+      proceeds !== null &&
+      price !== null &&
+      quantity !== null &&
+      new Decimal(price).gt(0) &&
+      !new Decimal(quantity).isZero()
+    ) {
+      // Gross proceeds exclude fees. Require exact whole-unit evidence;
+      // rounded, zero, or non-notional cash movements cannot establish a multiplier.
+      const implied = new Decimal(proceeds).div(quantity).div(price).abs();
+      if (
+        implied.gt(0) &&
+        implied.isInteger() &&
+        new Decimal(quantity)
+          .times(price)
+          .times(implied)
+          .abs()
+          .eq(new Decimal(proceeds).abs())
+      ) {
+        multiplier = implied.toFixed();
+      }
+    }
+  }
   if (
     multiplier === null &&
     DERIVATIVE_ASSET_CLASSES.has((assetClass ?? "").toUpperCase())
@@ -341,7 +370,14 @@ export function normalizeExecution(
   const conid = (fields["Conid"] ?? "").trim();
   const underlying = (fields["UnderlyingSymbol"] ?? "").trim();
   const instrument: Instrument = {
-    key: conid !== "" ? `conid:${conid}` : `symbol:${symbol ?? ""}`,
+    key:
+      conid !== ""
+        ? `conid:${conid}`
+        : occ === null &&
+            (assetClass === "OPT" || assetClass === "FUT") &&
+            expiry !== null
+          ? `contract:${JSON.stringify([assetClass, symbol, expiry, strike === null ? null : new Decimal(strike).toFixed(), putCall])}`
+          : `symbol:${symbol ?? ""}`,
     assetClass: assetClass ?? "",
     symbol: symbol ?? "",
     underlying: underlying === "" ? null : underlying,
@@ -387,6 +423,28 @@ export function normalizeExecution(
       break;
     }
   }
+
+  // A worthless option expiry has no closing proceeds. Broker P&L may be
+  // positive or negative and is retained separately from cashflow. Explicit
+  // lifecycle codes/action IDs win; zero cash alone is not expiry evidence.
+  if (
+    event === "trade" &&
+    assetClass === "OPT" &&
+    action !== "open" &&
+    action !== "mixed" &&
+    brokerIds.PositionActionID === undefined &&
+    expiry !== null &&
+    date !== null &&
+    date >= expiry &&
+    quantity !== null &&
+    !new Decimal(quantity).isZero() &&
+    price !== null &&
+    new Decimal(price).isZero() &&
+    netCash !== null &&
+    new Decimal(netCash).isZero() &&
+    (proceeds === null || new Decimal(proceeds).isZero())
+  )
+    event = "expiry";
 
   const sourceTimezone = (fields["TimeZone"] ?? "").trim();
   const configuredTimezone = reportTimezone?.trim() ?? "";

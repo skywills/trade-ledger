@@ -18,6 +18,7 @@ import {
   manifestHash,
   persistLedgerBuild,
 } from "../storage/ledger.js";
+import { resolveContractMultipliers } from "./contracts.js";
 import {
   type Candidate,
   type IdentityBinding,
@@ -305,6 +306,12 @@ export async function normalizeLedger(
     identity.transactions.filter((transaction) => !transaction.conflicted),
   );
   issues.push(...revisionOutcome.issues);
+  resolveContractMultipliers(
+    revisionOutcome.revisions
+      .filter((revision) => revision.state === "active")
+      .map((revision) => revision.payload),
+    issues,
+  );
 
   const ledgerId = await persistLedgerBuild(store, {
     inputManifestHash: manifestHash(
