@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ChatPage } from "./chat/ChatPage.js";
+import { DashboardPage } from "./dashboard/DashboardPage.js";
 import { ImportsPage } from "./imports/ImportsPage.js";
 import { JournalPage } from "./journal/JournalPage.js";
 import { StrategyDetail } from "./journal/StrategyDetail.js";
@@ -24,6 +25,15 @@ function renderRoute(pathname: string) {
   switch (first) {
     case undefined:
       return <ChatPage threadId={undefined} />;
+    case "dashboard":
+      return segments.length <= 2 &&
+        (second === undefined ||
+          second === "analysis" ||
+          second === "reports") ? (
+        <DashboardPage view={second ?? "overview"} />
+      ) : (
+        <NotFound />
+      );
     case "journal":
       return <JournalPage />;
     case "imports":
@@ -48,6 +58,7 @@ function renderRoute(pathname: string) {
 }
 
 const NAV_ITEMS = [
+  { to: "/dashboard", label: "Dashboard", match: ["dashboard"] },
   { to: "/chat", label: "Agent", match: ["chat"] },
   { to: "/journal", label: "Journal", match: ["journal", "strategies"] },
   { to: "/transactions", label: "Transactions", match: ["transactions"] },
