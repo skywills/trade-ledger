@@ -426,7 +426,7 @@ Assert raw originals/profiles/notes/rejections/source hashes survive; corrupted/
 
 ### Task 15: Docker distribution, CI and full acceptance gates
 
-**Files:** Create `Dockerfile`, `compose.yaml`, `.dockerignore`, `.env.example`, `README.md`, `scripts/docker-smoke.mjs`, `scripts/local-model-smoke.mjs`, `test/integration/acceptance.test.ts`, `.github/workflows/ibkr-journal.yml`; Modify `package.json`, `src/server/app.ts` for production static serving, `src/server/main.ts` for process lock/readiness.
+**Files:** Create `Dockerfile`, `compose.yaml`, `.dockerignore`, `.env.example`, `README.md`, `scripts/docker-smoke.mjs`, `scripts/local-model-smoke.mjs`, `test/integration/acceptance.test.ts`, `.github/workflows/trade-ledger.yml`; Modify `package.json`, `src/server/app.ts` for production static serving, `src/server/main.ts` for process lock/readiness.
 
 **Interfaces:** Produces one app image, runtime env `DATA_DIR=/data`, `PORT=3000`, `ALLOWED_ORIGIN=http://localhost:3000`, `UPLOAD_LIMIT_BYTES=20971520`; secret refs use `env:NAME` or allowlisted mounted file path. Docker build context is the repository root, no root workspace build needed. Compose maps `127.0.0.1:3000:3000`, a named /data volume and `host.docker.internal:host-gateway`.
 

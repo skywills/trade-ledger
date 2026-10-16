@@ -198,7 +198,7 @@ the branch and worktree stay put while the cause is investigated.
 
 ## 11. Continuous integration
 
-`.github/workflows/ibkr-journal.yml` runs on pushes to `main` and on pull
+`.github/workflows/trade-ledger.yml` runs on pushes to `main` and on pull
 requests that touch the app, packaging, docs or specs:
 
 1. `npm ci`

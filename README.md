@@ -236,5 +236,5 @@ npm run test:e2e       # Playwright chromium (builds + boots the real server)
 npm run test:docker    # compose config + real Docker smoke
 ```
 
-`.github/workflows/ibkr-journal.yml` runs the same gates on Node 22.19.0 for
+`.github/workflows/trade-ledger.yml` runs the same gates on Node 22.19.0 for
 changes to the app, packaging, docs and specs. No release tooling is required.

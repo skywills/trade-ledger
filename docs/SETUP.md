@@ -335,7 +335,7 @@ npm run test:docker    # compose config check + real Docker smoke
 npm run test:build-smoke   # build then smoke the compiled server + SIGTERM
 ```
 
-`.github/workflows/ibkr-journal.yml` runs the same gates on Node 22.19.0 for
+`.github/workflows/trade-ledger.yml` runs the same gates on Node 22.19.0 for
 changes to the app, packaging, docs and specs. No release tooling is required.
 
 
