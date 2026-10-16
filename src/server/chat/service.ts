@@ -110,6 +110,10 @@ function busy(thread: ChatThread): boolean {
 }
 
 export class ChatService {
+  hasActiveWork(): boolean {
+    return CLAIMS.size > 0 || IN_FLIGHT.size > 0 || OPENING.size > 0;
+  }
+
   readonly bus = new ThreadEventBus();
   private readonly limits: ChatLimits;
   private readonly now: () => Date;

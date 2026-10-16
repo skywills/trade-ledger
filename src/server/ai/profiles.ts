@@ -335,109 +335,127 @@ export async function saveProfile(
   expectedRevision: number | null,
 ): Promise<LlmProfile> {
   validateInput(input);
-  return write(store, () => {
-    if (expectedRevision === null) {
-      const existing = store.db
-        .prepare("SELECT id FROM llm_profiles WHERE name = ?")
-        .get(input.name) as { id: string } | undefined;
-      if (existing !== undefined) {
-        throw new AppError(
-          "PROFILE_NAME_EXISTS",
-          `A profile named "${input.name}" already exists.`,
-          409,
-        );
-      }
-      const id = randomUUID();
-      const enabled = input.enabled ?? true;
-      insertRow(
-        store,
-        {
-          name: input.name,
-          mode: input.mode,
-          provider: input.provider,
-          protocol: input.protocol,
-          endpoint: input.endpoint,
-          modelId: input.modelId,
-          contextWindow: input.contextWindow,
-          maxTokens: input.maxTokens,
-          timeoutSeconds: input.timeoutSeconds,
-          supportsTools: input.supportsTools,
-          thinkingLevels: input.thinkingLevels,
-          credentialRef: input.credentialRef,
-          enabled,
-          pricing: input.pricing ?? null,
-        },
-        id,
-        1,
-      );
-      return toProfile(readRow(store, id) as ProfileRow);
-    }
+  return write(store, () => saveProfileRecord(store, input, expectedRevision));
+}
 
-    if (typeof input.id !== "string" || input.id === "") {
-      throw new AppError(
-        "INVALID_INPUT",
-        "An id is required to update a profile.",
-        400,
-      );
-    }
-    const current = readRow(store, input.id);
-    if (current === undefined) {
-      throw new AppError(
-        "PROFILE_NOT_FOUND",
-        `No profile exists for id ${input.id}.`,
-        404,
-      );
-    }
-    if (current.revision !== expectedRevision) {
-      throw new AppError(
-        "STALE_INPUT",
-        "The profile changed since it was read; reload before saving.",
-        409,
-      );
-    }
-    const duplicate = store.db
-      .prepare("SELECT id FROM llm_profiles WHERE name = ? AND id <> ?")
-      .get(input.name, input.id) as { id: string } | undefined;
-    if (duplicate !== undefined) {
+/** Imports the whole file atomically; duplicate names never overwrite profiles. */
+export async function importProfiles(
+  store: Store,
+  inputs: ProfileInput[],
+): Promise<number> {
+  for (const input of inputs) validateInput(input);
+  return write(store, () => {
+    for (const input of inputs) saveProfileRecord(store, input, null);
+    return inputs.length;
+  });
+}
+
+function saveProfileRecord(
+  store: Store,
+  input: ProfileInput,
+  expectedRevision: number | null,
+): LlmProfile {
+  if (expectedRevision === null) {
+    const existing = store.db
+      .prepare("SELECT id FROM llm_profiles WHERE name = ?")
+      .get(input.name) as { id: string } | undefined;
+    if (existing !== undefined) {
       throw new AppError(
         "PROFILE_NAME_EXISTS",
         `A profile named "${input.name}" already exists.`,
         409,
       );
     }
-    const revision = current.revision + 1;
-    const enabled = input.enabled ?? current.enabled === 1;
-    store.db
-      .prepare(
-        `UPDATE llm_profiles SET
+    const id = randomUUID();
+    const enabled = input.enabled ?? true;
+    insertRow(
+      store,
+      {
+        name: input.name,
+        mode: input.mode,
+        provider: input.provider,
+        protocol: input.protocol,
+        endpoint: input.endpoint,
+        modelId: input.modelId,
+        contextWindow: input.contextWindow,
+        maxTokens: input.maxTokens,
+        timeoutSeconds: input.timeoutSeconds,
+        supportsTools: input.supportsTools,
+        thinkingLevels: input.thinkingLevels,
+        credentialRef: input.credentialRef,
+        enabled,
+        pricing: input.pricing ?? null,
+      },
+      id,
+      1,
+    );
+    return toProfile(readRow(store, id) as ProfileRow);
+  }
+
+  if (typeof input.id !== "string" || input.id === "") {
+    throw new AppError(
+      "INVALID_INPUT",
+      "An id is required to update a profile.",
+      400,
+    );
+  }
+  const current = readRow(store, input.id);
+  if (current === undefined) {
+    throw new AppError(
+      "PROFILE_NOT_FOUND",
+      `No profile exists for id ${input.id}.`,
+      404,
+    );
+  }
+  if (current.revision !== expectedRevision) {
+    throw new AppError(
+      "STALE_INPUT",
+      "The profile changed since it was read; reload before saving.",
+      409,
+    );
+  }
+  const duplicate = store.db
+    .prepare("SELECT id FROM llm_profiles WHERE name = ? AND id <> ?")
+    .get(input.name, input.id) as { id: string } | undefined;
+  if (duplicate !== undefined) {
+    throw new AppError(
+      "PROFILE_NAME_EXISTS",
+      `A profile named "${input.name}" already exists.`,
+      409,
+    );
+  }
+  const revision = current.revision + 1;
+  const enabled = input.enabled ?? current.enabled === 1;
+  store.db
+    .prepare(
+      `UPDATE llm_profiles SET
            name = ?, mode = ?, provider_adapter = ?, protocol = ?,
            base_url = ?, model_id = ?, context_limit = ?, output_limit = ?,
            capabilities_json = ?, credential_reference = ?, timeout_ms = ?,
            revision = ?, enabled = ?
          WHERE id = ?`,
-      )
-      .run(
-        input.name,
-        input.mode,
-        input.provider,
-        input.protocol,
-        input.endpoint,
-        input.modelId,
-        input.contextWindow,
-        input.maxTokens,
-        JSON.stringify({
-          supportsTools: input.supportsTools,
-          thinkingLevels: input.thinkingLevels,
-          pricing: input.pricing ?? null,
-        }),
-        input.credentialRef,
-        input.timeoutSeconds * 1000,
-        revision,
-        enabled ? 1 : 0,
-        input.id,
-      );
-    return toProfile(readRow(store, input.id) as ProfileRow);
-  });
+    )
+    .run(
+      input.name,
+      input.mode,
+      input.provider,
+      input.protocol,
+      input.endpoint,
+      input.modelId,
+      input.contextWindow,
+      input.maxTokens,
+      JSON.stringify({
+        supportsTools: input.supportsTools,
+        thinkingLevels: input.thinkingLevels,
+        pricing: input.pricing ?? null,
+      }),
+      input.credentialRef,
+      input.timeoutSeconds * 1000,
+      revision,
+      enabled ? 1 : 0,
+      input.id,
+    );
+  return toProfile(readRow(store, input.id) as ProfileRow);
 }
 
 export interface SelectDefaultOptions {

@@ -157,3 +157,33 @@ test("stops an active reply from the composer", async ({
     "Stopped.",
   );
 });
+
+
+test("renames and deletes a conversation from its header", async ({ page, request, baseURL }) => {
+  inference = await startInferenceServer({ mode: "tool-call", planGateTool: "get_pnl_summary", plan: [{ kind: "text", text: "Ready." }] });
+  await configureModel(request, baseURL ?? "", inference.url);
+  await page.goto("/chat");
+  await page.getByTestId("composer-input").fill("Conversation to manage");
+  await page.getByTestId("composer-send").click();
+  await expect(page.getByTestId("message-assistant").last()).toContainText("Ready.");
+  const threadUrl = page.url();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.getByRole("button", { name: "Rename conversation", exact: true }).click();
+  await page.getByRole("textbox", { name: "Conversation title" }).fill("My renamed conversation");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "Save title", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Rename conversation", exact: true })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "My renamed conversation" })).toBeVisible();
+  await expect(page.getByTestId("thread-list")).toContainText("My renamed conversation");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "My renamed conversation" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete conversation", exact: true }).click();
+  await page.getByRole("button", { name: "Keep conversation", exact: true }).click();
+  await expect(page).toHaveURL(threadUrl);
+  await page.getByRole("button", { name: "Delete conversation", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm delete", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByTestId("thread-list")).not.toContainText("My renamed conversation");
+  await page.goto(threadUrl);
+  await expect(page.getByRole("alert")).toContainText("No chat thread exists");
+});

@@ -7,6 +7,7 @@ import { ProposalList } from "../review/ProposalList.js";
 import { Composer } from "./Composer.js";
 import { InteractionCard } from "./InteractionCard.js";
 import { MessageItem } from "./MessageItem.js";
+import { ThreadActions } from "./ThreadActions.js";
 import {
   messageText,
   messageTools,
@@ -14,7 +15,13 @@ import {
 } from "./threadController.js";
 import { useThread } from "./useThread.js";
 
-function ThreadHeader({ thread }: { thread: ThreadDetailDto["thread"] }) {
+function ThreadHeader({
+  thread,
+  onChanged,
+}: {
+  thread: ThreadDetailDto["thread"];
+  onChanged: () => void;
+}) {
   const tokens = thread.usage.generatedTokens;
   return (
     <header className="thread-header">
@@ -25,6 +32,7 @@ function ThreadHeader({ thread }: { thread: ThreadDetailDto["thread"] }) {
           {tokens > 0 ? ` · ${tokens.toLocaleString("en-US")} tokens` : ""}
         </p>
       </div>
+      <ThreadActions thread={thread} onChanged={onChanged} />
     </header>
   );
 }
@@ -139,7 +147,13 @@ export function ThreadView({
   const pending = state.pending;
   return (
     <section className="thread-view">
-      <ThreadHeader thread={thread} />
+      <ThreadHeader
+        thread={thread}
+        onChanged={() => {
+          void reload();
+          onThreadChanged();
+        }}
+      />
       <TurnAnnouncer running={running} />
       <MessageList state={state} detail={state.detail} />
       {runs

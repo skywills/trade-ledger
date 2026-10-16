@@ -62,6 +62,12 @@ function toRecord(row: JobRow): JobRecord {
  * can activate a partial result.
  */
 export class JobService {
+  private readonly activeWork = new Set<Id>();
+
+  hasActiveWork(): boolean {
+    return this.activeWork.size > 0;
+  }
+
   private readonly controllers = new Map<Id, AbortController>();
 
   constructor(
@@ -84,6 +90,7 @@ export class JobService {
 
   register(jobId: Id, controller: AbortController): void {
     this.controllers.set(jobId, controller);
+    this.activeWork.add(jobId);
   }
 
   progress(jobId: Id, progress: string): Promise<void> {
@@ -96,6 +103,7 @@ export class JobService {
 
   finish(jobId: Id, status: string, error?: string): Promise<void> {
     this.controllers.delete(jobId);
+    this.activeWork.delete(jobId);
     return write(this.store, () => {
       this.store.db
         .prepare(
@@ -114,6 +122,7 @@ export class JobService {
    */
   finishIfRunning(jobId: Id, status: string, error?: string): Promise<boolean> {
     this.controllers.delete(jobId);
+    this.activeWork.delete(jobId);
     return write(this.store, () => {
       const result = this.store.db
         .prepare(
