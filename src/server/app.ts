@@ -20,6 +20,7 @@ import { recoverChatThreads } from "./chat/threads.js";
 import type { AppConfig } from "./config.js";
 import { createOriginGuard } from "./http/origin.js";
 import { registerAnalysisRoutes } from "./http/routes-analysis.js";
+import { registerAnalyticsRoutes } from "./http/routes-analytics.js";
 import { registerChatRoutes } from "./http/routes-chat.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
@@ -247,6 +248,7 @@ export async function createApp(
 
     await registerImportRoutes(app, store);
     await registerJournalRoutes(app, store);
+    await registerAnalyticsRoutes(app, store);
     await registerReviewRoutes(app, store);
     await registerJobRoutes(app, store, jobs, scheduler);
     await registerModelRoutes(app, store, secrets);

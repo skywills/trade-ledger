@@ -29,7 +29,7 @@ const Drill = {
   date: Day.optional(),
   expectedBuildId: z.string().min(1).optional(),
 };
-function dateOrder(q: { from?: string; to?: string }) {
+function dateOrder(q: { from?: string | undefined; to?: string | undefined }) {
   return !q.from || !q.to || q.from <= q.to;
 }
 export const AnalyticsQuerySchema = z
@@ -230,3 +230,25 @@ export const AnalyticsResponseSchema = ProvenanceSchema.extend({
   }),
 });
 export type AnalyticsResponse = z.infer<typeof AnalyticsResponseSchema>;
+const DetailMeta = {
+  ...ProvenanceSchema.shape,
+  page: Count,
+  pageSize: Count,
+  total: Count,
+  filters: DetailQuerySchema,
+};
+export const AnalyticsDetailsResponseSchema = z.discriminatedUnion("kind", [
+  z.object({
+    ...DetailMeta,
+    kind: z.literal("strategies"),
+    items: z.array(StrategyResultSchema),
+  }),
+  z.object({
+    ...DetailMeta,
+    kind: z.literal("transactions"),
+    items: z.array(AnalyticsExecutionSchema),
+  }),
+]);
+export type AnalyticsDetailsResponse = z.infer<
+  typeof AnalyticsDetailsResponseSchema
+>;

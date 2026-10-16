@@ -20,7 +20,12 @@ export function parseAnalyticsQuery(raw: unknown): AnalyticsQuery {
   return parse(AnalyticsQuerySchema, raw);
 }
 function validateDrill(
-  q: { scope: string; outcome?: string; group?: string; groupBy?: string },
+  q: {
+    scope: string;
+    outcome?: string | undefined;
+    group?: string | undefined;
+    groupBy?: string | undefined;
+  },
   kind: string,
 ) {
   if (
