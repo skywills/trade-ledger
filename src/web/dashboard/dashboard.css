@@ -574,3 +574,314 @@
 .dashboard .table-scroll {
   max-width: 100%;
 }
+.dashboard-export {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.dashboard-export-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.dashboard-export select {
+  max-width: 100%;
+  font-size: var(--text-sm);
+}
+.dashboard-export-error {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  color: var(--danger);
+  text-align: right;
+  margin: 0;
+}
+.dashboard-report-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.dashboard-report-heading h3 {
+  font-size: var(--text-xl);
+  margin: var(--space-2) 0;
+}
+.dashboard-report-heading p {
+  margin: var(--space-2) 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.dashboard-report-provenance {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-6);
+  overflow-wrap: anywhere;
+}
+.dashboard-print-button {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  white-space: nowrap;
+}
+.dashboard-notes-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.dashboard-notes-label textarea {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  box-sizing: border-box;
+  font: inherit;
+}
+.dashboard-print-notes {
+  display: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dashboard-report-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-6);
+}
+.dashboard-report-facts dt {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.dashboard-report-facts dd {
+  margin: var(--space-2) 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-report .dashboard-panel > h3 {
+  margin-top: 0;
+}
+.dashboard-report li {
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-2);
+  color: var(--text-muted);
+}
+@media (max-width: 640px) {
+  .dashboard-report-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .dashboard-report-facts {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-export {
+    justify-content: start;
+  }
+  .dashboard-export-choice {
+    min-width: 0;
+    flex: 1;
+  }
+  .dashboard-export-error {
+    text-align: left;
+  }
+}
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  html:root {
+    color-scheme: light;
+    --bg: #fff;
+    --surface: #fff;
+    --surface-2: #f1f5f9;
+    --text: #0f172a;
+    --text-muted: #475569;
+    --border: #cbd5e1;
+    --border-strong: #64748b;
+    --accent: #4338ca;
+    --accent-soft: #eef2ff;
+    --success: #166534;
+    --danger: #b91c1c;
+  }
+  html body {
+    background: #fff;
+    color: #0f172a;
+    font-size: 10pt;
+  }
+  .app-shell > .app-header,
+  .skip-link,
+  .dashboard-title,
+  .dashboard-tabs,
+  .dashboard-filters,
+  .dashboard-export,
+  .dashboard-provenance,
+  .dashboard-report button,
+  .dashboard-report .dashboard-chart-navigator,
+  .dashboard-report .dashboard-chart-data,
+  .dashboard-print-button,
+  .dashboard-notes-label,
+  .dashboard-notes-help {
+    display: none;
+  }
+  .app-shell .app-main {
+    padding: 0;
+    max-width: none;
+    width: 100%;
+  }
+  .app-shell {
+    min-height: 0;
+  }
+  .dashboard {
+    max-width: none;
+    width: 100%;
+  }
+  .dashboard-report {
+    display: block;
+  }
+  .dashboard-report-heading {
+    display: block;
+  }
+  .dashboard-report-heading h3 {
+    font-size: 20pt;
+  }
+  .dashboard-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .dashboard-kpi {
+    padding: 12px;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+  .dashboard-kpi > strong {
+    font-size: 16pt;
+  }
+  .dashboard-kpi-label {
+    font-size: 9pt;
+  }
+  .dashboard-kpi-detail {
+    font-size: 8pt;
+  }
+  .dashboard-secondary-kpis {
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .dashboard-secondary-kpis strong {
+    font-size: 12pt;
+  }
+  .dashboard-charts-grid,
+  .dashboard-two-column {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .dashboard-panel {
+    padding: 12px;
+    margin-bottom: 16px;
+    break-inside: avoid;
+  }
+  .dashboard-panel-heading h3 {
+    font-size: 11pt;
+  }
+  .dashboard-panel table {
+    font-size: 9pt;
+    width: 100%;
+    table-layout: fixed;
+  }
+  .dashboard td,
+  .dashboard th {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding: 7px 4px;
+  }
+  .dashboard .table-scroll {
+    overflow: visible;
+    max-height: none;
+  }
+  .dashboard-panel thead {
+    display: table-header-group;
+  }
+  .dashboard-panel tr {
+    break-inside: avoid;
+  }
+  .dashboard-activity-strip {
+    break-inside: avoid;
+    padding: 12px;
+    margin-bottom: 16px;
+  }
+  .dashboard-activity-strip a,
+  .dashboard-panel-heading > a {
+    display: none;
+  }
+  .dashboard-print-notes {
+    display: block;
+  }
+  .dashboard-report a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .dashboard-report li {
+    font-size: 9pt;
+  }
+  .dashboard-report .dashboard-svg {
+    max-height: 160px;
+  }
+  .dashboard-report-facts {
+    gap: 12px;
+  }
+  .dashboard-review-notes {
+    break-inside: auto;
+  }
+}
+@media print {
+  .dashboard-report .table-scroll > table {
+    min-width: 0;
+    width: 100%;
+    table-layout: fixed;
+  }
+  .dashboard-report .table-scroll thead th {
+    position: static;
+    top: auto;
+    z-index: auto;
+  }
+  .dashboard-report .dashboard-sort,
+  .dashboard-report .dashboard-text-button {
+    display: inline;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+  }
+  .dashboard-report .dashboard-chart > .dashboard-text-button {
+    display: none;
+  }
+  .dashboard-report .dashboard-secondary-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .dashboard-report .table-scroll {
+    border: 0;
+    box-shadow: none;
+  }
+}
+.dashboard .table-scroll > table {
+  min-width: 480px;
+}
+.dashboard table[aria-label="Transaction details"] {
+  min-width: 1150px;
+}
+@media print {
+  .dashboard-report .dashboard-two-column {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-report .table-scroll > table {
+    min-width: 0;
+    table-layout: auto;
+  }
+  .dashboard-report td:not(:first-child) {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+}

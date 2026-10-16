@@ -1,9 +1,11 @@
 import { useEffect } from "react";
+import { ExportQuerySchema } from "../../shared/analytics.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { Link, useLocation } from "../navigation.js";
 import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
 import { DashboardFilters } from "./DashboardFilters.js";
+import { ExportButton } from "./ExportButton.js";
 import { Overview } from "./Overview.js";
 import {
   type DashboardView,
@@ -11,6 +13,7 @@ import {
   localToday,
   readDashboardQuery,
 } from "./query.js";
+import { Reports } from "./Reports.js";
 import "./dashboard.css";
 export function DashboardPage({ view }: { view: DashboardView }) {
   const { search } = useLocation();
@@ -27,6 +30,28 @@ export function DashboardPage({ view }: { view: DashboardView }) {
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
   }, [data, state, view]);
+  const exportDataset =
+    state.detail.kind === "strategies"
+      ? "strategies"
+      : state.detail.kind === "transactions"
+        ? "transactions"
+        : "summary";
+  const {
+    page: _page,
+    pageSize: _size,
+    kind: _kind,
+    sort: _sort,
+    direction: _direction,
+    ...exportDetail
+  } = state.detail;
+  const exportQuery = data
+    ? ExportQuerySchema.safeParse({
+        ...data.filters,
+        ...exportDetail,
+        dataset: exportDataset,
+        expectedBuildId: data.buildId ?? undefined,
+      })
+    : null;
   return (
     <section className="dashboard">
       <div className="dashboard-title">
@@ -57,6 +82,13 @@ export function DashboardPage({ view }: { view: DashboardView }) {
           </Link>
         ))}
       </nav>
+      {data?.buildId && exportQuery?.success && (
+        <ExportButton
+          key={search}
+          query={exportQuery.data}
+          dataset={exportDataset}
+        />
+      )}
       <DashboardFilters
         key={`${state.query.from}|${state.query.to}`}
         state={state}
@@ -106,7 +138,7 @@ export function DashboardPage({ view }: { view: DashboardView }) {
                   onRefresh={remote.reload}
                 />
               ) : (
-                <p>Trading report</p>
+                <Reports data={data} />
               )}
             </div>
           )}

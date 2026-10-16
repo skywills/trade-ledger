@@ -83,3 +83,28 @@ export function useAnalyticsDetails(query: DetailQuery) {
     AnalyticsDetailsResponseSchema,
   );
 }
+export async function downloadAnalyticsCsv(
+  query: import("../../shared/analytics.js").ExportQuery,
+): Promise<void> {
+  const response = await fetch(`/api/analytics/export?${queryString(query)}`);
+  if (!response.ok) {
+    const body = await response.json();
+    throw new ApiError(
+      body.code ?? "EXPORT_FAILED",
+      body.message ?? "Could not export analytics.",
+      response.status,
+    );
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const suggested = /filename="([a-zA-Z0-9_.-]+)"/.exec(
+    response.headers.get("content-disposition") ?? "",
+  )?.[1];
+  link.download = suggested ?? `trade-ledger-${query.dataset}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
