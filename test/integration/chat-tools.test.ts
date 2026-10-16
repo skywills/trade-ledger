@@ -1,13 +1,18 @@
 import type { EmbedderTool } from "@nathapp/nax-agent";
+import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { BuildScheduler } from "../../src/server/builds/service.js";
+import {
+  activeProjection,
+  BuildScheduler,
+} from "../../src/server/builds/service.js";
 import { journalTools } from "../../src/server/chat/tools/journal.js";
 import { pnlTools } from "../../src/server/chat/tools/pnl.js";
 import { proposalTools } from "../../src/server/chat/tools/proposals.js";
 import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
 import { statusTools } from "../../src/server/chat/tools/status.js";
 import { writeTools } from "../../src/server/chat/tools/writes.js";
+import { registerJournalRoutes } from "../../src/server/http/routes-journal.js";
 import {
   commitImport,
   listImports,
@@ -82,6 +87,65 @@ describe("journal read tools", () => {
       JSON.parse((await call(tools, "get_pnl_summary", {})).content).groups
         .length,
     ).toBeGreaterThan(0);
+  });
+
+  it("normalizes existing journal labels and alias searches while preserving broker transaction symbols", async () => {
+    const t = await createTestStore();
+    open.push(t);
+    await seedLedger(
+      t.store,
+      new TextEncoder().encode(
+        new TextDecoder().decode(fixtures.spread).replaceAll("AXON", "BRK B"),
+      ),
+    );
+    const active = activeProjection(t.store);
+    if (!active.buildId || !active.projection)
+      throw new Error("Missing seeded build");
+    // Simulate a projection persisted by an older version of the application.
+    t.store.db
+      .prepare("UPDATE strategy_views SET description = ? WHERE build_id = ?")
+      .run("BRK B bull put spread", active.buildId);
+    const tools = journalTools(toolContext(t.store));
+    const app = Fastify();
+    await registerJournalRoutes(app, t.store);
+    try {
+      const journal = (await app.inject("/api/journal")).json();
+      expect(journal.items[0].description).toBe("BRK.B bull put spread");
+      const id = journal.items[0].id as string;
+      const detail = (await app.inject(`/api/strategies/${id}`)).json();
+      expect(detail.strategy.description).toBe("BRK.B bull put spread");
+      const raw = (await app.inject("/api/transactions")).json();
+      expect(raw.items[0].instrument).toMatchObject({
+        symbol: "BRK B",
+        underlying: "BRK B",
+        conid: "9000470",
+        key: "conid:9000470",
+      });
+      for (const symbol of ["BRK B", "BRK.B", "BRK-B"]) {
+        const listed = JSON.parse(
+          (await call(tools, "list_strategies", { symbol })).content,
+        );
+        expect(listed.total).toBe(1);
+        expect(listed.items[0].description).toBe("BRK.B bull put spread");
+        const transactions = JSON.parse(
+          (await call(tools, "list_transactions", { symbol })).content,
+        );
+        expect(transactions.total).toBe(4);
+        expect(transactions.items[0]).toMatchObject({
+          symbol: "BRK B",
+          underlying: "BRK.B",
+        });
+      }
+      const chatDetail = JSON.parse(
+        (await call(tools, "get_strategy", { strategyId: id })).content,
+      );
+      expect(chatDetail.strategy.description).toBe("BRK.B bull put spread");
+      expect(
+        activeProjection(t.store).projection?.strategies[0]?.description,
+      ).toBe("BRK B bull put spread");
+    } finally {
+      await app.close();
+    }
   });
 
   it("returns isError for bad input and unknown ids, never throws", async () => {

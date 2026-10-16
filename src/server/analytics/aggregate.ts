@@ -5,6 +5,7 @@ import type {
   StrategyResult,
 } from "../../shared/analytics.js";
 import type { Strategy } from "../../shared/domain.js";
+import { normalizeStrategyDescription } from "../../shared/symbols.js";
 import { dailySeries, Money, summarizePerformance } from "./performance.js";
 import {
   type AnalyticsScope,
@@ -20,6 +21,7 @@ export function strategyResult(
 ): StrategyResult {
   return {
     ...s,
+    description: normalizeStrategyDescription(s.description),
     selectedPnl: selectedPnl(s, scope.query),
     underlying: scope.attribution.get(s.id)?.underlying ?? "__unknown__",
     assetClass: scope.attribution.get(s.id)?.assetClass ?? "__unknown__",

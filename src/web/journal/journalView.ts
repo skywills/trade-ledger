@@ -1,3 +1,5 @@
+import { normalizeStrategyDescription } from "../../shared/symbols.js";
+
 /** Pure filter/sort helpers for the journal table (no React, no I/O). */
 
 export type SortKey =
@@ -45,12 +47,17 @@ export function filterStrategies<T extends JournalRowLike>(
   rows: readonly T[],
   filters: JournalFilters,
 ): T[] {
-  const query = filters.query.trim().toLowerCase();
+  const query = normalizeStrategyDescription(
+    filters.query.trim(),
+  ).toLowerCase();
   return rows.filter(
     (row) =>
       (filters.currency === "" || row.currency === filters.currency) &&
       (filters.status === "" || row.status === filters.status) &&
-      (query === "" || row.description.toLowerCase().includes(query)),
+      (query === "" ||
+        normalizeStrategyDescription(row.description)
+          .toLowerCase()
+          .includes(query)),
   );
 }
 

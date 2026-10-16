@@ -1,4 +1,5 @@
 import type { TransactionSummary } from "../../shared/analytics.js";
+import { normalizeSymbol } from "../../shared/symbols.js";
 import { sum } from "./performance.js";
 import type { AnalyticsScope } from "./scope.js";
 export function summarizeTransactions(
@@ -22,7 +23,9 @@ export function summarizeTransactions(
   };
   return {
     executions: rows.length,
-    tradedSymbols: new Set(rows.map((e) => e.instrument.symbol)).size,
+    tradedSymbols: new Set(
+      rows.map((e) => normalizeSymbol(e.instrument.symbol)),
+    ).size,
     netCash: sum(rows.map((e) => e.netCash)),
     commissions: covered("commission"),
     taxes: covered("taxes"),

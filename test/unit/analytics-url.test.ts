@@ -65,3 +65,29 @@ it("clears detail-only scopes when leaving Analysis while retaining membership f
     ).toEqual({});
   }
 });
+
+it.each(["BRK B", "BRK.B", "BRK-B"])(
+  "normalizes saved %s filters and drill-down groups for canonical dashboard controls",
+  (alias) => {
+    const params = new URLSearchParams({
+      symbol: alias,
+      underlying: `value:${alias}`,
+      kind: "transactions",
+      groupBy: "underlying",
+      group: `value:${alias}`,
+    });
+    const state = readDashboardQuery(`?${params}`, "analysis", "2026-10-16");
+    expect(state.query).toMatchObject({
+      symbol: "BRK.B",
+      underlying: "value:BRK.B",
+    });
+    expect(state.detail.group).toBe("value:BRK.B");
+    const nextUrl = new URL(
+      dashboardHref("analysis", state),
+      "http://localhost",
+    );
+    expect(nextUrl.searchParams.get("symbol")).toBe("BRK.B");
+    expect(nextUrl.searchParams.get("underlying")).toBe("value:BRK.B");
+    expect(nextUrl.searchParams.get("group")).toBe("value:BRK.B");
+  },
+);

@@ -665,3 +665,28 @@ test("chart data tables preserve non-zero amounts smaller than a currency minor 
     page.getByRole("table", { name: "Cumulative realized P&L data" }),
   ).toContainText("0.001");
 });
+
+test("saved Berkshire alias URLs select canonical dashboard filters", async ({ page }) => {
+  const canonical = {
+    ...data,
+    filters: { ...data.filters, symbol: "BRK.B", underlying: "value:BRK.B" },
+    options: {
+      ...data.options,
+      symbols: ["BRK.B"],
+      underlyings: [{ key: "value:BRK.B", label: "BRK.B" }],
+    },
+  };
+  await page.route("**/api/analytics?*", (route) => route.fulfill({ json: canonical }));
+  for (const alias of ["BRK B", "BRK.B", "BRK-B"]) {
+    const params = new URLSearchParams({ currency: "USD", symbol: alias, underlying: `value:${alias}` });
+    const request = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/analytics");
+    await page.goto(`/dashboard/analysis?${params}`);
+    const sent = new URL((await request).url());
+    expect(sent.searchParams.get("symbol")).toBe("BRK.B");
+    expect(sent.searchParams.get("underlying")).toBe("value:BRK.B");
+    await expect(page.getByLabel("Symbol", { exact: true })).toHaveValue("BRK.B");
+    await expect(page.getByLabel("Underlying", { exact: true })).toHaveValue("value:BRK.B");
+    await expect(page.getByRole("button", { name: "Remove symbol filter" })).toContainText("BRK.B");
+    await expect(page.getByRole("button", { name: "Remove underlying filter" })).toContainText("BRK.B");
+  }
+});

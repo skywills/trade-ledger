@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { Execution } from "../../../shared/domain.js";
 import { AppError } from "../../../shared/errors.js";
 import {
+  normalizeStrategyDescription,
+  normalizeSymbol,
+  underlyingSymbol,
+} from "../../../shared/symbols.js";
+import {
   activeBuildMeta,
   activeLedgerSnapshot,
   activeProjection,
@@ -81,6 +86,10 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
         const q = ListStrategies.parse(input ?? {});
         const active = activeProjection(ctx.store);
         const rows = (active.projection?.strategies ?? [])
+          .map((s) => ({
+            ...s,
+            description: normalizeStrategyDescription(s.description),
+          }))
           .filter(
             (s) =>
               (q.status === undefined || s.status === q.status) &&
@@ -89,7 +98,11 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
           .filter(
             (s) =>
               q.symbol === undefined ||
-              s.description.toLowerCase().includes(q.symbol.toLowerCase()),
+              s.description
+                .toLowerCase()
+                .includes(
+                  normalizeStrategyDescription(q.symbol.trim()).toLowerCase(),
+                ),
           )
           .filter((s) => within(s.openingDate, q.from, q.to))
           .sort((a, b) =>
@@ -132,7 +145,10 @@ function getStrategyTool(ctx: ChatToolContext): ChatTool {
         return jsonResult({
           buildId: active.buildId,
           stale: active.stale,
-          strategy,
+          strategy: {
+            ...strategy,
+            description: normalizeStrategyDescription(strategy.description),
+          },
           allocations: (active.projection?.allocations ?? []).filter(
             (a) => a.strategyId === strategyId,
           ),
@@ -156,7 +172,7 @@ function transactionView(e: Execution) {
     key: e.key,
     date: e.date,
     symbol: e.instrument.symbol,
-    underlying: e.instrument.underlying,
+    underlying: underlyingSymbol(e.instrument),
     assetClass: e.instrument.assetClass,
     quantity: e.quantity,
     price: e.price,
@@ -194,7 +210,8 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
           .filter(
             (e) =>
               q.symbol === undefined ||
-              e.instrument.symbol.toUpperCase() === q.symbol.toUpperCase(),
+              normalizeSymbol(e.instrument.symbol).toUpperCase() ===
+                normalizeSymbol(q.symbol).toUpperCase(),
           )
           .filter((e) => within(e.date, q.from, q.to))
           .sort((a, b) => b.date.localeCompare(a.date));

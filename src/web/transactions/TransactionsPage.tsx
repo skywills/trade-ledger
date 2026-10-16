@@ -1,4 +1,5 @@
 import { formatMoney } from "../../shared/money.js";
+import { underlyingSymbol } from "../../shared/symbols.js";
 import { TransactionsEnvelope, useJson } from "../api.js";
 import { ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link } from "../navigation.js";
@@ -29,6 +30,7 @@ export function TransactionsPage() {
             <tr>
               <th>Date</th>
               <th>Symbol</th>
+              <th>Underlying</th>
               <th>Asset class</th>
               <th>Action</th>
               <th>Event</th>
@@ -51,6 +53,7 @@ export function TransactionsPage() {
                 <tr key={execution.key}>
                   <td>{execution.date}</td>
                   <td>{execution.instrument.symbol}</td>
+                  <td>{underlyingSymbol(execution.instrument)}</td>
                   <td>{execution.instrument.assetClass}</td>
                   <td>{execution.action}</td>
                   <td>{execution.event}</td>
