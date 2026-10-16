@@ -368,6 +368,136 @@ describe("proposal acceptance and rejection", () => {
     expect(decisionWatermark(store)).toBe(1);
   });
 
+  it("rebuilds accepted close bindings into existing strategy IDs without duplicates", async () => {
+    const store = await testStore();
+    const rows = [
+      {
+        id: "OPEN-A",
+        time: "2025-04-01 10:00:00",
+        quantity: "2",
+        cash: "-100",
+        price: "50",
+        pnl: "0",
+        role: "O",
+      },
+      {
+        id: "OPEN-B",
+        time: "2025-04-01 10:00:00",
+        quantity: "2",
+        cash: "-101",
+        price: "50.5",
+        pnl: "0",
+        role: "O",
+      },
+      {
+        id: "CLOSE-A",
+        time: "2025-04-01 11:00:00",
+        quantity: "-2",
+        cash: "110.5",
+        price: "55.25",
+        pnl: "10.5",
+        role: "C",
+      },
+      {
+        id: "CLOSE-B",
+        time: "2025-04-15 10:00:00",
+        quantity: "-2",
+        cash: "121.25",
+        price: "60.625",
+        pnl: "20.25",
+        role: "C",
+      },
+    ];
+    const { buildId, ledger } = await seedFrom(
+      store,
+      buildExecutionTable(
+        rows.map((row) =>
+          executionRow({
+            ClientAccountID: "SIM-LOTS",
+            AssetClass: "STK",
+            Symbol: "TEST",
+            Conid: "TEST",
+            CurrencyPrimary: "USD",
+            Multiplier: "1",
+            TradeDate: row.time.slice(0, 10),
+            DateTime: row.time,
+            Quantity: row.quantity,
+            NetCash: row.cash,
+            FifoPnlRealized: row.pnl,
+            TradePrice: row.price,
+            "Notes/Codes": row.role,
+            IBExecID: row.id,
+            TradeID: row.id,
+            IBOrderID: row.id,
+            BrokerageOrderID: row.id,
+          }),
+        ),
+      ),
+    );
+    const initial = activeProjection(store).projection;
+    if (!initial) throw new Error("No initial projection");
+    expect(
+      initial.issues.filter((issue) => issue.code === "AMBIGUOUS_CLOSE"),
+    ).toHaveLength(2);
+    const targets = ["A", "B"].map((suffix) => {
+      const opening = ledger.executions.find(
+        (e) => e.brokerIds.IBExecID === `OPEN-${suffix}`,
+      );
+      const closing = ledger.executions.find(
+        (e) => e.brokerIds.IBExecID === `CLOSE-${suffix}`,
+      );
+      const strategyId = initial.allocations.find(
+        (a) => a.executionKey === opening?.key,
+      )?.strategyId;
+      const source = closing?.sources[0];
+      if (!strategyId || !source) throw new Error("Missing stock execution");
+      return { strategyId, source };
+    });
+    const run = await seededRun(
+      store,
+      buildId,
+      targets.map((target) => ({
+        kind: "group_explicit",
+        strategyIds: [target.strategyId],
+        sources: [target.source],
+        payload: target,
+      })),
+    );
+    for (const proposal of run.proposals) {
+      await acceptProposal(
+        store,
+        run.id,
+        proposal.id,
+        decisionWatermark(store),
+      );
+      const result = await rebuild(store, {
+        mode: "full",
+        parserVersion: LEDGER_PARSER_VERSION,
+        algorithmVersion: ALGORITHM_VERSION,
+        signal: new AbortController().signal,
+      });
+      expect(result.status).toBe("active");
+      const projected = activeProjection(store).projection;
+      expect(projected?.issues).toEqual([]);
+      expect(projected?.strategies.map((s) => s.id).sort()).toEqual(
+        targets.map((t) => t.strategyId).sort(),
+      );
+      expect(projected?.strategies.map((s) => s.status)).toEqual([
+        "closed",
+        "closed",
+      ]);
+      expect(
+        projected?.strategies
+          .flatMap((s) => s.positions)
+          .map((p) => p.quantity),
+      ).toEqual(["0", "0"]);
+      expect(projected?.strategies.map((s) => s.brokerPnl).sort()).toEqual([
+        "10.5",
+        "20.25",
+      ]);
+    }
+  });
+
   it("records a retained rejection carrying the evidence hash", async () => {
     const store = await testStore();
     const { buildId, execution } = await seedLedgerOnce(store);

@@ -8,13 +8,13 @@ import { ApiError, requestJson } from "../api.js";
 import { ErrorPanel } from "../components.js";
 
 async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
-  const expectedWatermark = run.evidence.watermark;
+  // Evidence is immutable; let the server use the current decision watermark.
   if (proposalId !== null) {
     await requestJson(
       `/api/analysis/${run.id}/accept`,
       AcceptAnalysisResponseSchema,
       "POST",
-      { proposalId, expectedWatermark },
+      { proposalId },
     );
     return;
   }
@@ -22,7 +22,7 @@ async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
     `/api/analysis/${run.id}/reject`,
     RejectAnalysisResponseSchema,
     "POST",
-    { reason: "Rejected in chat", expectedWatermark },
+    { reason: "Rejected in chat" },
   );
 }
 
