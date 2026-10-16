@@ -1,4 +1,4 @@
-# Implementation status — IBKR trade journal
+# Implementation status — TradeLedger
 
 Updated: 2026-10-15
 

@@ -1,4 +1,4 @@
-# IBKR Trade Journal — Setup Guide
+# TradeLedger — Setup Guide
 
 This guide walks through installing and running the journal end to end: from a
 clean checkout to importing an IBKR Flex CSV and reviewing strategies. It is
@@ -45,11 +45,11 @@ Stop it with `Ctrl-C`; the named volume keeps your data between runs.
 ### Run the image without Compose
 
 ```bash
-docker build -t ibkr-trade-journal .
+docker build -t trade-ledger .
 docker run --rm -p 127.0.0.1:3000:3000 \
   -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
-  ibkr-trade-journal
+  trade-ledger
 ```
 
 The container runs as UID/GID `1000` (non-root). Static assets live inside the
@@ -237,7 +237,7 @@ configured/missing status, never its value.
 docker run --rm -p 127.0.0.1:3000:3000 -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
   -e MY_PROVIDER_KEY=sk-... \
-  ibkr-trade-journal
+  trade-ledger
 # then set the profile credential ref to: env:MY_PROVIDER_KEY
 ```
 
@@ -247,7 +247,7 @@ docker run --rm -p 127.0.0.1:3000:3000 -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
   -e JOURNAL_SECRETS_DIR=/secrets \
   -v "$PWD/secrets:/secrets:ro" \
-  ibkr-trade-journal
+  trade-ledger
 # then set the profile credential ref to: file:/secrets/key
 ```
 

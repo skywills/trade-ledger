@@ -1,7 +1,8 @@
 # Dashboard and transaction analytics
 
 Date: 2026-10-16
-Status: design prepared for written-spec review; implementation has not started.
+Status: reviewed for implementation planning at the user's request; implementation has not started.
+Product: TradeLedger (package/repository slug: trade-ledger).
 
 ## Intent and agreed scope
 
@@ -29,9 +30,15 @@ P&L basis is Broker reported (default) or Reconstructed. Each closed strategy co
 
 URL query parameters preserve period bounds, currency, basis, and Analysis filters when switching views or using browser back. Analysis adds symbol/underlying, strategy type, and asset class, with clear filter chips and Reset. Strategy membership filters use allocated executions. A multi-underlying strategy belongs to one explicit Multi-underlying bucket; missing attribution belongs to Unknown. Do not allocate its full P&L to each constituent symbol or asset class.
 
+Use separate exact-match symbol and underlying controls. Symbol/asset-class filters match any allocated execution for strategy selection; underlying filters match the strategy's exclusive attribution bucket. Transactions match their own symbol/asset class and their execution underlying (falling back to symbol). When strategy type or underlying bucket is selected, transactions must also belong to an allocated strategy matching that selection; deduplicate execution keys when allocations overlap. Without these strategy-specific filters, include unallocated executions. Show the excluded-unallocated count when strategy-specific filters are active. Multi-asset strategies use a Multi-asset bucket if grouped by asset class. Filter choices come from the full snapshot, independent of the date/currency selection, so choices do not disappear during filtering.
+
+Preset periods are calculated from the browser's local calendar date and encoded as explicit bounds; reports display those bounds. All time has unbounded query dates, while chart extents use the earliest/latest valid date in the currency/membership scope. Use an ISO currency code validated against available snapshot currencies, not a hardcoded USD default. With no active build or no available currencies in an empty active snapshot, omitted currency is allowed and yields an explicit empty response. Unknown parameters are rejected with 400 rather than silently ignored.
+
 Closed-strategy performance is attributed in full to closeDate, even if some executions occurred outside the selected period. Transactions use execution.date independently. Explain this distinction next to transaction analytics; their cashflow is not the closed-strategy P&L for that period.
 
 Open and partially closed counts describe the current active build, filtered by currency and relevant Analysis membership filters, and are labeled Current open trades. The date range does not turn these into historical positions. Report pages label them separately as current context; do not imply period-end exposure. Historical position reconstruction is excluded.
+
+Current-open card drill-down explicitly uses a current-open scope and ignores period bounds. Unresolved and unknown-close-date disclosures have their own status scopes. Performance charts use a closed scope and the chosen period. Closed strategies with null/invalid close dates are excluded even for All time, counted separately, and inspectable through an undated-closed drill-down.
 
 ## Metric contract
 
@@ -56,6 +63,10 @@ All financial arithmetic, comparisons, and aggregation use decimal.js on the ser
 | Traded symbols | Distinct instrument.symbol values in scoped executions. Separate from the underlying breakdown used for strategy performance. |
 
 Broker-estimated allocation values must be disclosed when contributing to broker P&L; use allocation pnlEstimated metadata. Incomplete or unresolved evidence remains visible through coverage/warning indicators. Do not suppress available broker values solely because reconstructed values are unavailable. Do not infer unrealized P&L, account balance, capital at risk, annualized returns, or return percentages without the required evidence.
+
+Rate values cross the API as decimal strings: winRatePct uses percent units (481 / 679 * 100), and profitFactor uses ratio units with a separate finite/no-losses/unavailable state. Use at least 40 significant digits for local analytics decimal operations without changing global Decimal settings. Repeating division is returned to 12 decimal places; UI rates display two places with half-up rounding.
+
+Days/months containing no closed trades contribute zero change; groups with closed trades but no eligible P&L have null P&L and a missing-data indicator. Partially covered buckets show their available subtotal and coverage. The cumulative series is explicitly based on available values and carries coverage notices; an all-unavailable series stays unavailable. Do not connect a missing-only bucket as if it proved zero P&L. Do not synthesize an unbounded daily calendar for long histories: return dated activity points, aggregate chart rendering above 1,000 points, and preserve full exact values in the table/download. Breakdowns use deterministic amount/key ordering, and tied recent/best/worst records use date then strategy ID.
 
 ## Overview view
 
@@ -108,11 +119,13 @@ Add src/server/analytics/ for pure scope/aggregation helpers and a snapshot read
 
 Proposed read API:
 
-- GET /api/analytics: summary, full-scope grouped series/breakdowns, filter options, provenance, coverage, and recent/best/worst strategy summaries. Validated filters: from, to, currency, basis, symbol, strategyType, assetClass. Limit top/bottom summaries to ten; grouped tables retain all categories and can expose their own view-all control.
-- GET /api/analytics/details: validated kind=strategies|transactions, matching shared filters plus outcome/group/date drill-down, pagination, and allowlisted sort. Response includes scope and build/ledger provenance. Capture snapshot once per request; if a drill-down is requested for an old build, explicitly report a changed-build state and offer refresh instead of silently implying exact reconciliation.
+- GET /api/analytics: summary, full-scope grouped series/breakdowns, filter options, provenance, coverage, and recent/best/worst strategy summaries. Validated filters: from, to, currency, basis, symbol, underlying, strategyType, assetClass. Limit top/bottom summaries to ten; grouped tables retain all categories and can expose their own view-all control.
+- GET /api/analytics/details: validated kind=strategies|transactions, matching shared filters plus scope=closed|current-open|unresolved|undated-closed, outcome/group/date/event drill-down, pagination, and allowlisted sort. Reject scope/outcome combinations incompatible with kind. Response includes scope and build/ledger provenance. Capture snapshot once per request; if a drill-down is requested for an old build, return 409 ANALYTICS_BUILD_CHANGED and offer refresh instead of silently implying exact reconciliation.
 - GET /api/analytics/export: same validated scope plus dataset=summary|strategies|transactions. Export all matching records and their scope/provenance, reusing the same aggregation and detail-filter predicates. Add an optional expected build ID; reject mismatched builds with a refresh message.
 
 Read every dataset for a response from a single active build and its ledger association; leverage existing storage helpers after verifying that association. Analytics must never rebuild or mutate the journal. Invalid dates, currency, enum values, sorts, or pagination produce structured existing-style 400 errors. Unknown query parameters must not accidentally activate filters.
+
+Use a synchronous SQLite read transaction to capture the active projection, associated ledger, and staleness metadata consistently; do not hold the transaction while formatting CSV or awaiting network activity. Missing associated ledger for an existing build is a structured 500 ANALYTICS_SNAPSHOT_INVALID, not an empty portfolio. Expected-build validation applies to detail and export requests. Summary responses include generatedAt; no-build results include null build/ledger IDs. A full-scope summary CSV has one rectangular schema: section,key,metric,value,currency,from,to,basis,buildId,ledgerId,generatedAt,coverageKnown,coverageTotal. Strategies/transactions exports include their own per-row fields plus this common provenance. CSV follows the active detail drill-down when exporting a selected drill-down; it never inherits pagination.
 
 ## Loading, errors, and missing data
 
@@ -134,3 +147,7 @@ Reserve KPI/chart space while loading and announce completion context without sh
 ## Explicit limits
 
 No live market feed, order entry, unrealized valuation, FX conversion, account-equity reconstruction, historical open-position snapshots, AI-generated claims, scheduled delivery, or provider-backed PDF generation. The dense Analysis direction remains an analytics workspace. The unlabeled -140.60 is omitted until its meaning is supplied.
+
+## Design review record
+
+Reviewed 2026-10-16 before writing the implementation plan. Clarified filter membership, current-open/undated drill-downs, rate units, missing-data chart semantics, long-history rendering, snapshot failure/build-change behavior, and export provenance. Existing activeLedgerSnapshot already follows the active build's ledger_build_id. Existing Agent summarizePnl has different status/date semantics and remains unchanged; dashboard calculations receive dedicated tests. TradeLedger branding is already present in the working tree and must be preserved.

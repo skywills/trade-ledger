@@ -1,4 +1,4 @@
-# IBKR Trade Journal — Test Plan
+# TradeLedger — Test Plan
 
 This document describes how the journal is tested: the levels, the environments,
 the synthetic data, the commands, and the mapping from the design's acceptance

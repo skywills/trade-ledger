@@ -5,7 +5,7 @@ services:
   journal:
     build:
       context: .
-    image: ibkr-trade-journal:local
+    image: trade-ledger:local
     # Host port is bound to loopback only; put an authenticating reverse proxy
     # in front before exposing this to a network.
     ports:

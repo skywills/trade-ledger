@@ -1,4 +1,4 @@
-# IBKR Trade Journal
+# TradeLedger
 
 A single-user, local-first journal for IBKR Flex CSV exports. One production
 container serves the compiled React frontend and the Fastify API on the same
@@ -33,11 +33,11 @@ gateway. It starts no model server and holds no cloud key.
 Run the image directly:
 
 ```bash
-docker build -t ibkr-trade-journal .
+docker build -t trade-ledger .
 docker run --rm -p 127.0.0.1:3000:3000 \
   -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
-  ibkr-trade-journal
+  trade-ledger
 ```
 
 The container runs as UID/GID `1000` (non-root). Static assets live inside the

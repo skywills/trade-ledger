@@ -105,7 +105,7 @@ export function App() {
         Skip to main content
       </a>
       <header className="app-header">
-        <h1>IBKR Trade Journal</h1>
+        <h1>TradeLedger</h1>
         <nav aria-label="Primary">
           {NAV_ITEMS.map((item) => (
             <NavLink key={item.to} item={item} section={section} />
