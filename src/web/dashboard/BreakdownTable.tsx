@@ -2,6 +2,7 @@ import { Decimal } from "decimal.js";
 import { useState } from "react";
 import type { GroupRow } from "../../shared/analytics.js";
 import { formatMoney } from "../../shared/money.js";
+import { TableScroll } from "../components.js";
 import { rate } from "./KpiCards.js";
 export function BreakdownTable({
   rows,
@@ -33,12 +34,7 @@ export function BreakdownTable({
         <h3>{title}</h3>
         <span className="dashboard-unit">{currency}</span>
       </div>
-      <div
-        className="dashboard-table-scroll"
-        role="region"
-        aria-label={`${title} scroll`}
-        tabIndex={0}
-      >
+      <TableScroll label={`${title} scroll`}>
         <table aria-label={title}>
           <thead>
             <tr>
@@ -108,7 +104,7 @@ export function BreakdownTable({
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {!rows.length && (
         <p className="dashboard-muted">No closed trades match these filters.</p>
       )}

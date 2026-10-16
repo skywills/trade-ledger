@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { Link, useLocation } from "../navigation.js";
+import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
 import { DashboardFilters } from "./DashboardFilters.js";
 import { Overview } from "./Overview.js";
@@ -98,12 +99,14 @@ export function DashboardPage({ view }: { view: DashboardView }) {
             <div data-testid="dashboard-content">
               {view === "overview" ? (
                 <Overview data={data} />
+              ) : view === "analysis" ? (
+                <Analysis
+                  data={data}
+                  section={state.section}
+                  onRefresh={remote.reload}
+                />
               ) : (
-                <p>
-                  {view === "analysis"
-                    ? "Trade and transaction analysis"
-                    : "Trading report"}
-                </p>
+                <p>Trading report</p>
               )}
             </div>
           )}

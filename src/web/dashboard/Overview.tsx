@@ -1,5 +1,6 @@
 import type { AnalyticsResponse } from "../../shared/analytics.js";
 import { formatMoney } from "../../shared/money.js";
+import { TableScroll } from "../components.js";
 import { Link, navigate } from "../navigation.js";
 import { BreakdownTable } from "./BreakdownTable.js";
 import { AnalyticsChart } from "./Charts.js";
@@ -100,12 +101,7 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
             View all trades ↗
           </Link>
         </div>
-        <div
-          className="dashboard-table-scroll"
-          role="region"
-          aria-label="Recent trades scroll"
-          tabIndex={0}
-        >
+        <TableScroll label="Recent trades scroll">
           <table aria-label="Recent closed trades">
             <thead>
               <tr>
@@ -138,7 +134,7 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
         {!data.recent.length && (
           <p className="dashboard-muted">
             No closed trades in this period. Adjust the date range to explore

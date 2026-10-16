@@ -132,6 +132,76 @@ export function DashboardFilters({
           <button type="submit">Apply dates</button>
         </form>
       )}
+      {view === "analysis" && (
+        <div className="dashboard-filter-row dashboard-advanced-filters">
+          {(
+            [
+              [
+                "symbol",
+                "Symbol",
+                data?.options.symbols.map((value) => ({
+                  value,
+                  label: value,
+                })) ?? [],
+              ],
+              [
+                "underlying",
+                "Underlying",
+                data?.options.underlyings.map((item) => ({
+                  value: item.key,
+                  label: item.label,
+                })) ?? [],
+              ],
+              [
+                "strategyType",
+                "Strategy type",
+                data?.options.strategyTypes.map((value) => ({
+                  value,
+                  label: value,
+                })) ?? [],
+              ],
+              [
+                "assetClass",
+                "Asset class",
+                data?.options.assetClasses.map((value) => ({
+                  value,
+                  label: value,
+                })) ?? [],
+              ],
+            ] as const
+          ).map(([key, label, options]) => (
+            <label key={key}>
+              {label}
+              <select
+                aria-label={label}
+                value={state.query[key] ?? ""}
+                onChange={(e) => change({ [key]: e.target.value || undefined })}
+              >
+                <option value="">All</option>
+                {options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="dashboard-filter-chips">
+        {(["symbol", "underlying", "strategyType", "assetClass"] as const)
+          .filter((key) => state.query[key])
+          .map((key) => (
+            <button
+              type="button"
+              key={key}
+              onClick={() => change({ [key]: undefined })}
+              aria-label={`Remove ${key} filter`}
+            >
+              {key}: {state.query[key]?.replace(/^value:/, "")} ×
+            </button>
+          ))}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { formatMoney } from "../../shared/money.js";
+import { TableScroll } from "../components.js";
 import { buildChartModel, type ChartPoint } from "./chartModel.js";
 export function AnalyticsChart({
   title,
@@ -7,11 +8,13 @@ export function AnalyticsChart({
   points,
   variant = "line",
   onSelect,
+  valueType = "money",
 }: {
   title: string;
   currency: string;
   points: readonly ChartPoint[];
   variant?: "line" | "bar";
+  valueType?: "money" | "count";
   onSelect?: ((key: string) => void) | undefined;
 }) {
   const id = useId();
@@ -31,7 +34,8 @@ export function AnalyticsChart({
     path += `${connected ? "L" : "M"}${p.x},${p.y} `;
     connected = true;
   }
-  const display = (v: string | null) => formatMoney(v, currency);
+  const display = (v: string | null) =>
+    valueType === "count" ? (v ?? "Unavailable") : formatMoney(v, currency);
   const known = points.filter((p) => p.value !== null).length;
   return (
     <article className="dashboard-panel dashboard-chart">
@@ -124,9 +128,8 @@ export function AnalyticsChart({
             {variant === "line" ? "Realized P&L" : "Signed period value"} · zero
             baseline
           </div>
-          <div
+          <fieldset
             className="dashboard-chart-navigator"
-            role="group"
             aria-label={`${title} data navigator`}
           >
             <button
@@ -156,7 +159,7 @@ export function AnalyticsChart({
                 View trades
               </button>
             )}
-          </div>
+          </fieldset>
         </>
       ) : (
         <div className="dashboard-chart-empty">
@@ -175,12 +178,7 @@ export function AnalyticsChart({
       </button>
       {table && (
         <div className="dashboard-chart-data">
-          <div
-            className="dashboard-table-scroll"
-            role="region"
-            aria-label={`${title} data scroll`}
-            tabIndex={0}
-          >
+          <TableScroll label={`${title} data scroll`}>
             <table aria-label={`${title} data`}>
               <thead>
                 <tr>
@@ -205,7 +203,7 @@ export function AnalyticsChart({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
           {points.length > 25 && (
             <div className="dashboard-pagination">
               <button

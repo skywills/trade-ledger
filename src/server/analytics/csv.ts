@@ -25,7 +25,9 @@ const numberFields = new Set([
 ]);
 function cell(value: unknown, numeric = false): string {
   let s = value === null || value === undefined ? "" : String(value);
-  if (!numeric && /^[\s\u0000-\u001f]*[=+@-]/.test(s)) s = `'${s}`;
+  let prefix = 0;
+  while (prefix < s.length && s.charCodeAt(prefix) <= 32) prefix++;
+  if (!numeric && /^[=+@-]/.test(s.slice(prefix))) s = `'${s}`;
   return `"${s.replaceAll('"', '""')}"`;
 }
 export function serializeAnalyticsCsv(
