@@ -1,55 +1,18 @@
-import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { selectAnalyticsDetails } from "../../src/server/analytics/details.js";
 import { parseDetailQuery } from "../../src/server/analytics/query.js";
 import { createApp } from "../../src/server/app.js";
-import { persistProjection } from "../../src/server/builds/repository.js";
 import {
   ALGORITHM_VERSION,
   activeProjection,
   rebuild,
 } from "../../src/server/builds/service.js";
 import { readConfig } from "../../src/server/config.js";
-import { registerAnalyticsRoutes } from "../../src/server/http/routes-analytics.js";
 import type { AppError } from "../../src/shared/errors.js";
 import { performanceFixture, strategy } from "../fixtures/analytics.js";
+import { analyticsApp } from "../helpers/analytics-app.js";
 import { createTestStore } from "../helpers/store.js";
-export async function analyticsApp() {
-  const t = await createTestStore();
-  await rebuild(t.store, {
-    mode: "full",
-    parserVersion: "flex-v1",
-    algorithmVersion: ALGORITHM_VERSION,
-    signal: new AbortController().signal,
-  });
-  const active = activeProjection(t.store);
-  await persistProjection(
-    t.store,
-    active.buildId!,
-    active.projection!.ledgerId,
-    {
-      ...performanceFixture().projection!,
-      ledgerId: active.projection!.ledgerId,
-    },
-    new Date().toISOString(),
-  );
-  const app = Fastify();
-  app.setErrorHandler((e, _req, reply) => {
-    const error = e as AppError;
-    reply
-      .code(error.statusCode ?? 500)
-      .send({ code: error.code, message: error.message });
-  });
-  await registerAnalyticsRoutes(app, t.store);
-  return {
-    ...t,
-    app,
-    close: async () => {
-      await app.close();
-      await t.dispose();
-    },
-  };
-}
+
 describe("analytics HTTP", () => {
   it("registers the API on the real application and returns no-build state", async () => {
     const t = await createTestStore();
