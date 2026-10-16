@@ -1,5 +1,10 @@
 import type { AnalyticsSnapshot } from "../../src/server/analytics/snapshot.js";
-import type { Execution, Strategy } from "../../src/shared/domain.js";
+import type {
+  Execution,
+  LedgerSnapshot,
+  Projection,
+  Strategy,
+} from "../../src/shared/domain.js";
 export function strategy(patch: Partial<Strategy> = {}): Strategy {
   return {
     id: "s",
@@ -56,6 +61,12 @@ export function execution(patch: Partial<Execution> = {}): Execution {
     ...patch,
   };
 }
+export interface FixtureSnapshot extends AnalyticsSnapshot {
+  projection: Projection;
+  ledger: LedgerSnapshot;
+}
+export function snapshot(): FixtureSnapshot;
+export function snapshot(patch: Partial<AnalyticsSnapshot>): AnalyticsSnapshot;
 export function snapshot(
   patch: Partial<AnalyticsSnapshot> = {},
 ): AnalyticsSnapshot {
@@ -83,9 +94,9 @@ export function snapshot(
     ...patch,
   };
 }
-export function performanceFixture(): AnalyticsSnapshot {
+export function performanceFixture(): FixtureSnapshot {
   const s = snapshot();
-  s.projection!.strategies = Array.from({ length: 698 }, (_, i) =>
+  s.projection.strategies = Array.from({ length: 698 }, (_, i) =>
     strategy({
       id: `s-${i}`,
       brokerPnl:

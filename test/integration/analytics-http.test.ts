@@ -2,13 +2,8 @@ import { describe, expect, it } from "vitest";
 import { selectAnalyticsDetails } from "../../src/server/analytics/details.js";
 import { parseDetailQuery } from "../../src/server/analytics/query.js";
 import { createApp } from "../../src/server/app.js";
-import {
-  ALGORITHM_VERSION,
-  activeProjection,
-  rebuild,
-} from "../../src/server/builds/service.js";
+
 import { readConfig } from "../../src/server/config.js";
-import type { AppError } from "../../src/shared/errors.js";
 import { performanceFixture, strategy } from "../fixtures/analytics.js";
 import { analyticsApp } from "../helpers/analytics-app.js";
 import { createTestStore } from "../helpers/store.js";
@@ -85,7 +80,7 @@ describe("analytics HTTP", () => {
   });
   it("sorts exact money null-last and exposes undated/unresolved scopes", () => {
     const s = performanceFixture();
-    s.projection!.strategies = [
+    s.projection.strategies = [
       strategy({ id: "a", brokerPnl: "100" }),
       strategy({ id: "b", brokerPnl: "9" }),
       strategy({ id: "c", brokerPnl: null }),

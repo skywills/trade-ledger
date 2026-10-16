@@ -18,13 +18,15 @@ export async function analyticsApp() {
     signal: new AbortController().signal,
   });
   const active = activeProjection(t.store);
+  if (!active.buildId || !active.projection)
+    throw new Error("Synthetic build failed");
   await persistProjection(
     t.store,
-    active.buildId!,
-    active.projection!.ledgerId,
+    active.buildId,
+    active.projection.ledgerId,
     {
-      ...performanceFixture().projection!,
-      ledgerId: active.projection!.ledgerId,
+      ...performanceFixture().projection,
+      ledgerId: active.projection.ledgerId,
     },
     new Date().toISOString(),
   );

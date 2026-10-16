@@ -11,6 +11,18 @@ For a step-by-step install, configuration and first-run walkthrough, see
 [`docs/SETUP.md`](docs/SETUP.md). For how the project is tested and how the
 acceptance checks map to tests, see [`docs/TEST-PLAN.md`](docs/TEST-PLAN.md).
 
+## Dashboard and analytics
+
+Open **Dashboard** for three views:
+
+- **Overview** (`/dashboard`): realized P&L, win rate, closed/current-open counts, cumulative/monthly trends, strategy and underlying attribution, and recent trades.
+- **Analysis** (`/dashboard/analysis`): performance and transaction sections, exact symbol/underlying/type/asset-class filters, outcome/group drill-downs, and paginated source-linked records.
+- **Reports** (`/dashboard/reports`): period reviews, data-quality notes, unsaved review notes, and browser Print / Save as PDF.
+
+Choose one currency and either broker-reported or reconstructed P&L. Closed-trade performance uses the strategy close date; transaction activity uses execution dates. Current-open counts describe the active build, even when viewing an older period. Missing amounts remain unavailable and coverage is shown. Fees/credits retain their signs and are not subtracted again from P&L. Cumulative P&L and realized drawdown are closed-trade measures, not account equity or unrealized valuation.
+
+Filters are preserved in the URL. CSV exports cover the full selected scope rather than the visible page and retain exact decimal values and build/ledger provenance. If the active build changes during a drill-down/export, refresh analytics before continuing. Reports default to the current month unless an explicit period is supplied. Review notes are local to the report view, unsaved, and included in print.
+
 ## Requirements
 
 - Node.js `22.19.0` (the app pins `>=22.19.0`). Docker is optional but is how

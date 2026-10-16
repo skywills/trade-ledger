@@ -12,17 +12,17 @@ import { execution, snapshot, strategy } from "../fixtures/analytics.js";
 
 function fixture() {
   const s = snapshot();
-  s.projection!.strategies = [
+  s.projection.strategies = [
     strategy({ id: "within-period", type: "spread" }),
     strategy({ id: "old-open", status: "open", closeDate: null }),
     strategy({ id: "undated", closeDate: null }),
     strategy({ id: "eur", currency: "EUR" }),
   ];
-  s.ledger!.executions = [
+  s.ledger.executions = [
     execution({ key: "shared" }),
     execution({ key: "unallocated" }),
   ];
-  s.projection!.allocations = ["within-period", "old-open"].map(
+  s.projection.allocations = ["within-period", "old-open"].map(
     (strategyId) => ({
       strategyId,
       executionKey: "shared",
@@ -98,14 +98,16 @@ describe("analytics scopes", () => {
   });
   it("attributes multi-underlying exclusively and separates exact symbol filters", () => {
     const s = fixture();
-    s.ledger!.executions.push(
+    s.ledger.executions.push(
       execution({
         key: "b",
         instrument: { ...execution().instrument, symbol: "B", underlying: "B" },
       }),
     );
-    s.projection!.allocations.push({
-      ...s.projection!.allocations[0]!,
+    const allocation = s.projection.allocations[0];
+    if (!allocation) throw new Error("Missing synthetic allocation");
+    s.projection.allocations.push({
+      ...allocation,
       executionKey: "b",
     });
     expect(strategyUnderlying("within-period", s)).toBe("__multi__");

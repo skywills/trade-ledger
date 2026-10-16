@@ -11,7 +11,7 @@ import {
 describe("analytics CSV", () => {
   it("escapes text, neutralizes formulas, and retains signed exact decimals", () => {
     const s = snapshot();
-    s.ledger!.executions = [
+    s.ledger.executions = [
       execution({
         key: "e",
         instrument: { ...execution().instrument, symbol: ' =HYPERLINK("x")' },
@@ -24,11 +24,11 @@ describe("analytics CSV", () => {
       parseExportQuery({ currency: "USD", dataset: "transactions" }),
     );
     const rows = parse(out.csv, { columns: true }) as Record<string, string>[];
-    expect(rows[0]!.symbol).toBe('\' =HYPERLINK("x")');
-    expect(rows[0]!.netCash).toBe("-140.60");
-    expect(rows[0]!.rawDateTime).toBe('a,"b"\r\nc');
-    expect(rows[0]!.buildId).toBe("build");
-    expect(rows[0]!.basis).toBe("broker");
+    expect(rows[0]?.symbol).toBe('\' =HYPERLINK("x")');
+    expect(rows[0]?.netCash).toBe("-140.60");
+    expect(rows[0]?.rawDateTime).toBe('a,"b"\r\nc');
+    expect(rows[0]?.buildId).toBe("build");
+    expect(rows[0]?.basis).toBe("broker");
   });
   it("exports every selected strategy and rectangular summary with coverage", () => {
     const s = performanceFixture();

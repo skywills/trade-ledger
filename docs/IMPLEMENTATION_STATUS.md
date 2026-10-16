@@ -1,6 +1,6 @@
 # Implementation status — TradeLedger
 
-Updated: 2026-10-15
+Updated: 2026-10-16
 
 **State:** All 15 planned areas have implementation artifacts in the repository. All 17 review findings were independently verified. The six P1 issues are fixed with regression tests and approved independent reviews; eleven P2 issues remain open. Implementation presence must not be treated as completed acceptance or release readiness.
 
@@ -10,6 +10,12 @@ Updated: 2026-10-15
 **Reviewed HEAD:** `812427c` — `docs: add setup and test-plan guides`.
 **Latest implementation change at review:** `2af5d66` — `fix(journal): surface retained-decision review diagnostics and harden packaging`.
 **Deployment:** Not verified by this review.
+
+## Dashboard addition — 2026-10-16
+
+TradeLedger now includes Overview, Analysis, and Reports at `/dashboard`, `/dashboard/analysis`, and `/dashboard/reports`. Shared read-only analytics capture one active build and its associated ledger, calculate full-scope decimal metrics, and expose validated summary/detail/export APIs. The UI supports persistent filters, source-linked drill-downs, paginated detail tables, print reviews, local unsaved notes, and full-scope CSV exports.
+
+Currency totals remain separate. Broker/reconstructed bases do not silently fall back, missing P&L is disclosed through coverage, and current-open counts remain current-build context. No unrealized valuation, FX conversion, equity reconstruction, scheduled delivery, or new storage schema is introduced. Existing backup format identifiers remain compatible. The historical review status below applies to the earlier implementation and is not a new review of this dashboard branch. Dashboard verification: 403 unit/integration tests and 40 browser tests passed; production build smoke passed; lint/typecheck passed with five pre-existing lint warnings and no diagnostics in the new analytics files. Independent whole-branch review follows these gates.
 
 ## Authoritative documents
 

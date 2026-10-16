@@ -196,22 +196,21 @@ export function serializeAnalyticsCsv(
             ...meta,
           }));
   }
-  const csv =
-    [
-      columns.map((k) => cell(k)).join(","),
-      ...records.map((row) =>
-        columns
-          .map((k) =>
-            cell(
-              row[k],
-              numberFields.has(k) &&
-                typeof row[k] !== "object" &&
-                /^-?\d+(\.\d+)?$/.test(String(row[k])),
-            ),
-          )
-          .join(","),
-      ),
-    ].join("\r\n") + "\r\n";
+  const csv = `${[
+    columns.map((k) => cell(k)).join(","),
+    ...records.map((row) =>
+      columns
+        .map((k) =>
+          cell(
+            row[k],
+            numberFields.has(k) &&
+              typeof row[k] !== "object" &&
+              /^-?\d+(\.\d+)?$/.test(String(row[k])),
+          ),
+        )
+        .join(","),
+    ),
+  ].join("\r\n")}\r\n`;
   const safeCurrency = (filters.currency ?? "none").replace(
     /[^a-zA-Z0-9_-]/g,
     "_",

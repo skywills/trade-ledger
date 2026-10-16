@@ -37,7 +37,9 @@ export function readDashboardQuery(
 ): DashboardQueryState {
   const params = new URLSearchParams(search);
   const raw = Object.fromEntries(
-    filterKeys.filter((k) => params.has(k)).map((k) => [k, params.get(k)!]),
+    filterKeys
+      .filter((k) => params.has(k))
+      .map((k) => [k, params.get(k) ?? ""]),
   );
   const preset = (params.get("preset") ??
     (params.has("from") || params.has("to")
@@ -79,7 +81,7 @@ export function readDashboardQuery(
       "pageSize",
     ]
       .filter((k) => params.has(k))
-      .map((k) => [k, params.get(k)!]),
+      .map((k) => [k, params.get(k) ?? ""]),
   );
   return {
     query: parsed.success

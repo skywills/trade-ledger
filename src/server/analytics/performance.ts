@@ -23,7 +23,7 @@ export function divide(
     : null;
 }
 export function dailySeries(scope: AnalyticsScope): DailyPoint[] {
-  const dates = [...new Set(scope.closed.map((s) => s.closeDate!))].sort();
+  const dates = [...new Set(scope.closed.map((s) => s.closeDate ?? ""))].sort();
   let running = new Money(0),
     peak = new Money(0);
   let seen = false;
@@ -86,7 +86,7 @@ export function summarizePerformance(
           state: "finite",
           value: divide(
             grossProfit ?? "0",
-            new Money(grossLoss!).abs().toFixed(),
+            new Money(grossLoss ?? "0").abs().toFixed(),
           ),
         }
       : wins.length

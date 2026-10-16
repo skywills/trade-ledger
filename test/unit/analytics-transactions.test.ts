@@ -6,7 +6,7 @@ describe("transaction analytics", () => {
   it("deduplicates keys, sums charges and credits, and keeps known zero", () => {
     const s = snapshot();
     const a = execution({ key: "a", commission: "-1", taxes: "0" });
-    s.ledger!.executions = [
+    s.ledger.executions = [
       a,
       a,
       execution({ key: "b", commission: "0.25", event: "unsupported" }),
@@ -27,10 +27,10 @@ describe("transaction analytics", () => {
   });
   it("uses independent execution dates and all rows beyond pagination", () => {
     const s = snapshot();
-    s.projection!.strategies = [
+    s.projection.strategies = [
       strategy({ brokerPnl: "5", closeDate: "2026-10-01" }),
     ];
-    s.ledger!.executions = Array.from({ length: 150 }, (_, i) =>
+    s.ledger.executions = Array.from({ length: 150 }, (_, i) =>
       execution({ key: `e${i}`, netCash: "0.1" }),
     );
     const r = aggregateAnalytics(s, {
@@ -49,7 +49,7 @@ describe("transaction analytics", () => {
   });
   it("preserves precision without changing global Decimal configuration", () => {
     const s = snapshot();
-    s.ledger!.executions = [
+    s.ledger.executions = [
       execution({ key: "a", netCash: "100000000000000000000.123456789" }),
       execution({ key: "b", netCash: "0.000000001" }),
     ];

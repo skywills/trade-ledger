@@ -13,7 +13,7 @@ function run(
   basis: "broker" | "reconstructed" = "broker",
 ) {
   const s = snapshot();
-  s.projection!.strategies = values.map((brokerPnl, i) =>
+  s.projection.strategies = values.map((brokerPnl, i) =>
     strategy({
       id: `s${i}`,
       brokerPnl,
@@ -38,7 +38,9 @@ describe("performance analytics", () => {
       open: 19,
       partiallyClosed: 0,
     });
-    expect(new Decimal(r.performance.winRatePct!).toFixed(2)).toBe("70.84");
+    expect(new Decimal(r.performance.winRatePct ?? "0").toFixed(2)).toBe(
+      "70.84",
+    );
     expect(r.recent).toHaveLength(10);
     expect(AnalyticsResponseSchema.safeParse(r).success).toBe(true);
   });
@@ -69,7 +71,7 @@ describe("performance analytics", () => {
   });
   it("excludes currencies and undated records and reconciles exclusive groups", () => {
     const s = snapshot();
-    s.projection!.strategies = [
+    s.projection.strategies = [
       strategy({ id: "a", type: "spread", brokerPnl: "3" }),
       strategy({ id: "b", type: "stock", brokerPnl: "-1" }),
       strategy({ id: "eur", currency: "EUR", brokerPnl: "99" }),
@@ -94,5 +96,42 @@ describe("performance analytics", () => {
     ).toBeNull();
     const r = run([null]);
     expect(r.monthly[0]).toMatchObject({ pnl: null, eligible: 0, missing: 1 });
+  });
+});
+
+describe("allocation attribution and estimates", () => {
+  it("counts a multi-underlying strategy once and discloses only contributing estimates", async () => {
+    const { execution } = await import("../fixtures/analytics.js");
+    const s = snapshot();
+    s.projection.strategies = [
+      strategy({ id: "spread", brokerPnl: "5", reconstructedPnl: "4" }),
+    ];
+    s.ledger.executions = [
+      execution({ key: "a" }),
+      execution({
+        key: "b",
+        instrument: { ...execution().instrument, symbol: "B", underlying: "B" },
+      }),
+    ];
+    s.projection.allocations = ["a", "b"].map((executionKey) => ({
+      strategyId: "spread",
+      executionKey,
+      quantity: "1",
+      netCash: "0",
+      brokerPnl: "2.5",
+      pnlEstimated: true,
+      role: "close" as const,
+    }));
+    const broker = aggregateAnalytics(s, { basis: "broker", currency: "USD" });
+    expect(broker.byUnderlying).toEqual([
+      expect.objectContaining({ key: "__multi__", pnl: "5", closed: 1 }),
+    ]);
+    expect(broker.quality.estimatedClosed).toBe(1);
+    const reconstructed = aggregateAnalytics(s, {
+      basis: "reconstructed",
+      currency: "USD",
+    });
+    expect(reconstructed.performance.pnl).toBe("4");
+    expect(reconstructed.quality.estimatedClosed).toBe(0);
   });
 });

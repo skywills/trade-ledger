@@ -56,7 +56,7 @@ export function aggregateAnalytics(
     const key = (s: Strategy) =>
       dim === "strategyType"
         ? `value:${s.type}`
-        : scope.attribution.get(s.id)!.underlying;
+        : (scope.attribution.get(s.id)?.underlying ?? "__unknown__");
     return [...new Set(scope.closed.map(key))]
       .map((k) =>
         group(
@@ -78,7 +78,7 @@ export function aggregateAnalytics(
   };
   const months = [
     ...new Set([
-      ...scope.closed.map((s) => s.closeDate!.slice(0, 7)),
+      ...scope.closed.map((s) => (s.closeDate ?? "").slice(0, 7)),
       ...scope.executions.map((e) => e.date.slice(0, 7)),
     ]),
   ].sort();
@@ -102,7 +102,9 @@ export function aggregateAnalytics(
     }
   }
   const monthly = filled.map((month) => {
-    const closed = scope.closed.filter((s) => s.closeDate!.startsWith(month));
+    const closed = scope.closed.filter((s) =>
+      (s.closeDate ?? "").startsWith(month),
+    );
     const tx = summarizeTransactions({
       ...scope,
       executions: scope.executions.filter((e) => e.date.startsWith(month)),
@@ -118,16 +120,17 @@ export function aggregateAnalytics(
   });
   const recent = [...scope.closed].sort(
     (a, b) =>
-      b.closeDate!.localeCompare(a.closeDate!) || a.id.localeCompare(b.id),
+      (b.closeDate ?? "").localeCompare(a.closeDate ?? "") ||
+      a.id.localeCompare(b.id),
   );
   const ranked = scope.closed
     .filter((s) => selectedPnl(s, scope.query) !== null)
     .sort(
       (a, b) =>
-        new Money(selectedPnl(b, scope.query)!).cmp(
-          selectedPnl(a, scope.query)!,
+        new Money(selectedPnl(b, scope.query) ?? "0").cmp(
+          selectedPnl(a, scope.query) ?? "0",
         ) ||
-        b.closeDate!.localeCompare(a.closeDate!) ||
+        (b.closeDate ?? "").localeCompare(a.closeDate ?? "") ||
         a.id.localeCompare(b.id),
     );
   const eligibleIds = new Set(
@@ -150,19 +153,19 @@ export function aggregateAnalytics(
     byUnderlying: breakdown("underlying"),
     recent: recent.slice(0, 10).map((s) => strategyResult(s, scope)),
     best: ranked
-      .filter((s) => new Money(selectedPnl(s, scope.query)!).gt(0))
+      .filter((s) => new Money(selectedPnl(s, scope.query) ?? "0").gt(0))
       .slice(0, 10)
       .map((s) => strategyResult(s, scope)),
     worst: [...ranked]
       .sort(
         (a, b) =>
-          new Money(selectedPnl(a, scope.query)!).cmp(
-            selectedPnl(b, scope.query)!,
+          new Money(selectedPnl(a, scope.query) ?? "0").cmp(
+            selectedPnl(b, scope.query) ?? "0",
           ) ||
-          b.closeDate!.localeCompare(a.closeDate!) ||
+          (b.closeDate ?? "").localeCompare(a.closeDate ?? "") ||
           a.id.localeCompare(b.id),
       )
-      .filter((s) => new Money(selectedPnl(s, scope.query)!).lt(0))
+      .filter((s) => new Money(selectedPnl(s, scope.query) ?? "0").lt(0))
       .slice(0, 10)
       .map((s) => strategyResult(s, scope)),
     quality: {

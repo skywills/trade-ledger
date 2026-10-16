@@ -238,3 +238,21 @@ CI uses Node `22.19.0` and no live model, cloud key, or broker account.
 - Keep assertions on real behavior (real SQLite, real `app.inject`, the
   synthetic inference server) rather than on mocks.
 - When a new acceptance-relevant behavior lands, add its row to section 8.
+
+## Dashboard analytics acceptance
+
+The dashboard design and implementation plan are in `superpowers/specs/2026-10-16-dashboard-analytics-design.md` and `superpowers/plans/2026-10-16-dashboard-analytics.md`.
+
+| Boundary | Coverage |
+| --- | --- |
+| Coherent active-build/ledger reads, stale inputs, missing association | `test/integration/analytics-snapshot.test.ts` |
+| Calendar/currency/filter validation, current-open and undated scopes, allocation deduplication | `test/unit/analytics-scope.test.ts` |
+| Exact sums, basis isolation, null/zero outcomes, factor/drawdown, coverage | `test/unit/analytics-performance.test.ts`, `analytics-transactions.test.ts` |
+| Full-scope API totals, sorted/paginated details, changed-build 409 | `test/integration/analytics-http.test.ts` |
+| Rectangular exact CSV, text-cell hardening, scope/provenance, full exports | `test/unit/analytics-csv.test.ts`, `test/integration/analytics-export.test.ts` |
+| URL dates/presets, bounded chart normalization and missing-data gaps | `test/unit/analytics-url.test.ts`, `analytics-chart.test.ts` |
+| Routes, retry/races, drill-down, paging, print, notes, downloads, real imports | `e2e/dashboard.spec.ts` |
+
+Browser fixtures separate mocked presentation/race checks from a real import/rebuild test covering 150 closed stock roundtrips and 300 executions, re-import idempotency, six detail pages, and import-row provenance. Responsive checks cover 375/768/1440px in light and dark modes with reduced motion; metric contrast and keyboard chart-table access are asserted. Report tests generate a PDF under `/tmp` for manual pagination inspection; temporary artifacts are not committed.
+
+Run the repository gates: `npm run check:all`, `npm test`, `npm run test:build-smoke`, and `npm run test:e2e`. No live broker account, AI credentials, model server, or external market feed is needed. Existing whole-repository lint warnings are baseline; the new analytics modules and tests should introduce none.
