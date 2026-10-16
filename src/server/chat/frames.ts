@@ -13,6 +13,7 @@ export type ChatFrame =
         name: string;
         phase: "call" | "result";
         isError?: boolean;
+        error?: string;
       };
     }
   | {

@@ -112,3 +112,25 @@ describe("TurnAccumulator", () => {
     expect(acc.pending).toBeNull();
   });
 });
+
+it("retains tool failure details in persisted records and live frames", () => {
+  const acc = new TurnAccumulator("m1");
+  acc.apply(
+    ev({ type: "tool_call", callId: "c", name: "submit_proposal", input: {} }),
+  );
+  const frames = acc.apply(
+    ev({
+      type: "tool_result",
+      callId: "c",
+      isError: true,
+      preview: "Proposal rejected: payload.source is required",
+    }),
+  );
+  expect(acc.tools[0]).toMatchObject({
+    error: "Proposal rejected: payload.source is required",
+  });
+  expect(frames[0]).toMatchObject({
+    event: "tool",
+    data: { error: "Proposal rejected: payload.source is required" },
+  });
+});

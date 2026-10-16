@@ -106,7 +106,12 @@ export class TurnAccumulator {
   private toolResulted(
     event: Extract<SessionEvent, { type: "tool_result" }>,
   ): ChatFrame[] {
-    this.patchTool(event.callId, { status: "done", isError: event.isError });
+    const error = event.isError ? event.preview : undefined;
+    this.patchTool(event.callId, {
+      status: "done",
+      isError: event.isError,
+      ...(error === undefined ? {} : { error }),
+    });
     return [
       {
         event: "tool",
@@ -116,6 +121,7 @@ export class TurnAccumulator {
           name: this.toolName(event.callId),
           phase: "result",
           isError: event.isError,
+          ...(error === undefined ? {} : { error }),
         },
       },
     ];

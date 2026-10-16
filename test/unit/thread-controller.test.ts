@@ -196,3 +196,17 @@ describe("withDetail error handling", () => {
     expect(next.error).toBeNull();
   });
 });
+
+it("keeps tool error details from the live stream", () => {
+  const state = applyFrame(initialThreadState(), "tool", {
+    messageId: "m1",
+    callId: "c",
+    name: "submit_proposal",
+    phase: "result",
+    isError: true,
+    error: "Proposal rejected: payload.source is required",
+  });
+  expect(state.liveTools.m1?.[0]).toMatchObject({
+    error: "Proposal rejected: payload.source is required",
+  });
+});

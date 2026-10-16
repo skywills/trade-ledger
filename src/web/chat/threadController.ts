@@ -49,6 +49,7 @@ const Tool = z.object({
   name: z.string(),
   phase: z.enum(["call", "result"]),
   isError: z.boolean().optional(),
+  error: z.string().optional(),
 });
 const Approval = z.object({
   requestId: z.string(),
@@ -72,6 +73,7 @@ function upsertTool(
 ): ToolRecordDto[] {
   const status = frame.phase === "call" ? "running" : "done";
   const isError = frame.isError ?? false;
+  const error = frame.error === undefined ? {} : { error: frame.error };
   const exists = list.some((t) => t.callId === frame.callId);
   if (!exists) {
     return [
@@ -82,11 +84,14 @@ function upsertTool(
         status,
         isError,
         approval: null,
+        ...error,
       },
     ];
   }
   return list.map((t) =>
-    t.callId === frame.callId ? { ...t, name: frame.name, status, isError } : t,
+    t.callId === frame.callId
+      ? { ...t, name: frame.name, status, isError, ...error }
+      : t,
   );
 }
 

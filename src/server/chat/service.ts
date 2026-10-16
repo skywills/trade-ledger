@@ -64,6 +64,7 @@ export interface ChatServiceDeps {
 
 interface LiveThread {
   readonly hosted: HostedSession;
+  readonly limits: ChatLimits;
   readonly turn: { current: TurnScope };
   lastUsedAt: number;
   running: Promise<void> | null;
@@ -373,7 +374,7 @@ export class ChatService {
         thread,
         assistantMessageId,
         prompt,
-        limits: this.limits,
+        limits: live.limits,
         accumulator: live.accumulator,
         now: this.now,
       });
@@ -462,6 +463,14 @@ export class ChatService {
     });
     const live: LiveThread = {
       hosted,
+      // Match the same profile snapshot used by the provider connection.
+      limits: {
+        ...this.limits,
+        maxOutputTokens: Math.min(
+          profile.maxTokens,
+          this.deps.limits?.maxOutputTokens ?? profile.maxTokens,
+        ),
+      },
       turn,
       lastUsedAt: Date.now(),
       running: null,

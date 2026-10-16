@@ -29,6 +29,8 @@ export interface InferencePlanStep {
   readonly text?: string;
   /** Include a `usage` block (defaults to true) so token accounting is exercised. */
   readonly usage?: boolean;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
 }
 
 export interface InferenceServerOptions {
@@ -279,8 +281,11 @@ export async function startInferenceServer(
           choices: [],
           usage: {
             prompt_tokens: 7,
-            completion_tokens: 3,
-            total_tokens: 10,
+            completion_tokens: planStep?.outputTokens ?? 3,
+            total_tokens: 7 + (planStep?.outputTokens ?? 3),
+            completion_tokens_details: {
+              reasoning_tokens: planStep?.reasoningTokens ?? 0,
+            },
           },
         })}\n\n`,
       );
