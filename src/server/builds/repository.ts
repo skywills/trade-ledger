@@ -45,6 +45,11 @@ export interface CandidateDraft {
 
 const NON_TERMINAL = ["running", "candidate", "validating"] as const;
 
+/** Only a generation that completed validation can be made active again. */
+export function isRestorable(status: string): boolean {
+  return status === "active" || status === "stale";
+}
+
 export function readBuild(db: Store["db"], id: Id): BuildRow | null {
   const row = db
     .prepare(
@@ -531,7 +536,9 @@ export interface RollbackResult {
 
 /**
  * Switches the singleton active pointer to a retained successful generation in
- * one transaction, marking it stale when current inputs no longer match.
+ * one transaction, marking it stale when current inputs no longer match. The
+ * build's status is re-read inside the transaction, so a build that failed
+ * after the caller checked it is never activated.
  */
 export async function switchActiveBuild(
   store: Store,
@@ -540,6 +547,14 @@ export async function switchActiveBuild(
   now: string,
 ): Promise<RollbackResult> {
   return write(store, () => {
+    const build = readBuild(store.db, buildId);
+    if (build === null || !isRestorable(build.status)) {
+      throw new AppError(
+        "BUILD_NOT_ROLLBACKABLE",
+        `Build ${buildId} is ${build?.status ?? "missing"} and cannot be restored.`,
+        409,
+      );
+    }
     store.db
       .prepare(
         `UPDATE builds SET status = 'stale' WHERE status = 'active' AND id <> ?`,

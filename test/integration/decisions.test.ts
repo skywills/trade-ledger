@@ -389,9 +389,11 @@ describe("retained decisions and stable strategy identities", () => {
           }),
         ]),
       );
-      await activateLatestBuild(store);
+      const { ledgerId } = await activateLatestBuild(store);
 
       const source = firstImportRow(store);
+      const executionKey = readLedger(store, ledgerId).executions[0]?.key;
+      if (executionKey === undefined) throw new Error("No execution found");
 
       const first = await appendDecision(
         store,
@@ -400,7 +402,7 @@ describe("retained decisions and stable strategy identities", () => {
           source,
           allocations: [
             {
-              executionKey: "exec:1:1",
+              executionKey,
               quantity: "1",
               netCash: "-1402.23006",
               brokerPnl: null,
@@ -419,7 +421,7 @@ describe("retained decisions and stable strategy identities", () => {
             source,
             allocations: [
               {
-                executionKey: "exec:1:1",
+                executionKey,
                 quantity: "1",
                 netCash: "-1402.23006",
                 brokerPnl: null,
@@ -473,6 +475,132 @@ describe("retained decisions and stable strategy identities", () => {
       }
       expect(caught).toBeDefined();
       expect((caught as { code?: string }).code).toBe("INVALID_INPUT");
+    }));
+
+  it("rejects manual allocations that contradict the execution at submit time", async () =>
+    withStore(async (store) => {
+      await commitBytes(
+        store,
+        "single.csv",
+        buildExecutionTable([
+          axonExecution(
+            "470",
+            "9000470",
+            "+2",
+            "-2804.46012",
+            "EXEC-A-1",
+            "TRADE-A-1",
+          ),
+        ]),
+      );
+      const { ledgerId } = await activateLatestBuild(store);
+      const execution = readLedger(store, ledgerId).executions[0];
+      if (execution === undefined) throw new Error("No execution found");
+      const source = firstImportRow(store);
+      const row = (
+        executionKey: string,
+        quantity: string,
+        netCash: string,
+      ) => ({
+        executionKey,
+        quantity,
+        netCash,
+        brokerPnl: null,
+      });
+      const submit = (
+        allocations: ReturnType<typeof row>[],
+        watermark = 0,
+        supersedesId: string | null = null,
+      ) =>
+        appendDecision(
+          store,
+          manualAllocationInput({
+            strategyId: "strategy-1",
+            source,
+            allocations,
+            supersedesId,
+          }),
+          watermark,
+        );
+      const rejected = (code: string) => ({ code, statusCode: 400 });
+
+      await expect(
+        submit([row("missing", "1", "-1402.23006")]),
+      ).rejects.toMatchObject(rejected("UNKNOWN_EXECUTION"));
+      await expect(
+        submit([row(execution.key, "0", "0")]),
+      ).rejects.toMatchObject(rejected("ALLOCATION_SIGN_MISMATCH"));
+      await expect(
+        submit([row(execution.key, "-1", "-1402.23006")]),
+      ).rejects.toMatchObject(rejected("ALLOCATION_SIGN_MISMATCH"));
+      await expect(
+        submit([row(execution.key, "100", "-1402.23006")]),
+      ).rejects.toMatchObject(rejected("ALLOCATION_OVERFLOW"));
+      await expect(
+        submit([row(execution.key, "2", "-9999")]),
+      ).rejects.toMatchObject(rejected("ALLOCATION_CASH_MISMATCH"));
+      expect(decisionWatermark(store)).toBe(0);
+
+      // A partial allocation is accepted and can be superseded by the whole.
+      const first = await submit([row(execution.key, "1", "-1402.23006")]);
+      const replacement = await submit(
+        [row(execution.key, "2", "-2804.46012")],
+        1,
+        first.id,
+      );
+      expect(replacement.supersedesId).toBe(first.id);
+    }));
+
+  it("counts effective retained decisions toward a manual allocation's total", async () =>
+    withStore(async (store) => {
+      await commitBytes(
+        store,
+        "single.csv",
+        buildExecutionTable([
+          axonExecution(
+            "470",
+            "9000470",
+            "+2",
+            "-2804.46012",
+            "EXEC-A-1",
+            "TRADE-A-1",
+          ),
+        ]),
+      );
+      const { ledgerId } = await activateLatestBuild(store);
+      const execution = readLedger(store, ledgerId).executions[0];
+      if (execution === undefined) throw new Error("No execution found");
+      const source = firstImportRow(store);
+      const explicit = await appendDecision(
+        store,
+        groupExplicitInput({ strategyId: "strategy-explicit", source }),
+        0,
+      );
+      const allocation = (supersedesId: string | null) =>
+        manualAllocationInput({
+          strategyId: "strategy-manual",
+          source,
+          supersedesId,
+          allocations: [
+            {
+              executionKey: execution.key,
+              quantity: "1",
+              netCash: "-1402.23006",
+              brokerPnl: null,
+            },
+          ],
+        });
+
+      // The explicit binding already claims the whole execution.
+      await expect(
+        appendDecision(store, allocation(null), 1),
+      ).rejects.toMatchObject({
+        code: "ALLOCATION_OVERFLOW",
+        statusCode: 400,
+      });
+      // Superseding the binding releases its units.
+      const accepted = await appendDecision(store, allocation(explicit.id), 1);
+      expect(accepted.supersedesId).toBe(explicit.id);
     }));
 
   it("records splits/merges with explicit identity and metadata ownership", async () =>
