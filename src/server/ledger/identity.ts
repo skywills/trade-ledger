@@ -136,6 +136,32 @@ function payloadFingerprint(execution: Execution): string {
   ]);
 }
 
+/** Nullable values a re-export may omit for the same broker trade. */
+const FILLABLE_FIELDS = [
+  "proceeds",
+  "taxes",
+  "basis",
+  "brokerPnl",
+] as const satisfies readonly (keyof Execution)[];
+
+/**
+ * Merges executions that share an identity and fingerprint: the first source
+ * wins, but a value it omits is taken from the first later source that has
+ * one, so a sparse earlier export never hides a later broker-reported amount.
+ */
+function fillMissing(executions: readonly Execution[]): Execution {
+  const [first, ...rest] = executions as [Execution, ...Execution[]];
+  const filled = Object.fromEntries(
+    FILLABLE_FIELDS.map((field) => [
+      field,
+      [first, ...rest].find((execution) => execution[field] !== null)?.[
+        field
+      ] ?? null,
+    ]),
+  );
+  return { ...first, ...filled };
+}
+
 function brokerIdConflict(
   merged: Record<string, string>,
   candidate: Record<string, string>,
@@ -355,7 +381,10 @@ export function resolveIdentities(
       account: group.account,
       tradeId: group.tradeId,
       referencesTradeId: first.execution.brokerIds.OrigTradeID ?? null,
-      merged: { ...first.execution, brokerIds: mergedBrokerIds },
+      merged: {
+        ...fillMissing(group.items.map((item) => item.execution)),
+        brokerIds: mergedBrokerIds,
+      },
       importRowIds: group.items.map((item) => item.importRowId),
       conflicted: false,
     });

@@ -126,6 +126,31 @@ describe("identity fingerprint uses broker-stable fields only (R04)", () => {
       expect(ledger.executions).toHaveLength(2);
     }));
 
+  it.each([
+    ["sparse first", false],
+    ["full first", true],
+  ])(
+    "keeps a broker-reported amount only one export carries (%s)",
+    async (_, fullFirst) =>
+      withStore(async (store) => {
+        const sparse = [stock("T1")];
+        const full = [
+          stock("T1", { FifoPnlRealized: "12.5", CostBasis: "50" }),
+        ];
+        await commitRows(store, "a.csv", fullFirst ? full : sparse);
+        await commitRows(store, "b.csv", fullFirst ? sparse : full);
+
+        const ledger = await ledgerOf(store);
+        expect(ledger.conflicts).toBe(0);
+        const t1 = ledger.executions.find(
+          (execution) => execution.brokerIds.TradeID === "T1",
+        );
+        expect(t1?.sources).toHaveLength(2);
+        expect(t1?.brokerPnl).toBe("12.5");
+        expect(t1?.basis).toBe("50");
+      }),
+  );
+
   it("deduplicates a re-export whose codes order and decimal formatting differ", async () =>
     withStore(async (store) => {
       await commitRows(store, "first.csv", [
