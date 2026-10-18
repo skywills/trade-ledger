@@ -110,7 +110,8 @@ container image already sets sensible defaults.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATA_DIR` | `/data` (image), `.data` (Node) | Writable root for the SQLite database, `originals/`, `transcripts/` and `backups/`. |
-| `PORT` | `3000` | HTTP port. The container binds `0.0.0.0`; Compose maps it to host loopback only. |
+| `HOST` | `127.0.0.1` (Node), `0.0.0.0` (image) | Listener bind address. `npm start` stays on loopback; the image binds `0.0.0.0` and Compose maps it to host loopback only. The app has no authentication, so never widen it on a host without an authenticating reverse proxy. |
+| `PORT` | `3000` | HTTP port. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations, e.g. `http://localhost:3000`. No path, no userinfo. |
 | `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header, e.g. `journal.lan:3000`. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` (any port) are always accepted. Every other Host, on every request, gets `421 HOST_NOT_ALLOWED`; this blocks DNS-rebinding reads. |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |

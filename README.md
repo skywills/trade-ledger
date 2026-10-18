@@ -60,7 +60,8 @@ image, never on `/data`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATA_DIR` | `/data` (image) | Writable root for SQLite, imports, transcripts, backups. |
-| `PORT` | `3000` | HTTP port; the container binds `0.0.0.0`. |
+| `HOST` | `127.0.0.1` (Node), `0.0.0.0` (image) | Listener bind address. The app has no authentication, so keep it on loopback outside a container. |
+| `PORT` | `3000` | HTTP port. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations (e.g. `http://localhost:3000`). |
 | `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` are always accepted; any other Host gets `421 HOST_NOT_ALLOWED` (DNS-rebinding defence). |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |

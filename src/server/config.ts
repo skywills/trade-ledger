@@ -4,6 +4,11 @@ import { ConfigurationError } from "../shared/errors.js";
 export interface AppConfig {
   dataDir: string;
   port: number;
+  /**
+   * Interface the HTTP listener binds. Loopback by default; the container
+   * image sets `0.0.0.0` so Docker's port mapping can reach it.
+   */
+  host: string;
   allowedOrigin: string;
   /**
    * Normalized `host[:port]` values accepted in the `Host` header, besides
@@ -71,6 +76,17 @@ function readAllowedOrigin(
     );
   }
   return url.origin;
+}
+
+function readHost(value: string | undefined): string {
+  if (value === undefined) return "127.0.0.1";
+  const host = value.trim();
+  if (host === "" || /[\s/@]/.test(host)) {
+    throw new ConfigurationError(
+      "HOST must be a hostname or IP address to bind, e.g. 127.0.0.1.",
+    );
+  }
+  return host;
 }
 
 /**
@@ -143,6 +159,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
     port,
     allowedOrigin,
     allowedHosts: readAllowedHosts(env.ALLOWED_HOSTS, allowedOrigin),
+    host: readHost(env.HOST),
     uploadLimitBytes: readUploadLimit(env.UPLOAD_LIMIT_BYTES),
     ...(staticDir === undefined || staticDir.trim() === ""
       ? {}

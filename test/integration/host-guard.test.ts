@@ -158,3 +158,13 @@ describe("allowed host configuration", () => {
     expect(() => readConfig({ ALLOWED_HOSTS: "a.example/path" })).toThrow();
   });
 });
+
+describe("listener bind configuration", () => {
+  it("binds loopback by default and honours HOST", () => {
+    expect(readConfig({}).host).toBe("127.0.0.1");
+    expect(readConfig({ HOST: "0.0.0.0" }).host).toBe("0.0.0.0");
+    expect(readConfig({ HOST: "::1" }).host).toBe("::1");
+    expect(() => readConfig({ HOST: " " })).toThrow();
+    expect(() => readConfig({ HOST: "http://0.0.0.0" })).toThrow();
+  });
+});
