@@ -750,3 +750,58 @@ test("open lifecycle shows known broker realized P&L independently from dated pr
     0,
   );
 });
+
+test("navigating to another lifecycle resets the unsaved campaign selection", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  state.campaigns.push({
+    id: "campaign-a",
+    name: "ABC wheel",
+    account: "U1",
+    currency: "USD",
+    underlyingKey: "ABC",
+    lifecycleIds: [],
+  });
+  await page.route("**/api/lifecycles/cycle-two*", (route) =>
+    route.fulfill({
+      json: {
+        buildId: "build-1",
+        ledgerId: "ledger",
+        stale: false,
+        generatedAt: "2026-10-18T00:00:00Z",
+        watermark: 0,
+        rebuildRequired: false,
+        lifecycle: other,
+        members: [],
+        executions,
+        suggestions: [],
+        valuation: null,
+        campaigns: state.campaigns,
+      },
+    }),
+  );
+  await page.goto("/lifecycles/cycle-one");
+  await page
+    .getByLabel("Campaign", { exact: true })
+    .selectOption({ label: "ABC wheel" });
+  await page.getByLabel("New campaign name").fill("draft name");
+  // In-app navigation, as a Link click does.
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/lifecycles/cycle-two");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(
+    page.getByRole("heading", { name: other.description }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Campaign", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("New campaign name")).toHaveValue("");
+  await page
+    .getByRole("button", { name: "Save campaign membership and rebuild" })
+    .click();
+  await expect.poll(() => state.decisions.length).toBe(1);
+  expect(state.decisions[0]?.payload).toEqual({
+    lifecycleId: other.id,
+    campaignId: null,
+  });
+});
