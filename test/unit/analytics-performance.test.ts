@@ -21,11 +21,12 @@ function run(
       closeDate: `2026-09-${String(20 + i).padStart(2, "0")}`,
     }),
   );
-  return aggregateAnalytics(s, { currency: "USD", basis });
+  return aggregateAnalytics(s, { unit: "strategy", currency: "USD", basis });
 }
 describe("performance analytics", () => {
   it("reconciles all 679 trades and 19 current opens", () => {
     const r = aggregateAnalytics(performanceFixture(), {
+      unit: "strategy",
       currency: "USD",
       basis: "broker",
     });
@@ -77,7 +78,11 @@ describe("performance analytics", () => {
       strategy({ id: "eur", currency: "EUR", brokerPnl: "99" }),
       strategy({ id: "undated", closeDate: null, brokerPnl: "100" }),
     ];
-    const r = aggregateAnalytics(s, { currency: "USD", basis: "broker" });
+    const r = aggregateAnalytics(s, {
+      unit: "strategy",
+      currency: "USD",
+      basis: "broker",
+    });
     expect(r.performance.pnl).toBe("2");
     expect(r.quality.undatedClosed).toBe(1);
     expect(r.byStrategyType.map((x) => x.pnl)).toEqual(["3", "-1"]);
@@ -92,7 +97,8 @@ describe("performance analytics", () => {
       ledger: null,
     });
     expect(
-      aggregateAnalytics(s, { basis: "broker" }).performance.pnl,
+      aggregateAnalytics(s, { unit: "strategy", basis: "broker" }).performance
+        .pnl,
     ).toBeNull();
     const r = run([null]);
     expect(r.monthly[0]).toMatchObject({ pnl: null, eligible: 0, missing: 1 });
@@ -122,12 +128,17 @@ describe("allocation attribution and estimates", () => {
       pnlEstimated: true,
       role: "close" as const,
     }));
-    const broker = aggregateAnalytics(s, { basis: "broker", currency: "USD" });
+    const broker = aggregateAnalytics(s, {
+      unit: "strategy",
+      basis: "broker",
+      currency: "USD",
+    });
     expect(broker.byUnderlying).toEqual([
       expect.objectContaining({ key: "__multi__", pnl: "5", closed: 1 }),
     ]);
     expect(broker.quality.estimatedClosed).toBe(1);
     const reconstructed = aggregateAnalytics(s, {
+      unit: "strategy",
       basis: "reconstructed",
       currency: "USD",
     });

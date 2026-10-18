@@ -57,24 +57,35 @@ describe("analytics scopes", () => {
   );
   it("defaults currency in sorted full-snapshot options and retains choices", () => {
     const s = fixture();
-    const a = resolveScope(s, parseAnalyticsQuery({}));
+    const a = resolveScope(s, parseAnalyticsQuery({ unit: "strategy" }));
     expect(a.query.currency).toBe("EUR");
     expect(a.options.currencies).toEqual(["EUR", "USD"]);
     expect(
-      resolveScope(s, parseAnalyticsQuery({ currency: "USD", symbol: "none" }))
-        .options,
+      resolveScope(
+        s,
+        parseAnalyticsQuery({
+          unit: "strategy",
+          currency: "USD",
+          symbol: "none",
+        }),
+      ).options,
     ).toEqual(a.options);
     expect(() =>
-      resolveScope(s, parseAnalyticsQuery({ currency: "JPY" })),
+      resolveScope(
+        s,
+        parseAnalyticsQuery({ unit: "strategy", currency: "JPY" }),
+      ),
     ).toThrow();
     expect(
-      resolveScope(snapshot(), parseAnalyticsQuery({})).query.currency,
+      resolveScope(snapshot(), parseAnalyticsQuery({ unit: "strategy" })).query
+        .currency,
     ).toBeUndefined();
   });
   it("keeps current opens outside period and excludes undated closed", () => {
     const a = resolveScope(
       fixture(),
       parseAnalyticsQuery({
+        unit: "strategy",
         currency: "USD",
         from: "2026-09-01",
         to: "2026-09-30",
@@ -88,12 +99,19 @@ describe("analytics scopes", () => {
     const s = fixture();
     const a = resolveScope(
       s,
-      parseAnalyticsQuery({ currency: "USD", strategyType: "spread" }),
+      parseAnalyticsQuery({
+        unit: "strategy",
+        currency: "USD",
+        strategyType: "spread",
+      }),
     );
     expect(a.executions.map((x) => x.key)).toEqual(["shared"]);
     expect(a.excludedUnallocated).toBe(1);
     expect(
-      resolveScope(s, parseAnalyticsQuery({ currency: "USD" })).executions,
+      resolveScope(
+        s,
+        parseAnalyticsQuery({ unit: "strategy", currency: "USD" }),
+      ).executions,
     ).toHaveLength(2);
   });
   it("attributes multi-underlying exclusively and separates exact symbol filters", () => {
@@ -115,22 +133,34 @@ describe("analytics scopes", () => {
     expect(
       resolveScope(
         s,
-        parseAnalyticsQuery({ currency: "USD", symbol: "B" }),
+        parseAnalyticsQuery({ unit: "strategy", currency: "USD", symbol: "B" }),
       ).closed.map((x) => x.id),
     ).toEqual(["within-period"]);
     expect(
       resolveScope(
         s,
-        parseAnalyticsQuery({ currency: "USD", underlying: "value:A" }),
+        parseAnalyticsQuery({
+          unit: "strategy",
+          currency: "USD",
+          underlying: "value:A",
+        }),
       ).closed,
     ).toHaveLength(0);
   });
   it("validates export scope but never accepts pagination", () => {
     expect(
-      parseExportQuery({ dataset: "strategies", scope: "current-open" }).scope,
+      parseExportQuery({
+        unit: "strategy",
+        dataset: "strategies",
+        scope: "current-open",
+      }).scope,
     ).toBe("current-open");
     expect(() =>
-      parseExportQuery({ dataset: "transactions", page: "2" }),
+      parseExportQuery({
+        unit: "strategy",
+        dataset: "transactions",
+        page: "2",
+      }),
     ).toThrow();
   });
 });

@@ -8,6 +8,9 @@ export function validDay(value: string): boolean {
 }
 const Day = z.string().refine(validDay, "Use a valid YYYY-MM-DD date.");
 const Fields = {
+  unit: z.enum(["lifecycle", "strategy"]).default("lifecycle"),
+  campaignId: z.string().min(1).optional(),
+  account: z.string().min(1).optional(),
   from: Day.optional(),
   to: Day.optional(),
   currency: z.string().min(1).optional(),
@@ -32,10 +35,14 @@ const Drill = {
 function dateOrder(q: { from?: string | undefined; to?: string | undefined }) {
   return !q.from || !q.to || q.from <= q.to;
 }
+function campaignMode(q: { unit: string; campaignId?: string | undefined }) {
+  return q.unit !== "strategy" || !q.campaignId;
+}
 export const AnalyticsQuerySchema = z
   .object(Fields)
   .strict()
-  .refine(dateOrder, "Start date must be on or before end date.");
+  .refine(dateOrder, "Start date must be on or before end date.")
+  .refine(campaignMode, "Campaign filters require lifecycle mode.");
 export const DetailQuerySchema = z
   .object({
     ...Fields,
@@ -47,7 +54,8 @@ export const DetailQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(100).default(25),
   })
   .strict()
-  .refine(dateOrder, "Invalid date range.");
+  .refine(dateOrder, "Invalid date range.")
+  .refine(campaignMode, "Campaign filters require lifecycle mode.");
 export const ExportQuerySchema = z
   .object({
     ...Fields,
@@ -55,8 +63,12 @@ export const ExportQuerySchema = z
     dataset: z.enum(["summary", "strategies", "transactions"]),
   })
   .strict()
-  .refine(dateOrder, "Invalid date range.");
-export type AnalyticsQuery = z.infer<typeof AnalyticsQuerySchema>;
+  .refine(dateOrder, "Invalid date range.")
+  .refine(campaignMode, "Campaign filters require lifecycle mode.");
+export type AnalyticsQuery = Omit<
+  z.infer<typeof AnalyticsQuerySchema>,
+  "unit"
+> & { unit?: "lifecycle" | "strategy" | undefined };
 export type DetailQuery = z.infer<typeof DetailQuerySchema>;
 export type ExportQuery = z.infer<typeof ExportQuerySchema>;
 
@@ -152,6 +164,14 @@ export const AnalyticsStrategySchema = z.object({
   reconstructedPnl: Amount,
   positions: z.array(PositionSchema),
   reasons: z.array(z.string()),
+  account: z.string().optional(),
+  stage: z
+    .enum(["options", "assigned_stock", "covered_call", "closed"])
+    .optional(),
+  originStrategyType: z.string().optional(),
+  campaignId: z.string().nullable().optional(),
+  componentIds: z.array(z.string()).optional(),
+  valuationAsOf: z.string().nullable().optional(),
 });
 export const AnalyticsExecutionSchema = z.object({
   key: z.string(),
@@ -205,6 +225,7 @@ export const ProvenanceSchema = z.object({
   generatedAt: z.string(),
 });
 export const AnalyticsResponseSchema = ProvenanceSchema.extend({
+  unit: z.enum(["lifecycle", "strategy"]).default("lifecycle"),
   filters: AnalyticsQuerySchema,
   options: z.object({
     currencies: z.array(z.string()),

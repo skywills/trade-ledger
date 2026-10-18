@@ -11,7 +11,11 @@ describe("transaction analytics", () => {
       a,
       execution({ key: "b", commission: "0.25", event: "unsupported" }),
     ];
-    const r = aggregateAnalytics(s, { currency: "USD", basis: "broker" });
+    const r = aggregateAnalytics(s, {
+      unit: "strategy",
+      currency: "USD",
+      basis: "broker",
+    });
     expect(r.transactions).toMatchObject({
       executions: 2,
       tradedSymbols: 1,
@@ -34,6 +38,7 @@ describe("transaction analytics", () => {
       execution({ key: `e${i}`, netCash: "0.1" }),
     );
     const r = aggregateAnalytics(s, {
+      unit: "strategy",
       currency: "USD",
       basis: "broker",
       from: "2026-09-01",
@@ -54,8 +59,11 @@ describe("transaction analytics", () => {
       execution({ key: "b", netCash: "0.000000001" }),
     ];
     expect(
-      aggregateAnalytics(s, { currency: "USD", basis: "broker" }).transactions
-        .netCash,
+      aggregateAnalytics(s, {
+        unit: "strategy",
+        currency: "USD",
+        basis: "broker",
+      }).transactions.netCash,
     ).toBe("100000000000000000000.12345679");
   });
 });

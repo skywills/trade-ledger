@@ -29,11 +29,18 @@ export function DetailTable({
         },
       }),
     );
+  const lifecycle = query.unit !== "strategy";
   const titles = {
-    closed: "Closed trades",
-    "current-open": "Current open trades",
-    unresolved: "Unresolved strategies",
-    "undated-closed": "Closed trades with unknown dates",
+    closed: lifecycle ? "Completed lifecycles" : "Closed strategy components",
+    "current-open": lifecycle
+      ? "Current open lifecycles"
+      : "Current open strategy components",
+    unresolved: lifecycle
+      ? "Unresolved lifecycles"
+      : "Unresolved strategy components",
+    "undated-closed": lifecycle
+      ? "Completed lifecycles with unknown dates"
+      : "Closed strategy components with unknown dates",
   };
   const title =
     query.kind === "transactions" ? "Transaction details" : titles[query.scope];
@@ -140,7 +147,9 @@ export function DetailTable({
               ? data.items.map((s) => (
                   <tr key={s.id}>
                     <td>
-                      <Link to={`/strategies/${encodeURIComponent(s.id)}`}>
+                      <Link
+                        to={`/${lifecycle ? "lifecycles" : "strategies"}/${encodeURIComponent(s.id)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
+                      >
                         {s.description || s.id}
                       </Link>
                     </td>

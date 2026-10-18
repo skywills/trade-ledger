@@ -40,6 +40,9 @@ export function serializeAnalyticsCsv(
     Object.fromEntries(
       Object.entries(query).filter(([k]) =>
         [
+          "unit",
+          "campaignId",
+          "account",
           "from",
           "to",
           "currency",
@@ -55,6 +58,9 @@ export function serializeAnalyticsCsv(
   const result = aggregateAnalytics(snapshot, base);
   const filters = result.filters;
   const meta = {
+    unit: filters.unit ?? "lifecycle",
+    campaignId: filters.campaignId ?? "",
+    account: filters.account ?? "",
     currency: filters.currency ?? "",
     from: filters.from ?? "",
     to: filters.to ?? "",
@@ -148,7 +154,9 @@ export function serializeAnalyticsCsv(
     const detail = parseDetailQuery({ ...rest, kind: dataset });
     const size =
       dataset === "strategies"
-        ? (snapshot.projection?.strategies.length ?? 0)
+        ? filters.unit === "lifecycle"
+          ? (snapshot.projection?.lifecycles?.lifecycles.length ?? 0)
+          : (snapshot.projection?.strategies.length ?? 0)
         : (snapshot.ledger?.executions.length ?? 0);
     const details = selectAnalyticsDetails(snapshot, {
       ...detail,
@@ -159,6 +167,11 @@ export function serializeAnalyticsCsv(
       dataset === "strategies"
         ? [
             "id",
+            "stage",
+            "originStrategyType",
+            "componentIds",
+            "reasons",
+            "valuationAsOf",
             "description",
             "type",
             "status",
@@ -189,7 +202,15 @@ export function serializeAnalyticsCsv(
           ];
     records =
       details.kind === "strategies"
-        ? details.items.map((s) => ({ ...s, ...meta }))
+        ? details.items.map((s) => ({
+            ...s,
+            ...meta,
+            campaignId: s.campaignId ?? meta.campaignId,
+            account: s.account ?? meta.account,
+            componentIds: JSON.stringify(s.componentIds ?? []),
+            reasons: JSON.stringify(s.reasons),
+            valuationAsOf: s.valuationAsOf ?? "",
+          }))
         : details.items.map((e) => ({
             ...e,
             symbol: e.instrument.symbol,

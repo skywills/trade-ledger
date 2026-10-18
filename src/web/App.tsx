@@ -4,6 +4,9 @@ import { DashboardPage } from "./dashboard/DashboardPage.js";
 import { ImportsPage } from "./imports/ImportsPage.js";
 import { JournalPage } from "./journal/JournalPage.js";
 import { StrategyDetail } from "./journal/StrategyDetail.js";
+import { CampaignDetail } from "./lifecycles/CampaignDetail.js";
+import { LifecycleDetail } from "./lifecycles/LifecycleDetail.js";
+import { LifecyclesPage } from "./lifecycles/LifecyclesPage.js";
 import { MaintenancePage } from "./maintenance/MaintenancePage.js";
 import { Link, useLocation } from "./navigation.js";
 import { ReviewPage } from "./review/ReviewPage.js";
@@ -34,6 +37,10 @@ function renderRoute(pathname: string) {
       ) : (
         <NotFound />
       );
+    case "lifecycles":
+      return second ? <LifecycleDetail id={second} /> : <LifecyclesPage />;
+    case "campaigns":
+      return second ? <CampaignDetail id={second} /> : <NotFound />;
     case "journal":
       return <JournalPage />;
     case "imports":
@@ -60,6 +67,11 @@ function renderRoute(pathname: string) {
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", match: ["dashboard"] },
   { to: "/chat", label: "Agent", match: ["chat"] },
+  {
+    to: "/lifecycles",
+    label: "Lifecycles",
+    match: ["lifecycles", "campaigns"],
+  },
   { to: "/journal", label: "Journal", match: ["journal", "strategies"] },
   { to: "/transactions", label: "Transactions", match: ["transactions"] },
   { to: "/imports", label: "Imports", match: ["imports"] },

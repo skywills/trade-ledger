@@ -7,6 +7,7 @@ import type {
   Strategy,
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
+import { ValuationSnapshotSchema } from "../../shared/lifecycles.js";
 import {
   findStrategyId,
   type StrategyAnchor,
@@ -20,6 +21,13 @@ import {
   normalizeLedger,
   readLedger,
 } from "../ledger/normalize.js";
+import { accountLifecycles } from "../lifecycles/accounting.js";
+import {
+  projectLifecycles,
+  validateMembership,
+} from "../lifecycles/project.js";
+import { readLifecycleAnchors } from "../lifecycles/repository.js";
+import { valueLifecycles } from "../lifecycles/valuation.js";
 import type { Store } from "../storage/database.js";
 import { loadLedgerSnapshot } from "../storage/ledger.js";
 import {
@@ -45,7 +53,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "strategies-v1";
+export const ALGORITHM_VERSION = "lifecycles-v1";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
@@ -142,6 +150,11 @@ export async function computeProjection(
     return key;
   };
   const provisional = groupStrategies(ledger, decisions, resolveId);
+  const origins = groupStrategies(
+    ledger,
+    decisions.filter((d) => d.kind !== "group_merge"),
+    resolveId,
+  );
   const remap = new Map<Id, Id>();
   for (const [key, anchor] of anchors) {
     remap.set(key, await strategyId(store, anchor));
@@ -150,6 +163,35 @@ export async function computeProjection(
     ledger,
     remapStrategyIds(provisional, remap),
   );
+  const lifecycles = accountLifecycles(
+    ledger,
+    projection,
+    projectLifecycles(
+      ledger,
+      projection,
+      decisions,
+      undefined,
+      remapStrategyIds(origins, remap),
+      readLifecycleAnchors(store.db),
+    ),
+  );
+  const snapshots = decisions
+    .filter((d) => d.kind === "lifecycle_valuation")
+    .map((d) => ValuationSnapshotSchema.parse(d.payload));
+  lifecycles.valuations = valueLifecycles(ledger, lifecycles, snapshots);
+  const conservation = validateMembership(
+    ledger,
+    projection,
+    lifecycles.members,
+  );
+  if (conservation.length)
+    throw new AppError(
+      "LIFECYCLE_CONSERVATION",
+      "Lifecycle memberships do not conserve source allocations.",
+      409,
+    );
+  projection.lifecycles = lifecycles;
+  projection.issues.push(...lifecycles.issues);
   return withLedgerIssues(projection, ledger.issues);
 }
 
@@ -327,7 +369,9 @@ export function activeProjection(store: Store): ActiveProjection {
   }
   return {
     buildId: build.id,
-    stale: inputsChanged(store, build),
+    stale:
+      inputsChanged(store, build) ||
+      build.algorithm_version !== ALGORITHM_VERSION,
     projection: loadProjection(store.db, build.id),
   };
 }

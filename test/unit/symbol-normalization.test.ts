@@ -80,7 +80,7 @@ describe("Berkshire symbol normalization", () => {
     const before = structuredClone(s);
     const result = aggregateAnalytics(
       s,
-      parseAnalyticsQuery({ currency: "USD" }),
+      parseAnalyticsQuery({ unit: "strategy", currency: "USD" }),
     );
     expect(result.byUnderlying).toEqual([
       expect.objectContaining({
@@ -115,7 +115,11 @@ describe("Berkshire symbol normalization", () => {
       const s = berkshireSnapshot();
       const exact = resolveScope(
         s,
-        parseAnalyticsQuery({ currency: "USD", symbol: alias }),
+        parseAnalyticsQuery({
+          unit: "strategy",
+          currency: "USD",
+          symbol: alias,
+        }),
       );
       expect(exact.executions.map((e) => e.key)).toEqual([
         "shares-0",
@@ -125,7 +129,11 @@ describe("Berkshire symbol normalization", () => {
       expect(exact.query.symbol).toBe("BRK.B");
       const underlying = resolveScope(
         s,
-        parseAnalyticsQuery({ currency: "USD", underlying: `value:${alias}` }),
+        parseAnalyticsQuery({
+          unit: "strategy",
+          currency: "USD",
+          underlying: `value:${alias}`,
+        }),
       );
       expect(underlying.closed.map((x) => x.id)).toEqual(["shares", "option"]);
       expect(underlying.executions).toHaveLength(4);
@@ -134,6 +142,7 @@ describe("Berkshire symbol normalization", () => {
         const details = selectAnalyticsDetails(
           s,
           parseDetailQuery({
+            unit: "strategy",
             currency: "USD",
             kind,
             groupBy: "underlying",
@@ -168,7 +177,11 @@ describe("Berkshire symbol normalization", () => {
     const rows = parse(
       serializeAnalyticsCsv(
         berkshireSnapshot(),
-        parseExportQuery({ currency: "USD", dataset: "transactions" }),
+        parseExportQuery({
+          unit: "strategy",
+          currency: "USD",
+          dataset: "transactions",
+        }),
       ).csv,
       { columns: true },
     ) as Record<string, string>[];

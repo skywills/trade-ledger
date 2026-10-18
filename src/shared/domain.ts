@@ -1,3 +1,4 @@
+import type { LifecycleProjection } from "./lifecycles.js";
 export type Id = string;
 export type DecimalText = string;
 
@@ -118,6 +119,7 @@ export interface Strategy {
 }
 
 export interface Projection {
+  lifecycles?: LifecycleProjection;
   ledgerId: Id;
   watermark: number;
   strategies: Strategy[];

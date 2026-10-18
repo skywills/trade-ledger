@@ -4,6 +4,7 @@ import { performanceFixture } from "../test/fixtures/analytics.js";
 const data = aggregateAnalytics(performanceFixture(), {
   currency: "USD",
   basis: "broker",
+  unit: "strategy",
 });
 async function stub(page: Page) {
   await page.route("**/api/analytics?*", (route) =>
@@ -17,7 +18,7 @@ test("dashboard routes preserve scope, controls, and existing navigation", async
   page,
 }) => {
   await stub(page);
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await expect(
     page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible();
@@ -37,7 +38,7 @@ test("custom range reports an error without losing entered dates", async ({
 }) => {
   await stub(page);
   await page.goto(
-    "/dashboard?preset=custom&from=2026-10-20&to=2026-10-01&currency=USD",
+    "/dashboard?unit=strategy&preset=custom&from=2026-10-20&to=2026-10-01&currency=USD",
   );
   await expect(page.getByRole("alert")).toContainText("Start date");
   await expect(page.getByLabel("From", { exact: true })).toHaveValue(
@@ -49,7 +50,7 @@ test("dashboard fits a small viewport and unknown views stay not found", async (
 }) => {
   await stub(page);
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto("/dashboard?currency=USD");
+  await page.goto("/dashboard?unit=strategy&currency=USD");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -105,7 +106,7 @@ test("retries failures and ignores late results from an earlier scope", async ({
       });
     }
   });
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await expect(
     page.getByText("Analytics temporarily unavailable"),
   ).toBeVisible();
@@ -113,13 +114,13 @@ test("retries failures and ignores late results from an earlier scope", async ({
   await page.getByRole("button", { name: /Retry/i }).click();
   await page.getByLabel("P&L basis").selectOption("reconstructed");
   await expect(
-    page.getByText("1 / 679 closed trades with reconstructed P&L", {
+    page.getByText("1 / 679 closed strategy components with reconstructed P&L", {
       exact: false,
     }),
   ).toBeVisible();
   await page.waitForTimeout(450);
   await expect(
-    page.getByText("1 / 679 closed trades with reconstructed P&L", {
+    page.getByText("1 / 679 closed strategy components with reconstructed P&L", {
       exact: false,
     }),
   ).toBeVisible();
@@ -128,18 +129,18 @@ test("Overview shows metrics, exact chart tables and strategy links", async ({
   page,
 }) => {
   await stub(page);
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await expect(page.getByTestId("metric-pnl")).toContainText("10456.24");
   await expect(page.getByTestId("metric-win-rate")).toContainText("70.84%");
   await expect(page.getByTestId("metric-closed")).toContainText("679");
   await expect(page.getByTestId("metric-open")).toContainText("19");
   await page
     .getByRole("button", {
-      name: "Show data table for Cumulative realized P&L",
+      name: "Show data table for Cumulative strategy P&L",
     })
     .click();
   await expect(
-    page.getByRole("table", { name: "Cumulative realized P&L data" }),
+    page.getByRole("table", { name: "Cumulative strategy P&L data" }),
   ).toContainText("10456.24");
   await expect(
     page.getByRole("link", { name: "Synthetic trade" }).first(),
@@ -176,10 +177,10 @@ test("Analysis exposes transaction analytics, filters and current-open drill-dow
       },
     }),
   );
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await page.getByTestId("metric-open").click();
   await expect(
-    page.getByRole("heading", { name: "Current open trades", exact: true }),
+    page.getByRole("heading", { name: "Current open strategy components", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("link", { name: "Back to analysis", exact: true })
@@ -234,7 +235,7 @@ test("changed-build drill-down offers explicit refresh", async ({ page }) => {
     ),
   );
   await page.goto(
-    "/dashboard/analysis?currency=USD&kind=strategies&expectedBuildId=old",
+    "/dashboard/analysis?unit=strategy&currency=USD&kind=strategies&expectedBuildId=old",
   );
   await expect(
     page.getByRole("button", { name: "Refresh analytics" }),
@@ -276,7 +277,7 @@ test("transaction pagination and sorting preserve server scope", async ({
       },
     });
   });
-  await page.goto("/dashboard/analysis?currency=USD&section=transactions");
+  await page.goto("/dashboard/analysis?unit=strategy&currency=USD&section=transactions");
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(page.getByText("Page 2 of 6", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Net cash/ }).click();
@@ -287,7 +288,7 @@ test("Reports keeps reviewed values and notes in a printable report", async ({
   page,
 }) => {
   await stub(page);
-  await page.goto("/dashboard/reports?currency=USD&preset=all");
+  await page.goto("/dashboard/reports?unit=strategy&currency=USD&preset=all");
   await expect(
     page.getByRole("heading", { name: "Trading report", exact: true }),
   ).toBeVisible();
@@ -343,7 +344,7 @@ test("CSV download uses the current scope and exposes failures", async ({
       body: '"metric","value"\r\n"pnl","10456.24"\r\n',
     });
   });
-  await page.goto("/dashboard/reports?currency=USD&preset=all");
+  await page.goto("/dashboard/reports?unit=strategy&currency=USD&preset=all");
   await page.getByRole("button", { name: "Export CSV", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("active build changed");
   failed = false;
@@ -445,7 +446,7 @@ test("themes, keyboard controls and responsive layouts remain readable", async (
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     for (const width of [375, 768, 1440]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto("/dashboard?currency=USD&preset=all");
+      await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
       await expect(page.getByTestId("metric-pnl")).toBeVisible();
       expect(
         await page.evaluate(
@@ -481,12 +482,12 @@ test("themes, keyboard controls and responsive layouts remain readable", async (
   }
   await page
     .getByRole("button", {
-      name: "Show data table for Cumulative realized P&L",
+      name: "Show data table for Cumulative strategy P&L",
     })
     .focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("table", { name: "Cumulative realized P&L data" }),
+    page.getByRole("table", { name: "Cumulative strategy P&L data" }),
   ).toBeVisible();
 });
 
@@ -516,7 +517,7 @@ test("saved detail export preserves the old build until explicit refresh", async
     });
   });
   await page.goto(
-    "/dashboard/analysis?currency=USD&kind=strategies&outcome=win&expectedBuildId=old",
+    "/dashboard/analysis?unit=strategy&currency=USD&kind=strategies&outcome=win&expectedBuildId=old",
   );
   await page.getByRole("button", { name: "Export CSV", exact: true }).click();
   expect(expected).toBe("old");
@@ -550,7 +551,7 @@ test("export build conflict has a refresh action that reloads the summary", asyn
           },
         });
   });
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await expect(page.getByTestId("metric-pnl")).toBeVisible();
   build = "new";
   await page.getByRole("button", { name: "Export CSV", exact: true }).click();
@@ -583,18 +584,18 @@ test("shared quality notices disclose and link excluded strategy scopes", async 
       },
     }),
   );
-  await page.goto("/dashboard?currency=USD&preset=all");
+  await page.goto("/dashboard?unit=strategy&currency=USD&preset=all");
   await expect(
     page.getByRole("link", {
-      name: "2 closed trades with unknown dates",
+      name: "2 closed strategy components with unknown dates",
       exact: true,
     }),
   ).toHaveAttribute("href", /scope=undated-closed.*expectedBuildId=build/);
   await expect(
-    page.getByRole("link", { name: "3 unresolved strategies", exact: true }),
+    page.getByRole("link", { name: "3 unresolved strategy components", exact: true }),
   ).toHaveAttribute("href", /scope=unresolved/);
   await expect(
-    page.getByText("4 closed trades include estimated broker P&L", {
+    page.getByText("4 closed strategy components include estimated broker P&L", {
       exact: true,
     }),
   ).toBeVisible();
@@ -622,7 +623,7 @@ test("printed reports identify every active membership filter", async ({
     }),
   );
   await page.goto(
-    "/dashboard/reports?currency=USD&preset=all&symbol=AXON&underlying=value%3AA&strategyType=stock&assetClass=STK",
+    "/dashboard/reports?unit=strategy&currency=USD&preset=all&symbol=AXON&underlying=value%3AA&strategyType=stock&assetClass=STK",
   );
   await page.emulateMedia({ media: "print" });
   const context = page.getByTestId("report-active-filters");
@@ -655,14 +656,14 @@ test("chart data tables preserve non-zero amounts smaller than a currency minor 
       },
     }),
   );
-  await page.goto("/dashboard?currency=USD");
+  await page.goto("/dashboard?unit=strategy&currency=USD");
   await page
     .getByRole("button", {
-      name: "Show data table for Cumulative realized P&L",
+      name: "Show data table for Cumulative strategy P&L",
     })
     .click();
   await expect(
-    page.getByRole("table", { name: "Cumulative realized P&L data" }),
+    page.getByRole("table", { name: "Cumulative strategy P&L data" }),
   ).toContainText("0.001");
 });
 
@@ -678,7 +679,7 @@ test("saved Berkshire alias URLs select canonical dashboard filters", async ({ p
   };
   await page.route("**/api/analytics?*", (route) => route.fulfill({ json: canonical }));
   for (const alias of ["BRK B", "BRK.B", "BRK-B"]) {
-    const params = new URLSearchParams({ currency: "USD", symbol: alias, underlying: `value:${alias}` });
+    const params = new URLSearchParams({ unit: "strategy", currency: "USD", symbol: alias, underlying: `value:${alias}` });
     const request = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/analytics");
     await page.goto(`/dashboard/analysis?${params}`);
     const sent = new URL((await request).url());

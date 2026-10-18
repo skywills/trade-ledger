@@ -10,14 +10,15 @@ export function rate(value: string | null): string {
 }
 export function KpiCards({ data }: { data: AnalyticsResponse }) {
   const p = data.performance;
+  const lifecycle = data.filters.unit !== "strategy";
   const money = (v: string | null) =>
     formatMoney(v, data.filters.currency ?? "");
   const main = [
     {
       key: "pnl",
-      label: "Realized P&L",
+      label: lifecycle ? "Completed lifecycle P&L" : "Strategy realized P&L",
       value: money(p.pnl),
-      detail: `${data.filters.currency ?? ""} · ${p.missing ? `${p.missing} missing values` : "Closed trades only"}`,
+      detail: `${data.filters.currency ?? ""} · ${p.missing ? `${p.missing} missing values` : lifecycle ? "Completed lifecycles only" : "Closed strategy components only"}`,
       scope: "closed",
     },
     {
@@ -29,14 +30,16 @@ export function KpiCards({ data }: { data: AnalyticsResponse }) {
     },
     {
       key: "closed",
-      label: "Closed trades",
+      label: lifecycle ? "Completed lifecycles" : "Closed strategy components",
       value: String(p.closed),
       detail: `${p.eligible} with available P&L`,
       scope: "closed",
     },
     {
       key: "open",
-      label: "Current open trades",
+      label: lifecycle
+        ? "Current open lifecycles"
+        : "Current open strategy components",
       value: String(p.open + p.partiallyClosed),
       detail: `${p.open} open · ${p.partiallyClosed} partially closed`,
       scope: "current-open",
@@ -84,7 +87,12 @@ export function KpiCards({ data }: { data: AnalyticsResponse }) {
                   ? "Unavailable"
                   : new Decimal(p.profitFactor.value).toFixed(2),
           },
-          { label: "Average P&L / trade", value: money(p.averagePnl) },
+          {
+            label: lifecycle
+              ? "Average P&L / lifecycle"
+              : "Average P&L / component",
+            value: money(p.averagePnl),
+          },
         ].map((c) => (
           <div key={c.label}>
             <span>{c.label}</span>

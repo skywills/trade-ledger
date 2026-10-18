@@ -107,6 +107,9 @@ export function registerJournalReset(
         for (const table of [
           "ai_runs",
           "chat_threads",
+          "lifecycle_projection_views",
+          "lifecycle_identities",
+          "campaign_identities",
           "strategy_links",
           "position_views",
           "strategy_allocations",

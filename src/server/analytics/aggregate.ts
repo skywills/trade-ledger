@@ -23,6 +23,14 @@ export function strategyResult(
     ...s,
     description: normalizeStrategyDescription(s.description),
     selectedPnl: selectedPnl(s, scope.query),
+    ...(scope.query.unit === "lifecycle"
+      ? {
+          valuationAsOf:
+            scope.snapshot.projection?.lifecycles?.valuations.find(
+              (value) => value.lifecycleId === s.id,
+            )?.asOf ?? null,
+        }
+      : {}),
     underlying: scope.attribution.get(s.id)?.underlying ?? "__unknown__",
     assetClass: scope.attribution.get(s.id)?.assetClass ?? "__unknown__",
   };
@@ -52,6 +60,7 @@ export function aggregateAnalytics(
   query: AnalyticsQuery,
 ): AnalyticsResponse {
   const scope = resolveScope(snapshot, query);
+  snapshot = scope.snapshot;
   const performance = summarizePerformance(scope);
   const transactions = summarizeTransactions(scope);
   const breakdown = (dim: "strategyType" | "underlying") => {
@@ -141,6 +150,7 @@ export function aggregateAnalytics(
       .map((s) => s.id),
   );
   return {
+    unit: scope.query.unit ?? "lifecycle",
     buildId: snapshot.buildId,
     ledgerId: snapshot.ledgerId,
     stale: snapshot.stale,

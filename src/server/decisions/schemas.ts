@@ -1,6 +1,14 @@
 import { z } from "zod";
 import type { Id, SourceRef } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
+import {
+  CampaignMembershipPayloadSchema,
+  CampaignPayloadSchema,
+  LifecycleAttachmentPayloadSchema,
+  LifecycleMembershipPayloadSchema,
+  LifecycleRejectionPayloadSchema,
+  ValuationSnapshotSchema,
+} from "../../shared/lifecycles.js";
 
 const DecimalText = z.string().regex(/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/);
 
@@ -126,7 +134,43 @@ const RejectionSchema = z.object({
   }),
 });
 
+const LifecycleAttachmentSchema = z.object({
+  kind: z.literal("lifecycle_attachment"),
+  ...CommonFields,
+  payload: LifecycleAttachmentPayloadSchema,
+});
+const LifecycleMembershipSchema = z.object({
+  kind: z.literal("lifecycle_membership"),
+  ...CommonFields,
+  payload: LifecycleMembershipPayloadSchema,
+});
+const LifecycleRejectionSchema = z.object({
+  kind: z.literal("lifecycle_attachment_rejection"),
+  ...CommonFields,
+  payload: LifecycleRejectionPayloadSchema,
+});
+const WheelCampaignSchema = z.object({
+  kind: z.literal("wheel_campaign"),
+  ...CommonFields,
+  payload: CampaignPayloadSchema,
+});
+const WheelMembershipSchema = z.object({
+  kind: z.literal("wheel_campaign_membership"),
+  ...CommonFields,
+  payload: CampaignMembershipPayloadSchema,
+});
+const LifecycleValuationSchema = z.object({
+  kind: z.literal("lifecycle_valuation"),
+  ...CommonFields,
+  payload: ValuationSnapshotSchema,
+});
 export const DECISION_KINDS = [
+  "lifecycle_attachment",
+  "lifecycle_membership",
+  "lifecycle_attachment_rejection",
+  "wheel_campaign",
+  "wheel_campaign_membership",
+  "lifecycle_valuation",
   "notes",
   "stop_loss",
   "manual_allocation",
@@ -143,6 +187,12 @@ export const DECISION_KINDS = [
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 
 export const DecisionInputSchema = z.discriminatedUnion("kind", [
+  LifecycleAttachmentSchema,
+  LifecycleMembershipSchema,
+  LifecycleRejectionSchema,
+  WheelCampaignSchema,
+  WheelMembershipSchema,
+  LifecycleValuationSchema,
   NotesSchema,
   StopLossSchema,
   ManualAllocationSchema,

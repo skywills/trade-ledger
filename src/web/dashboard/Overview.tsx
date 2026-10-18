@@ -7,13 +7,16 @@ import { AnalyticsChart } from "./Charts.js";
 import { KpiCards } from "./KpiCards.js";
 import { detailHref } from "./query.js";
 export function Overview({ data }: { data: AnalyticsResponse }) {
+  const lifecycle = data.filters.unit !== "strategy";
   const currency = data.filters.currency ?? "";
   return (
     <>
       <KpiCards data={data} />
       <div className="dashboard-charts-grid">
         <AnalyticsChart
-          title="Cumulative realized P&L"
+          title={
+            lifecycle ? "Completed lifecycle P&L" : "Cumulative strategy P&L"
+          }
           currency={currency}
           points={data.daily.map((p) => ({
             key: p.date,
@@ -25,7 +28,11 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
           }
         />
         <AnalyticsChart
-          title="Monthly realized P&L"
+          title={
+            lifecycle
+              ? "Monthly completed lifecycle P&L"
+              : "Monthly strategy P&L"
+          }
           currency={currency}
           variant="bar"
           points={data.monthly.map((p) => ({
@@ -96,13 +103,23 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
       </div>
       <article className="dashboard-panel">
         <div className="dashboard-panel-heading">
-          <h3>Recent closed trades</h3>
+          <h3>
+            {lifecycle
+              ? "Recent completed lifecycles"
+              : "Recent closed strategy components"}
+          </h3>
           <Link to={detailHref(data, { kind: "strategies" })}>
-            View all trades ↗
+            View all {lifecycle ? "lifecycles" : "components"} ↗
           </Link>
         </div>
         <TableScroll label="Recent trades scroll">
-          <table aria-label="Recent closed trades">
+          <table
+            aria-label={
+              lifecycle
+                ? "Recent completed lifecycles"
+                : "Recent closed strategy components"
+            }
+          >
             <thead>
               <tr>
                 <th>Trade</th>
@@ -115,7 +132,9 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
               {data.recent.map((s) => (
                 <tr key={s.id}>
                   <td>
-                    <Link to={`/strategies/${encodeURIComponent(s.id)}`}>
+                    <Link
+                      to={`/${lifecycle ? "lifecycles" : "strategies"}/${encodeURIComponent(s.id)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
+                    >
                       {s.description || s.id}
                     </Link>
                   </td>
