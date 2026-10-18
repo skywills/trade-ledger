@@ -348,22 +348,37 @@ describe("versioned builds, atomic activation and rollback", () => {
       await rebuild(store, input("full"));
       const original = activeProjection(store).buildId;
 
-      await appendDecision(
-        store,
-        manualAllocationInput({
-          strategyId: "over-allocated",
-          source: firstImportRow(store),
-          allocations: [
-            {
-              executionKey: firstExecutionKey(store),
-              quantity: "5",
-              netCash: "-100",
-              brokerPnl: null,
-            },
-          ],
-        }),
-        decisionWatermark(store),
-      );
+      // Submit-time validation rejects this allocation, so record it directly
+      // as a decision retained from before that validation existed.
+      const overAllocated = manualAllocationInput({
+        strategyId: "over-allocated",
+        source: firstImportRow(store),
+        allocations: [
+          {
+            executionKey: firstExecutionKey(store),
+            quantity: "5",
+            netCash: "-100",
+            brokerPnl: null,
+          },
+        ],
+      });
+      store.db
+        .prepare(
+          `INSERT INTO decisions (
+             id, sequence, kind, source_refs_json, strategy_ids_json,
+             payload_json, supersedes_id, client_request_id, author, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'test', ?)`,
+        )
+        .run(
+          randomUUID(),
+          decisionWatermark(store) + 1,
+          overAllocated.kind,
+          JSON.stringify(overAllocated.sources),
+          JSON.stringify(overAllocated.strategyIds),
+          JSON.stringify(overAllocated.payload),
+          overAllocated.clientRequestId,
+          new Date().toISOString(),
+        );
 
       const failed = await rebuild(store, input("full"));
       expect(failed.status).toBe("failed");
