@@ -418,7 +418,11 @@ export function DecisionEditor({
   ) {
     return <Loading label="Loading review editor…" testId="editor-loading" />;
   }
-  if (journal.status === "error" || imports.status === "error") {
+  if (
+    journal.status === "error" ||
+    imports.status === "error" ||
+    transactions.status === "error"
+  ) {
     return (
       <ErrorPanel
         message="Failed to load review data."
@@ -430,6 +434,22 @@ export function DecisionEditor({
       />
     );
   }
+
+  // The pickers read one page (the API maximum). Say so when a list is longer
+  // rather than silently hiding the rest.
+  const truncated = [
+    {
+      label: "strategies",
+      shown: strategies.length,
+      total: journal.data?.total,
+    },
+    { label: "imports", shown: importList.length, total: imports.data?.total },
+    {
+      label: "executions",
+      shown: executions.length,
+      total: transactions.data?.total,
+    },
+  ].filter((entry) => entry.total !== undefined && entry.total > entry.shown);
 
   const toggle = (
     list: string[],
@@ -458,6 +478,17 @@ export function DecisionEditor({
           ))}
         </ul>
       </div>
+
+      {truncated.length > 0 ? (
+        <div className="muted" data-testid="picker-truncated" role="status">
+          {truncated.map((entry) => (
+            <p key={entry.label}>
+              Showing the first {entry.shown} of {entry.total} {entry.label}.
+              Later {entry.label} cannot be picked here yet.
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       <p>
         <label>

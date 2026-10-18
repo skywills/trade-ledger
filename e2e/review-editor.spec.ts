@@ -1,7 +1,8 @@
 import { expect, type Page, test } from "playwright/test";
 
 /**
- * Browser acceptance for the manual decision editor's submit guards. The editor's inputs and the decisions endpoint are mocked,
+ * Browser acceptance for the manual decision editor's submit guards and
+ * picker coverage. The editor's inputs and the decisions endpoint are mocked,
  * so these tests never write to the shared e2e data directory.
  */
 
@@ -48,18 +49,25 @@ interface Posted {
 async function mockEditor(
   page: Page,
   options: {
+    journalTotal?: number;
+    transactionsStatus?: number;
     respond?: (posted: Posted[]) => { status: number; json: unknown };
   } = {},
 ) {
   const posted: Posted[] = [];
   await page.route("**/api/journal?*", (route) =>
-    route.fulfill({ json: envelope([strategy]) }),
+    route.fulfill({ json: envelope([strategy], options.journalTotal) }),
   );
   await page.route("**/api/imports?*", (route) =>
     route.fulfill({ json: envelope([importSummary]) }),
   );
   await page.route("**/api/transactions?*", (route) =>
-    route.fulfill({ json: envelope([]) }),
+    options.transactionsStatus === undefined
+      ? route.fulfill({ json: envelope([]) })
+      : route.fulfill({
+          status: options.transactionsStatus,
+          json: { code: "INTERNAL_ERROR", message: "transactions failed" },
+        }),
   );
   await page.route("**/api/decisions", async (route) => {
     posted.push(route.request().postDataJSON() as Posted);
@@ -152,4 +160,27 @@ test("retrying the same payload after a failure reuses its client request id", a
   await record.click();
   await expect.poll(() => posted.length).toBe(3);
   expect(posted[2]?.clientRequestId).not.toBe(posted[0]?.clientRequestId);
+});
+
+test("a failed transactions fetch shows an error instead of empty pickers", async ({
+  page,
+}) => {
+  await mockEditor(page, { transactionsStatus: 500 });
+  await page.goto("/review");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Failed to load review data." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Record decision" }),
+  ).toHaveCount(0);
+});
+
+test("pickers say when they show only the first page of a larger list", async ({
+  page,
+}) => {
+  await mockEditor(page, { journalTotal: 250 });
+  await page.goto("/review");
+  await expect(page.getByTestId("picker-truncated")).toContainText(
+    "Showing the first 1 of 250 strategies",
+  );
 });
