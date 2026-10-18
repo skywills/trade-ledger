@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { markBuildStatus } from "../../src/server/builds/repository.js";
 import {
   ALGORITHM_VERSION,
   activeProjection,
@@ -36,6 +37,7 @@ import type { Store } from "../../src/server/storage/database.js";
 import { accountProjection } from "../../src/server/strategies/accounting.js";
 import { groupStrategies } from "../../src/server/strategies/grouping.js";
 import type { Projection } from "../../src/shared/domain.js";
+import { AppError } from "../../src/shared/errors.js";
 import {
   buildExecutionTable,
   executionRow,
@@ -595,6 +597,91 @@ describe("versioned builds, atomic activation and rollback", () => {
       await expect(rollbackBuild(store, "failed-build")).rejects.toMatchObject({
         code: "BUILD_NOT_ROLLBACKABLE",
       });
+    }));
+
+  it("marks a candidate failed when the build throws after inserting it", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const original = await rebuild(store, input("full"));
+
+      await expect(
+        rebuild(store, input("full"), {
+          faults: {
+            afterCompute: () => {
+              throw new AppError("BUILD_EXPLODED", "Simulated failure.", 500);
+            },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "BUILD_EXPLODED" });
+
+      const candidate = store.db
+        .prepare(
+          `SELECT id, status, validation_json, finished_at FROM builds
+           WHERE id <> ? ORDER BY rowid DESC LIMIT 1`,
+        )
+        .get(original.id) as {
+        id: string;
+        status: string;
+        validation_json: string;
+        finished_at: string | null;
+      };
+      expect(candidate.status).toBe("failed");
+      expect(candidate.finished_at).not.toBeNull();
+      expect(JSON.parse(candidate.validation_json)).toEqual([
+        {
+          key: "build:BUILD_EXPLODED",
+          code: "BUILD_EXPLODED",
+          sources: [],
+          severity: "error",
+        },
+      ]);
+      expect(activeProjection(store).buildId).toBe(original.id);
+      await expect(rollbackBuild(store, candidate.id)).rejects.toMatchObject({
+        code: "BUILD_NOT_ROLLBACKABLE",
+      });
+    }));
+
+  it("restores only active or stale builds", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const first = await rebuild(store, input("full"));
+      store.db
+        .prepare(
+          `INSERT INTO builds (
+             id, ledger_build_id, decision_watermark, algorithm_version,
+             input_hash, status, validation_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "running-build",
+          activeLedgerId(store),
+          0,
+          ALGORITHM_VERSION,
+          "hash",
+          "running",
+          "[]",
+        );
+      await expect(rollbackBuild(store, "running-build")).rejects.toMatchObject(
+        { code: "BUILD_NOT_ROLLBACKABLE" },
+      );
+
+      // The status is checked again inside the switch: a build that fails
+      // after the rollback request was read is not activated.
+      const second = await rebuild(store, input("full"));
+      expect(second.status).toBe("active");
+      const failing = markBuildStatus(
+        store,
+        first.id,
+        "failed",
+        [],
+        new Date().toISOString(),
+      );
+      const rollback = rollbackBuild(store, first.id);
+      await failing;
+      await expect(rollback).rejects.toMatchObject({
+        code: "BUILD_NOT_ROLLBACKABLE",
+      });
+      expect(activeProjection(store).buildId).toBe(second.id);
     }));
 
   it("surfaces duplicate manual allocations as a review item instead of failing the build", async () =>
