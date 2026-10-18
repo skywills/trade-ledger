@@ -109,6 +109,9 @@ export function JournalPage() {
   return (
     <section>
       <h2>Journal</h2>
+      <p>
+        <Link to="/lifecycles">View complete trade lifecycles</Link>
+      </p>
       <BuildBadge
         buildId={remote.data?.buildId ?? null}
         stale={remote.data?.stale ?? false}

@@ -8,6 +8,10 @@ import type {
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { decisionWatermark } from "../decisions/service.js";
+import {
+  loadLifecycleProjection,
+  persistLifecycleProjection,
+} from "../lifecycles/repository.js";
 import { type Store, write } from "../storage/database.js";
 import { manifestHash } from "../storage/ledger.js";
 import { readCommittedImportRefs } from "./snapshot.js";
@@ -247,6 +251,9 @@ export async function persistProjection(
       );
     }
 
+    if (projection.lifecycles)
+      persistLifecycleProjection(db, buildId, projection.lifecycles);
+
     const insertIssue = db.prepare(
       `INSERT INTO review_items (
          build_id, stable_issue_key, reason, source_references_json,
@@ -424,7 +431,9 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
     severity: row.severity as Issue["severity"],
   }));
 
+  const lifecycles = loadLifecycleProjection(db, buildId);
   return {
+    ...(lifecycles ? { lifecycles } : {}),
     ledgerId: build.ledger_build_id,
     watermark: build.decision_watermark,
     strategies,

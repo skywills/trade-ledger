@@ -32,7 +32,10 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
       <p className="dashboard-report-provenance">
         Build {data.buildId} · Ledger {data.ledgerId}
         <br />
-        Generated {data.generatedAt}
+        Generated {data.generatedAt} ·{" "}
+        {data.filters.unit === "strategy"
+          ? "Strategy components"
+          : "Trade lifecycles"}
         {data.stale ? " · Stale: inputs changed since this build" : ""}
       </p>
       <div
@@ -40,6 +43,10 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
         data-testid="report-active-filters"
       >
         {[
+          data.filters.campaignId
+            ? `Campaign: ${data.filters.campaignId}`
+            : null,
+          data.filters.account ? `Account: ${data.filters.account}` : null,
           data.filters.symbol ? `Symbol: ${data.filters.symbol}` : null,
           data.filters.underlying
             ? `Underlying: ${data.options.underlyings.find((item) => item.key === data.filters.underlying)?.label ?? (data.filters.underlying === "__multi__" ? "Multi-underlying" : data.filters.underlying === "__unknown__" ? "Unknown" : data.filters.underlying.replace(/^value:/, ""))}`
@@ -62,7 +69,9 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
           <h3>Largest winners</h3>
           {data.best.map((s) => (
             <p className="dashboard-ranking" key={s.id}>
-              <Link to={`/strategies/${encodeURIComponent(s.id)}`}>
+              <Link
+                to={`/${data.filters.unit === "strategy" ? "strategies" : "lifecycles"}/${encodeURIComponent(s.id)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
+              >
                 {s.description || s.id}
               </Link>
               <strong>{formatMoney(s.selectedPnl, c)}</strong>
@@ -76,7 +85,9 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
           <h3>Largest losers</h3>
           {data.worst.map((s) => (
             <p className="dashboard-ranking" key={s.id}>
-              <Link to={`/strategies/${encodeURIComponent(s.id)}`}>
+              <Link
+                to={`/${data.filters.unit === "strategy" ? "strategies" : "lifecycles"}/${encodeURIComponent(s.id)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
+              >
                 {s.description || s.id}
               </Link>
               <strong>{formatMoney(s.selectedPnl, c)}</strong>
@@ -127,16 +138,29 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
         <ul>
           <li>
             P&amp;L coverage: {data.performance.eligible} of{" "}
-            {data.performance.closed} closed trades. Missing amounts are
-            excluded, never treated as zero.
+            {data.performance.closed}{" "}
+            {data.filters.unit === "strategy"
+              ? "closed strategy components"
+              : "completed lifecycles"}
+            . Missing amounts are excluded, never treated as zero.
           </li>
           <li>
-            {data.quality.undatedClosed} closed trades with unknown dates
-            excluded; {data.quality.unresolved} unresolved strategies.
+            {data.quality.undatedClosed}{" "}
+            {data.filters.unit === "strategy"
+              ? "closed strategy components"
+              : "completed lifecycles"}{" "}
+            with unknown dates excluded; {data.quality.unresolved} unresolved{" "}
+            {data.filters.unit === "strategy"
+              ? "strategy components"
+              : "lifecycles"}
+            .
           </li>
           <li>
-            {data.quality.estimatedClosed} closed trades include estimated
-            broker allocations.
+            {data.quality.estimatedClosed}{" "}
+            {data.filters.unit === "strategy"
+              ? "closed strategy components"
+              : "completed lifecycles"}{" "}
+            include estimated broker allocations.
           </li>
           <li>
             {data.quality.excludedUnallocated} unallocated executions excluded
@@ -145,8 +169,11 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
           <li>
             Current context:{" "}
             {data.performance.open + data.performance.partiallyClosed} open or
-            partially closed strategies in this build; this is not a historical
-            period-end position count.
+            partially closed{" "}
+            {data.filters.unit === "strategy"
+              ? "strategy components"
+              : "lifecycles"}{" "}
+            in this build; this is not a historical period-end position count.
           </li>
           <li>
             Dates follow normalized ledger calendar dates; unknown source

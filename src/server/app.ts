@@ -25,6 +25,7 @@ import { registerChatRoutes } from "./http/routes-chat.js";
 import { registerImportRoutes } from "./http/routes-imports.js";
 import { registerJobRoutes } from "./http/routes-jobs.js";
 import { registerJournalRoutes } from "./http/routes-journal.js";
+import { registerLifecycleRoutes } from "./http/routes-lifecycles.js";
 import { registerMaintenanceRoutes } from "./http/routes-maintenance.js";
 import { registerModelRoutes } from "./http/routes-models.js";
 import { registerReviewRoutes } from "./http/routes-review.js";
@@ -251,6 +252,7 @@ export async function createApp(
     await registerImportRoutes(app, store);
     await registerJournalRoutes(app, store);
     await registerAnalyticsRoutes(app, store);
+    await registerLifecycleRoutes(app, store);
     await registerReviewRoutes(app, store);
     await registerJobRoutes(app, store, jobs, scheduler);
     await registerModelRoutes(app, store, secrets);

@@ -8,6 +8,7 @@ import {
   useJson,
 } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
+import { LifecycleListSchema } from "../lifecycles/api.js";
 import { Link } from "../navigation.js";
 import { DecisionEditor, listDecisions } from "../review/DecisionEditor.js";
 import { collectActualExpiries } from "./expiries.js";
@@ -23,6 +24,7 @@ function sourceTarget(execution: Execution | undefined): string | null {
 
 /** Strategy detail: source precision, ledger allocations, lots and decisions. */
 export function StrategyDetail({ id }: { id: string }) {
+  const lifecycles = useJson("/api/lifecycles", LifecycleListSchema);
   const detail = useJson(`/api/strategies/${id}`, StrategyDetailSchema);
   const transactions = useJson(
     "/api/transactions?pageSize=100",
@@ -97,7 +99,17 @@ export function StrategyDetail({ id }: { id: string }) {
         stale={detail.data?.stale ?? false}
       />
 
-      {/* biome-ignore lint/a11y/useSemanticElements: WAI-ARIA tabs pattern */}
+      {(lifecycles.data?.lifecycles?.lifecycles ?? [])
+        .filter((l) => l.componentIds.includes(id))
+        .map((l) => (
+          <p key={l.id}>
+            <Link
+              to={`/lifecycles/${encodeURIComponent(l.id)}?expectedBuildId=${encodeURIComponent(lifecycles.data?.buildId ?? "")}`}
+            >
+              View full trade lifecycle: {l.description}
+            </Link>
+          </p>
+        ))}
       <div role="tablist" aria-label="Strategy views" onKeyDown={onTabKeyDown}>
         {TABS.map((name) => (
           <button

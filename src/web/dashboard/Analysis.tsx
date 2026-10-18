@@ -158,7 +158,9 @@ export function Analysis({
               {[...data.best.slice(0, 5), ...data.worst.slice(0, 5)].map(
                 (s) => (
                   <p className="dashboard-ranking" key={s.id}>
-                    <Link to={`/strategies/${encodeURIComponent(s.id)}`}>
+                    <Link
+                      to={`/${data.filters.unit === "strategy" ? "strategies" : "lifecycles"}/${encodeURIComponent(s.id)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
+                    >
                       {s.description || s.id}
                     </Link>
                     <strong

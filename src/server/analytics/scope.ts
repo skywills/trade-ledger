@@ -5,6 +5,7 @@ import {
   normalizeUnderlyingKey,
   underlyingSymbol,
 } from "../../shared/symbols.js";
+import { lifecycleExecutions, lifecycleSnapshot } from "./lifecycles.js";
 import { invalid } from "./query.js";
 import type { AnalyticsSnapshot } from "./snapshot.js";
 export const bucket = (values: readonly string[]): string => {
@@ -44,7 +45,7 @@ export interface AnalyticsOptions {
 }
 export interface AnalyticsScope {
   snapshot: AnalyticsSnapshot;
-  query: AnalyticsQuery;
+  query: AnalyticsQuery & { unit: "lifecycle" | "strategy" };
   options: AnalyticsOptions;
   closed: Strategy[];
   currentOpen: Strategy[];
@@ -82,6 +83,14 @@ export function resolveScope(
   snapshot: AnalyticsSnapshot,
   input: AnalyticsQuery,
 ): AnalyticsScope {
+  const lifecycleMode = input.unit !== "strategy";
+  if (!lifecycleMode && input.campaignId)
+    invalid("Campaign filters require lifecycle mode.");
+  if (lifecycleMode) snapshot = lifecycleSnapshot(snapshot);
+  const lifecycleData = snapshot.projection?.lifecycles;
+  const cycles = new Map(
+    (lifecycleData?.lifecycles ?? []).map((cycle) => [cycle.id, cycle]),
+  );
   const all = snapshot.projection?.strategies ?? [];
   const { exec, members } = index(snapshot);
   const executions = [...exec.values()];
@@ -118,6 +127,7 @@ export function resolveScope(
   };
   const query = {
     ...input,
+    unit: lifecycleMode ? ("lifecycle" as const) : ("strategy" as const),
     ...(input.symbol ? { symbol: normalizeSymbol(input.symbol) } : {}),
     ...(input.underlying
       ? { underlying: normalizeUnderlyingKey(input.underlying) }
@@ -129,6 +139,14 @@ export function resolveScope(
   const selected = all.filter(
     (s) =>
       s.currency === query.currency &&
+      (!query.campaignId ||
+        cycles.get(s.id)?.campaignId === query.campaignId) &&
+      (!query.account ||
+        (lifecycleMode
+          ? cycles.get(s.id)?.account === query.account
+          : (members.get(s.id) ?? []).some(
+              (e) => e.account === query.account,
+            ))) &&
       (!query.strategyType || s.type === query.strategyType) &&
       (!query.underlying ||
         attribution.get(s.id)?.underlying === query.underlying) &&
@@ -153,16 +171,26 @@ export function resolveScope(
   const baseExec = executions.filter(
     (e) =>
       e.currency === query.currency &&
+      (!query.account || e.account === query.account) &&
       inPeriod(e.date, query) &&
-      (!query.symbol ||
+      (lifecycleMode ||
+        !query.symbol ||
         normalizeSymbol(e.instrument.symbol) === query.symbol) &&
-      (!query.assetClass || e.instrument.assetClass === query.assetClass),
+      (lifecycleMode ||
+        !query.assetClass ||
+        e.instrument.assetClass === query.assetClass),
   );
-  const strategySpecific = Boolean(query.strategyType || query.underlying);
+  const strategySpecific = Boolean(
+    query.strategyType ||
+      query.underlying ||
+      query.campaignId ||
+      (lifecycleMode && (query.symbol || query.assetClass)),
+  );
   const scopedExec = baseExec.filter(
     (e) =>
       (!strategySpecific || allowed.has(e.key)) &&
-      (!query.underlying ||
+      (lifecycleMode ||
+        !query.underlying ||
         query.underlying === "__multi__" ||
         query.underlying === "__unknown__" ||
         `value:${underlyingSymbol(e.instrument)}` === query.underlying),
@@ -182,7 +210,10 @@ export function resolveScope(
     undatedClosed: selected.filter(
       (s) => s.status === "closed" && (!s.closeDate || !validDay(s.closeDate)),
     ),
-    executions: scopedExec,
+    executions:
+      lifecycleMode && strategySpecific
+        ? lifecycleExecutions(snapshot, selectedIds, scopedExec)
+        : scopedExec,
     excludedUnallocated: strategySpecific
       ? baseExec.filter((e) => !allocated.has(e.key)).length
       : 0,

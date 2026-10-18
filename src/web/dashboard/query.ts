@@ -25,6 +25,9 @@ export function localToday(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 const filterKeys = [
+  "unit",
+  "campaignId",
+  "account",
   "from",
   "to",
   "currency",
@@ -130,7 +133,11 @@ export function changeDashboard(
 ): DashboardQueryState {
   return {
     ...state,
-    query: { ...state.query, ...patch },
+    query: {
+      ...state.query,
+      ...patch,
+      ...(patch.unit === "strategy" ? { campaignId: undefined } : {}),
+    },
     detail: {},
     error: null,
   };

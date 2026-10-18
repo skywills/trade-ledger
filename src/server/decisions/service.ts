@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Id, SourceRef } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
+import { loadProjection, readActiveBuild } from "../builds/repository.js";
+import { retainedNormalizationInputsChanged } from "../builds/snapshot.js";
+import { LEDGER_PARSER_VERSION } from "../ledger/normalize.js";
+import { validateLifecycleDecision } from "../lifecycles/validate-decision.js";
 import { type Store, write } from "../storage/database.js";
+import { loadLedgerSnapshot } from "../storage/ledger.js";
+import { groupStrategies } from "../strategies/grouping.js";
+import { findStrategyId, strategyAnchorKey } from "./registry.js";
 import {
   DECISION_KINDS,
   type DecisionInput,
@@ -572,6 +579,64 @@ export async function appendDecision(
       return readDecisionRow(row);
     }
     validateDecisionInput(store, input, current);
+    if (
+      input.kind.startsWith("lifecycle_") ||
+      input.kind.startsWith("wheel_")
+    ) {
+      const build = readActiveBuild(store.db);
+      if (!build)
+        throw new AppError(
+          "LIFECYCLE_REBUILD_REQUIRED",
+          "Rebuild before editing lifecycles.",
+          409,
+        );
+      const projection = loadProjection(store.db, build.id);
+      if (!projection.lifecycles)
+        throw new AppError(
+          "LIFECYCLE_REBUILD_REQUIRED",
+          "Rebuild before editing lifecycles.",
+          409,
+        );
+      if (
+        retainedNormalizationInputsChanged(
+          store,
+          build.ledger_build_id,
+          current,
+          LEDGER_PARSER_VERSION,
+        )
+      )
+        throw new AppError(
+          "STALE_INPUT",
+          "Rebuild after import changes before editing lifecycles.",
+          409,
+        );
+      const ledger = loadLedgerSnapshot(store.db, build.ledger_build_id);
+      const prior = effectiveDecisions(readDecisions(store, current)).filter(
+        (d) => d.id !== input.supersedesId,
+      );
+      const origins = groupStrategies(
+        ledger,
+        prior.filter((d) => d.kind !== "group_merge"),
+        (account, openingKeys) =>
+          findStrategyId(store, { account, openingKeys }) ??
+          strategyAnchorKey({ account, openingKeys }),
+      );
+      validateLifecycleDecision(
+        ledger,
+        projection,
+        prior,
+        {
+          id: "__validate__",
+          sequence: current + 1,
+          kind: input.kind,
+          payload: input.payload,
+          sources: input.sources,
+          strategyIds: input.strategyIds,
+          supersedesId: input.supersedesId,
+        },
+        origins,
+      );
+    }
     const id = randomUUID();
     const sequence = current + 1;
     store.db

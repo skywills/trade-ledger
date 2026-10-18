@@ -7,11 +7,11 @@ describe("analytics export HTTP", () => {
     const t = await analyticsApp();
     try {
       const page = await t.app.inject(
-        "/api/analytics/details?kind=strategies&currency=USD&page=2",
+        "/api/analytics/details?unit=strategy&kind=strategies&currency=USD&page=2",
       );
       expect(page.json().items).toHaveLength(25);
       const r = await t.app.inject(
-        "/api/analytics/export?dataset=strategies&currency=USD",
+        "/api/analytics/export?unit=strategy&dataset=strategies&currency=USD",
       );
       expect(r.statusCode).toBe(200);
       expect(r.headers["content-type"]).toContain("text/csv");
@@ -22,12 +22,12 @@ describe("analytics export HTTP", () => {
       expect(
         (
           await t.app.inject(
-            "/api/analytics/export?dataset=summary&expectedBuildId=old",
+            "/api/analytics/export?unit=strategy&dataset=summary&expectedBuildId=old",
           )
         ).statusCode,
       ).toBe(409);
       const opens = await t.app.inject(
-        "/api/analytics/export?dataset=strategies&scope=current-open&currency=USD&to=2000-01-01",
+        "/api/analytics/export?unit=strategy&dataset=strategies&scope=current-open&currency=USD&to=2000-01-01",
       );
       expect(parse(opens.body, { columns: true })).toHaveLength(19);
     } finally {

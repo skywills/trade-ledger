@@ -30,6 +30,21 @@ export function DashboardFilters({
     <div className="dashboard-filters">
       <div className="dashboard-filter-row">
         <label>
+          Count by
+          <select
+            value={state.query.unit ?? "lifecycle"}
+            onChange={(e) =>
+              change({
+                unit: e.target.value as "lifecycle" | "strategy",
+                campaignId: undefined,
+              })
+            }
+          >
+            <option value="lifecycle">Trade lifecycles</option>
+            <option value="strategy">Strategy components</option>
+          </select>
+        </label>
+        <label>
           Period
           <select
             value={state.preset}

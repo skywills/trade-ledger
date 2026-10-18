@@ -21,7 +21,11 @@ describe("analytics CSV", () => {
     ];
     const out = serializeAnalyticsCsv(
       s,
-      parseExportQuery({ currency: "USD", dataset: "transactions" }),
+      parseExportQuery({
+        unit: "strategy",
+        currency: "USD",
+        dataset: "transactions",
+      }),
     );
     const rows = parse(out.csv, { columns: true }) as Record<string, string>[];
     expect(rows[0]?.symbol).toBe('\' =HYPERLINK("x")');
@@ -36,6 +40,7 @@ describe("analytics CSV", () => {
       serializeAnalyticsCsv(
         s,
         parseExportQuery({
+          unit: "strategy",
           currency: "USD",
           dataset: "strategies",
           outcome: "win",
@@ -47,7 +52,11 @@ describe("analytics CSV", () => {
     const all = parse(
       serializeAnalyticsCsv(
         s,
-        parseExportQuery({ currency: "USD", dataset: "summary" }),
+        parseExportQuery({
+          unit: "strategy",
+          currency: "USD",
+          dataset: "summary",
+        }),
       ).csv,
     );
     expect(all[0]).toEqual([
@@ -55,6 +64,9 @@ describe("analytics CSV", () => {
       "key",
       "metric",
       "value",
+      "unit",
+      "campaignId",
+      "account",
       "currency",
       "from",
       "to",
@@ -65,7 +77,7 @@ describe("analytics CSV", () => {
       "coverageKnown",
       "coverageTotal",
     ]);
-    expect(all.every((r: string[]) => r.length === 13)).toBe(true);
+    expect(all.every((r: string[]) => r.length === 16)).toBe(true);
     expect(
       all.some((r: string[]) => r[2] === "pnl" && r[3] === "10456.24"),
     ).toBe(true);
@@ -75,14 +87,18 @@ describe("analytics CSV", () => {
       parse(
         serializeAnalyticsCsv(
           snapshot(),
-          parseExportQuery({ dataset: "strategies" }),
+          parseExportQuery({ unit: "strategy", dataset: "strategies" }),
         ).csv,
       ),
     ).toHaveLength(1);
     expect(() =>
       serializeAnalyticsCsv(
         performanceFixture(),
-        parseExportQuery({ dataset: "summary", expectedBuildId: "old" }),
+        parseExportQuery({
+          unit: "strategy",
+          dataset: "summary",
+          expectedBuildId: "old",
+        }),
       ),
     ).toThrow();
   });

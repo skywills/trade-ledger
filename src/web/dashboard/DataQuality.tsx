@@ -3,6 +3,12 @@ import { Link } from "../navigation.js";
 import { detailHref } from "./query.js";
 export function DataQuality({ data }: { data: AnalyticsResponse }) {
   const q = data.quality;
+  const closed =
+    data.filters.unit === "strategy"
+      ? "closed strategy components"
+      : "completed lifecycles";
+  const units =
+    data.filters.unit === "strategy" ? "strategy components" : "lifecycles";
   if (
     !q.undatedClosed &&
     !q.unresolved &&
@@ -19,8 +25,8 @@ export function DataQuality({ data }: { data: AnalyticsResponse }) {
       <h3>Data quality</h3>
       {data.performance.missing > 0 && (
         <p>
-          {data.performance.missing} closed trades have unavailable P&amp;L.
-          Totals show the available subtotal.
+          {data.performance.missing} {closed} have unavailable P&amp;L. Totals
+          show the available subtotal.
         </p>
       )}
       {q.undatedClosed > 0 && (
@@ -31,7 +37,7 @@ export function DataQuality({ data }: { data: AnalyticsResponse }) {
               scope: "undated-closed",
             })}
           >
-            {q.undatedClosed} closed trades with unknown dates
+            {q.undatedClosed} {closed} with unknown dates
           </Link>{" "}
           · excluded from period totals
         </p>
@@ -41,14 +47,14 @@ export function DataQuality({ data }: { data: AnalyticsResponse }) {
           <Link
             to={detailHref(data, { kind: "strategies", scope: "unresolved" })}
           >
-            {q.unresolved} unresolved strategies
+            {q.unresolved} unresolved {units}
           </Link>{" "}
           · excluded from closed-trade performance
         </p>
       )}
       {q.estimatedClosed > 0 && (
         <p>
-          {q.estimatedClosed} closed trades include estimated broker P&amp;L
+          {q.estimatedClosed} {closed} include estimated broker P&amp;L
         </p>
       )}
       {q.excludedUnallocated > 0 && (

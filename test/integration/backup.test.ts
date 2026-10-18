@@ -140,6 +140,8 @@ describe("consistent backup and offline restore", () => {
       await seedStore(store);
       const originalDecisions = readDecisions(store, decisionWatermark(store));
       const originalStrategies = activeProjection(store).projection?.strategies;
+      const originalLifecycles = activeProjection(store).projection?.lifecycles;
+      expect(originalLifecycles?.members.length).toBeGreaterThan(0);
 
       const manifest = await createBackup(store, archive);
       expect(manifest.decisionWatermark).toBe(decisionWatermark(store));
@@ -156,6 +158,18 @@ describe("consistent backup and offline restore", () => {
         );
         expect(activeProjection(restored).projection?.strategies).toEqual(
           originalStrategies,
+        );
+        expect(activeProjection(restored).projection?.lifecycles).toEqual(
+          originalLifecycles,
+        );
+        await rebuild(restored, {
+          mode: "projection",
+          parserVersion: LEDGER_PARSER_VERSION,
+          algorithmVersion: ALGORITHM_VERSION,
+          signal: new AbortController().signal,
+        });
+        expect(activeProjection(restored).projection?.lifecycles).toEqual(
+          originalLifecycles,
         );
       });
       void dataDir;

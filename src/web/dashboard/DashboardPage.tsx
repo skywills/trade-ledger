@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ExportQuerySchema } from "../../shared/analytics.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
+import { BuildAction } from "../lifecycles/BuildAction.js";
 import { Link, navigate, useLocation } from "../navigation.js";
 import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
@@ -115,14 +116,21 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         <ErrorPanel
           message={remote.error?.message ?? "Unable to load analytics."}
           onRetry={remote.reload}
-        />
+        >
+          {remote.error?.code === "LIFECYCLE_REBUILD_REQUIRED" && (
+            <BuildAction onBuilt={refreshAnalytics} />
+          )}
+        </ErrorPanel>
       ) : data ? (
         <>
           <div className="dashboard-provenance">
             <BuildBadge buildId={data.buildId} stale={data.stale} />
             <span>
-              {data.performance.eligible} / {data.performance.closed} closed
-              trades with{" "}
+              {data.performance.eligible} / {data.performance.closed}{" "}
+              {data.filters.unit === "strategy"
+                ? "closed strategy components"
+                : "completed lifecycles"}{" "}
+              with{" "}
               {data.filters.basis === "broker" ? "broker" : "reconstructed"}{" "}
               P&amp;L · {data.filters.currency ?? "No currency"}
             </span>

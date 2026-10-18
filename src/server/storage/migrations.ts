@@ -22,6 +22,10 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
     url: new URL("./migrations/004_build_projection.sql", import.meta.url),
   },
   { version: 5, url: new URL("./migrations/005_chat.sql", import.meta.url) },
+  {
+    version: 6,
+    url: new URL("./migrations/006_trade_lifecycles.sql", import.meta.url),
+  },
 ];
 
 export const CURRENT_SCHEMA_VERSION =

@@ -256,3 +256,14 @@ The dashboard design and implementation plan are in `superpowers/specs/2026-10-1
 Browser fixtures separate mocked presentation/race checks from a real import/rebuild test covering 150 closed stock roundtrips and 300 executions, re-import idempotency, six detail pages, and import-row provenance. Responsive checks cover 375/768/1440px in light and dark modes with reduced motion; metric contrast and keyboard chart-table access are asserted. Report tests generate a PDF under `/tmp` for manual pagination inspection; temporary artifacts are not committed.
 
 Run the repository gates: `npm run check:all`, `npm test`, `npm run test:build-smoke`, and `npm run test:e2e`. No live broker account, AI credentials, model server, or external market feed is needed. Existing whole-repository lint warnings are baseline; the new analytics modules and tests should introduce none.
+
+
+## Trade lifecycles and wheel campaigns
+
+Lifecycle performance is the dashboard default; choose Strategy components to inspect the previous counting unit. Rebuild historical projections after upgrading; no CSV re-upload is required. A lifecycle remains open across assignment, assigned shares, covered-call expiry/buyback, partial share sales, and retained protective puts. Only a complete flat cycle contributes one win/loss observation. Campaigns group completed/open cycles without an extra performance observation.
+
+Check assignment → covered-call confirmation → later close import → call-away through `test/integration/lifecycle-acceptance.test.ts`. That test verifies one USD 800 completed cycle and unchanged identity/results after presentation merging. Unit regressions cover shared disposals, whole-contract slices, ambiguous partial call closes, overlapping reservations, timezone evidence, protective puts, incomplete broker reporting, quarantined execution cash, and marks. API tests pin source provenance, build mismatches, decision replay, idempotency, and unbuilt imports. Browser tests cover previews/corrections/campaigns/manual prices, counting-unit URLs, unavailable values, historical rebuild recovery, and a narrow viewport.
+
+Combined reconstructed P&L includes retained execution net cash once, including fees already present in NetCash. Missing broker P&L stays unavailable; select reconstructed basis for a complete lifecycle cashflow result. Manual valuations require dated prices for all remaining instruments; they are estimates before future exit costs and never determine win/loss. Dividends, interest, borrowing charges, and unimported transfers are outside execution-cashflow totals.
+
+For a multi-contract call split across cycles, a partial close that cannot be attributed as whole contracts stays in quantity review. Confirm its complete source partition before treating either affected cycle as final. Journal reset removes lifecycle/campaign identities; database backup/restore retains build-scoped lifecycle data through the existing SQLite mechanism.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALGORITHM_VERSION,
   activeProjection,
   computeProjection,
   rebuild,
@@ -306,7 +307,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -369,7 +370,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       let watermark = decisionWatermark(store);
@@ -387,7 +388,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -441,7 +442,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -498,7 +499,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -554,7 +555,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -610,7 +611,7 @@ describe("P1 strategy chronology and merge boundaries", () => {
       const result = await rebuild(store, {
         mode: "full",
         parserVersion: "flex-v1",
-        algorithmVersion: "strategies-v1",
+        algorithmVersion: ALGORITHM_VERSION,
         signal: new AbortController().signal,
       });
       expect(result.status).toBe("active");
@@ -1443,7 +1444,7 @@ async function storeBuild(store: Store): Promise<void> {
   await rebuild(store, {
     mode: "full",
     parserVersion: "flex-v1",
-    algorithmVersion: "strategies-v1",
+    algorithmVersion: ALGORITHM_VERSION,
     signal: new AbortController().signal,
   });
 }
