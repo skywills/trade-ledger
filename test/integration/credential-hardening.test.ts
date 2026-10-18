@@ -7,7 +7,9 @@ import { createSecretResolver } from "../../src/server/ai/credentials.js";
 import {
   type ProfileInput,
   saveProfile,
+  snapshotProfile,
 } from "../../src/server/ai/profiles.js";
+import { openModelConnection } from "../../src/server/ai/transport.js";
 import { createApp } from "../../src/server/app.js";
 import { readConfig } from "../../src/server/config.js";
 import {
@@ -99,6 +101,28 @@ describe("cloud endpoint transport", () => {
         name: profile.name,
       });
     }
+  });
+});
+
+describe("stored cloud profiles at connection time", () => {
+  it("refuses to open a plain-http cloud connection saved before the https rule", async () => {
+    const store = await testStore();
+    const saved = await saveProfile(
+      store,
+      input({ name: "legacy", endpoint: "https://llm.corp.example/v1" }),
+      null,
+    );
+    // Simulate a profile persisted before endpoint validation existed.
+    store.db
+      .prepare("UPDATE llm_profiles SET base_url = ? WHERE id = ?")
+      .run("http://llm.corp.example/v1", saved.id);
+    const resolver = createSecretResolver({
+      env: { OPENAI_API_KEY: "sk-must-not-leave" },
+      allowedFileRoots: [],
+    });
+    await expect(
+      openModelConnection(snapshotProfile(store, saved.id), resolver),
+    ).rejects.toMatchObject({ code: "INSECURE_ENDPOINT" });
   });
 });
 

@@ -236,7 +236,7 @@ const LOOPBACK_HOSTNAME = /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i;
  * Cloud profiles send `Authorization: Bearer <key>`, so their endpoint must be
  * https unless it stays on this machine (e.g. a local TLS-less gateway).
  */
-function requireSecureCloudEndpoint(endpoint: string): void {
+export function requireSecureCloudEndpoint(endpoint: string): void {
   const url = new URL(endpoint);
   if (url.protocol === "https:" || LOOPBACK_HOSTNAME.test(url.hostname)) {
     return;
