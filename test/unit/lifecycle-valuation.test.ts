@@ -66,7 +66,7 @@ it("values from the newest snapshot that marks every open position", () => {
   });
 });
 
-it("does not report a closed lifecycle's reconciliation gap as unrealized", () => {
+it("reports a closed lifecycle's unrealized P&L as the spec residual to broker-realized", () => {
   const f = assigned(true);
   const p = accountLifecycles(
     f.ledger,
@@ -79,7 +79,7 @@ it("does not report a closed lifecycle's reconciliation gap as unrealized", () =
   expect(valueLifecycles(f.ledger, p, [])[0]).toMatchObject({
     totalPnl: "-150",
     realizedBrokerPnl: "0",
-    unrealizedPnl: "0",
+    unrealizedPnl: "-150",
   });
 });
 

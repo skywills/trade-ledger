@@ -45,14 +45,16 @@ export function valueLifecycles(
       estimated: true,
       reasons: [],
     };
-    // A closed lifecycle has no remaining exposure. Any difference between
-    // reconstructed and broker-realized P/L is a reconciliation gap, not
-    // unrealized P/L.
+    // Per the lifecycle spec, unrealized is the residual to broker-realized
+    // P/L; for a closed lifecycle it is the reconciliation gap.
     if (l.status === "closed")
       return {
         ...base,
         totalPnl: l.reconstructedPnl,
-        unrealizedPnl: "0",
+        unrealizedPnl:
+          l.reconstructedPnl !== null && realized.value !== null
+            ? new Decimal(l.reconstructedPnl).minus(realized.value).toFixed()
+            : null,
         estimated: false,
       };
     const positions = l.positions.filter(
