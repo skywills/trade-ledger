@@ -424,7 +424,7 @@ export function ModelsPanel() {
             Credential ref{" "}
             <input
               value={draft.credentialRef}
-              placeholder="env:MY_KEY or file:/run/secrets/key"
+              placeholder="env:MY_PROVIDER_API_KEY or file:/run/secrets/key"
               onChange={(event) => update("credentialRef", event.target.value)}
             />
           </label>{" "}
