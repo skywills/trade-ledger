@@ -751,6 +751,67 @@ test("open lifecycle shows known broker realized P&L independently from dated pr
   );
 });
 
+test("double-clicking a lifecycle save records exactly one decision", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  await page.route("**/api/decisions", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await route.fallback();
+  });
+  await page.goto("/lifecycles/cycle-one");
+  await page.getByLabel("New campaign name").fill("ABC wheel");
+  await page
+    .getByRole("button", { name: "Create campaign and rebuild" })
+    .dblclick();
+  await expect(page.getByTestId("build-id")).toContainText("build-2");
+  expect(state.decisions.map((d) => d.kind)).toEqual(["wheel_campaign"]);
+});
+
+test("retrying after a failed rebuild only rebuilds and does not append the decision again", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  let failBuild = true;
+  await page.route("**/api/jobs/job", (route) =>
+    route.fulfill({
+      json: {
+        job: {
+          id: "job",
+          kind: "build",
+          status: failBuild ? "failed" : "complete",
+          progress: null,
+          error: failBuild ? "rebuild exploded" : null,
+          input: {},
+          createdAt: "2026-10-18T00:00:00Z",
+          finishedAt: "2026-10-18T00:00:01Z",
+        },
+      },
+    }),
+  );
+  let builds = 0;
+  await page.route("**/api/builds", (route) => {
+    builds++;
+    return route.fallback();
+  });
+  await page.goto("/lifecycles/cycle-one");
+  await page.getByLabel("New campaign name").fill("ABC wheel");
+  await page
+    .getByRole("button", { name: "Create campaign and rebuild" })
+    .click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "rebuild exploded" }),
+  ).toBeVisible();
+  expect(state.decisions).toHaveLength(1);
+  failBuild = false;
+  await page.getByRole("button", { name: "Retry rebuild" }).click();
+  await expect(
+    page.getByText("Decision saved and journal rebuilt."),
+  ).toBeVisible();
+  expect(state.decisions).toHaveLength(1);
+  expect(builds).toBe(2);
+});
+
 test("navigating to another lifecycle resets the unsaved campaign selection", async ({
   page,
 }) => {

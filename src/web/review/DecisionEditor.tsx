@@ -121,7 +121,14 @@ export function DecisionEditor({
     kind: string;
   } | null>(null);
   const [lastSequence, setLastSequence] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  // Synchronous guard: a second click can land before React re-renders the
+  // disabled button.
+  const inFlight = useRef(false);
+  // One clientRequestId per built payload, reused when the same payload is
+  // retried so the server's idempotency check can recognise the repeat.
+  const pendingRequest = useRef<{ key: string; id: string } | null>(null);
 
   useEffect(() => {
     if (error !== null) errorRef.current?.focus();
@@ -330,11 +337,22 @@ export function DecisionEditor({
     if (built !== null) setPreview(built);
   }
 
+  function requestIdFor(built: Built): string {
+    const key = JSON.stringify(built.payload);
+    if (pendingRequest.current?.key !== key) {
+      pendingRequest.current = { key, id: crypto.randomUUID() };
+    }
+    return pendingRequest.current.id;
+  }
+
   async function submit(built: Built) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSubmitting(true);
     setError(null);
     setResult(null);
     const body: Record<string, unknown> = {
-      clientRequestId: crypto.randomUUID(),
+      clientRequestId: requestIdFor(built),
       author: "user",
       supersedesId: null,
       ...built.payload,
@@ -347,6 +365,7 @@ export function DecisionEditor({
         "POST",
         body,
       );
+      pendingRequest.current = null;
       const sequence = response.decision.sequence;
       setLastSequence(sequence);
       setResult({ sequence, kind: response.decision.kind });
@@ -378,10 +397,14 @@ export function DecisionEditor({
       } else {
         setError(String(caught));
       }
+    } finally {
+      inFlight.current = false;
+      setSubmitting(false);
     }
   }
 
   function onRecord() {
+    if (inFlight.current) return;
     resetFrivolous();
     setError(null);
     const built = validate();
@@ -749,10 +772,18 @@ export function DecisionEditor({
         <div className="preview" data-testid="decision-preview">
           <h4>Confirm this decision</h4>
           <p>{preview.summary}</p>
-          <button type="button" onClick={() => void submit(preview)}>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void submit(preview)}
+          >
             Confirm decision
           </button>
-          <button type="button" onClick={() => setPreview(null)}>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => setPreview(null)}
+          >
             Cancel
           </button>
         </div>
@@ -778,11 +809,11 @@ export function DecisionEditor({
 
       {preview === null ? (
         kindDef.consequential ? (
-          <button type="button" onClick={onPreview}>
+          <button type="button" disabled={submitting} onClick={onPreview}>
             Preview decision
           </button>
         ) : (
-          <button type="button" onClick={onRecord}>
+          <button type="button" disabled={submitting} onClick={onRecord}>
             Record decision
           </button>
         )
