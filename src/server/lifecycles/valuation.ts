@@ -45,31 +45,36 @@ export function valueLifecycles(
       estimated: true,
       reasons: [],
     };
+    // A closed lifecycle has no remaining exposure. Any difference between
+    // reconstructed and broker-realized P/L is a reconciliation gap, not
+    // unrealized P/L.
     if (l.status === "closed")
       return {
         ...base,
         totalPnl: l.reconstructedPnl,
-        unrealizedPnl:
-          l.reconstructedPnl !== null && realized.value !== null
-            ? new Decimal(l.reconstructedPnl).minus(realized.value).toFixed()
-            : null,
+        unrealizedPnl: "0",
         estimated: false,
       };
     const positions = l.positions.filter(
       (position) => !new Decimal(position.quantity).isZero(),
     );
-    const snapshot = [...snapshots]
+    const marks = (s: ValuationSnapshot, key: string): boolean =>
+      s.marks.some((mark) => mark.instrumentKey === key);
+    const applicable = [...snapshots]
       .filter(
         (s) =>
           s.account === l.account &&
           s.currency === l.currency &&
-          s.marks.some((mark) =>
-            positions.some(
-              (position) => position.instrumentKey === mark.instrumentKey,
-            ),
-          ),
+          positions.some((position) => marks(s, position.instrumentKey)),
       )
-      .sort((a, b) => Date.parse(b.asOf) - Date.parse(a.asOf))[0];
+      .sort((a, b) => Date.parse(b.asOf) - Date.parse(a.asOf));
+    // Prefer the newest snapshot that marks every open position; marks are
+    // never combined across timestamps. Without one, the newest applicable
+    // snapshot reports which marks are missing.
+    const snapshot =
+      applicable.find((s) =>
+        positions.every((position) => marks(s, position.instrumentKey)),
+      ) ?? applicable[0];
     if (!snapshot) return { ...base, reasons: ["VALUATION_UNAVAILABLE"] };
     base.asOf = snapshot.asOf;
     base.source = "manual";
@@ -85,7 +90,7 @@ export function valueLifecycles(
       Date.parse(snapshot.asOf) > Date.now()
     )
       return { ...base, reasons: ["VALUATION_HISTORY_INCOMPLETE"] };
-    const marks = new Map(
+    const prices = new Map(
       snapshot.marks.map((m) => [m.instrumentKey, m.price]),
     );
     let total = new Decimal(l.cashflow ?? "0");
@@ -93,7 +98,7 @@ export function valueLifecycles(
       const instrument = ledger.executions.find(
         (e) => e.instrument.key === pos.instrumentKey,
       )?.instrument;
-      const mark = marks.get(pos.instrumentKey);
+      const mark = prices.get(pos.instrumentKey);
       const multiplier =
         instrument?.assetClass === "STK" ? "1" : instrument?.multiplier;
       if (
