@@ -311,13 +311,15 @@ export async function rebuild(
   } catch (error) {
     // A candidate must never stay "running" after its build gave up: record
     // why it failed so it is retained as diagnostics and never restorable.
+    // The original error is always the one surfaced; if this write fails too,
+    // startup recovery still fails the candidate.
     await markBuildStatus(
       store,
       buildId,
       "failed",
       [buildFailureIssue(error)],
       now().toISOString(),
-    );
+    ).catch(() => undefined);
     throw error;
   }
 }
