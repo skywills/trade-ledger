@@ -86,7 +86,10 @@ in `.env` in the image; pass them at run time.
 Pass credentials through the environment or mounted secret files, never
 through the image, a backup or a log. In a model profile:
 
-- `env:NAME` reads the process environment variable `NAME`.
+- `env:NAME_API_KEY` reads the process environment variable `NAME_API_KEY`.
+  Only uppercase names ending in `_API_KEY` (e.g. `OPENAI_API_KEY`) are
+  allowed, so a profile can never read other process secrets.
+- A `cloud` profile endpoint must use `https://` unless it is on loopback.
 - `file:/secrets/key` reads an allowlisted file under `JOURNAL_SECRETS_DIR`.
   Mount that directory read-only, for example `./secrets:/secrets:ro`.
 

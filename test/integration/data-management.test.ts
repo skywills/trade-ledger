@@ -48,7 +48,7 @@ describe("portable model configuration", () => {
       context.store,
       {
         ...profileInput("portable", "http://localhost:11434/v1"),
-        credentialRef: "env:PORTABLE_KEY",
+        credentialRef: "env:PORTABLE_API_KEY",
         pricing: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
       },
       null,
@@ -61,7 +61,7 @@ describe("portable model configuration", () => {
       profiles: [
         {
           name: "portable",
-          credentialRef: "env:PORTABLE_KEY",
+          credentialRef: "env:PORTABLE_API_KEY",
           pricing: { input: 1, output: 2 },
         },
       ],
@@ -80,7 +80,7 @@ describe("portable model configuration", () => {
     expect(models.defaultProfileId).toBeNull();
     expect(models.profiles[0]).toMatchObject({
       name: "portable",
-      credentialRef: "env:PORTABLE_KEY",
+      credentialRef: "env:PORTABLE_API_KEY",
       compatibility: { status: "unchecked" },
     });
     const selected = await target.app.inject({

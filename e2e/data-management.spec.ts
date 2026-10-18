@@ -3,7 +3,7 @@ import { expect, test } from "playwright/test";
 test("imports and exports model configuration in Maintenance", async ({ page, request }) => {
   await page.goto("/maintenance");
   await expect(page.getByRole("link", { name: "Export model configuration", exact: true })).toBeVisible();
-  const profile = { name: `portable-ui-${Date.now()}`, mode: "local", provider: "openai", protocol: "openai-completions", endpoint: "http://localhost:11434/v1", modelId: "local", contextWindow: 8192, maxTokens: 1024, timeoutSeconds: 10, supportsTools: true, thinkingLevels: ["off"], credentialRef: "env:PORTABLE_KEY" };
+  const profile = { name: `portable-ui-${Date.now()}`, mode: "local", provider: "openai", protocol: "openai-completions", endpoint: "http://localhost:11434/v1", modelId: "local", contextWindow: 8192, maxTokens: 1024, timeoutSeconds: 10, supportsTools: true, thinkingLevels: ["off"], credentialRef: "env:PORTABLE_API_KEY" };
   await page.getByLabel("Import model configuration").setInputFiles({ name: "models.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({ version: 1, profiles: [profile] })) });
   await expect(page.getByRole("status")).toContainText("Imported 1 model profile");
   await expect(page.getByTestId(`model-row-${profile.name}`)).toContainText("Not verified");
@@ -11,7 +11,7 @@ test("imports and exports model configuration in Maintenance", async ({ page, re
   await page.getByRole("link", { name: "Export model configuration", exact: true }).click();
   expect((await download).suggestedFilename()).toBe("model-configuration.json");
   const exported = await request.get("/api/models/configuration");
-  expect((await exported.json()).profiles).toContainEqual(expect.objectContaining({ name: profile.name, credentialRef: "env:PORTABLE_KEY" }));
+  expect((await exported.json()).profiles).toContainEqual(expect.objectContaining({ name: profile.name, credentialRef: "env:PORTABLE_API_KEY" }));
 });
 
 test("shows reset scope and requires typed confirmation", async ({ page, request }) => {

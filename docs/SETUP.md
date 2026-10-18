@@ -210,11 +210,15 @@ profile under **Maintenance → Models**:
 - **Name** — a label.
 - **Mode** — `local` (uses a documented placeholder key and never borrows an
   ambient cloud credential) or `cloud`.
-- **Endpoint** — the OpenAI-compatible base URL, including `/v1`.
+- **Endpoint** — the OpenAI-compatible base URL, including `/v1`. A `cloud`
+  endpoint must use `https://` unless it is on loopback (`localhost`,
+  `127.0.0.1`, `[::1]`), so its key is never sent in cleartext.
 - **Provider** / **Protocol** — the wire adapter to use.
 - **Model id**, **Thinking levels**, **Context window**, **Max tokens**,
   **Timeout (s)** — model parameters.
-- **Credential ref** — `env:NAME` reads environment variable `NAME`;
+- **Credential ref** — `env:NAME_API_KEY` reads environment variable
+  `NAME_API_KEY` (only uppercase names ending in `_API_KEY`, e.g.
+  `env:OPENAI_API_KEY`, are allowed);
   `file:/absolute/path` reads an allowlisted file under `JOURNAL_SECRETS_DIR`.
   Leave empty for local endpoints that need no key.
 - **Supports tools** — must be enabled for a profile to pass compatibility,
@@ -238,9 +242,9 @@ configured/missing status, never its value.
 # Pass a key via the environment
 docker run --rm -p 127.0.0.1:3000:3000 -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
-  -e MY_PROVIDER_KEY=sk-... \
+  -e MY_PROVIDER_API_KEY=sk-... \
   trade-ledger
-# then set the profile credential ref to: env:MY_PROVIDER_KEY
+# then set the profile credential ref to: env:MY_PROVIDER_API_KEY
 ```
 
 ```bash

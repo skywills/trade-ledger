@@ -207,7 +207,7 @@ describe("local model profiles and guarded transport", () => {
     const store = await testStore();
     const cloudServer = await server({ mode: "tool-call" });
     const realised = createSecretResolver({
-      env: { JOURNAL_TEST_CLOUD_KEY: "sk-real-cloud-key-value" },
+      env: { JOURNAL_TEST_CLOUD_API_KEY: "sk-real-cloud-key-value" },
       allowedFileRoots: [],
     });
     const profile = await saveProfile(
@@ -216,7 +216,7 @@ describe("local model profiles and guarded transport", () => {
         name: "cloud",
         endpoint: cloudServer.url,
         mode: "cloud",
-        credentialRef: "env:JOURNAL_TEST_CLOUD_KEY",
+        credentialRef: "env:JOURNAL_TEST_CLOUD_API_KEY",
       }),
       null,
     );
@@ -450,7 +450,7 @@ describe("local model profiles and guarded transport", () => {
         name: "cloud-default",
         endpoint: cloudServer.url,
         mode: "cloud",
-        credentialRef: "env:JOURNAL_TEST_CLOUD_KEY",
+        credentialRef: "env:JOURNAL_TEST_CLOUD_API_KEY",
       }),
       null,
     );
@@ -563,7 +563,7 @@ describe("model profile HTTP routes", () => {
   it("creates, lists, tests and defaults a profile without leaking secrets", async () => {
     const localServer = await server({ mode: "tool-call" });
     const cloudServer = await server({ mode: "tool-call" });
-    process.env.JOURNAL_ROUTE_KEY = "sk-route-secret-value";
+    process.env.JOURNAL_ROUTE_API_KEY = "sk-route-secret-value";
     try {
       const app = await routeApp();
 
@@ -612,7 +612,7 @@ describe("model profile HTTP routes", () => {
           name: "route-cloud",
           endpoint: cloudServer.url,
           mode: "cloud",
-          credentialRef: "env:JOURNAL_ROUTE_KEY",
+          credentialRef: "env:JOURNAL_ROUTE_API_KEY",
         }),
       });
       expect(cloud.statusCode, cloud.body).toBe(201);
@@ -634,7 +634,7 @@ describe("model profile HTTP routes", () => {
       });
       expect(unconfirmed.statusCode).toBe(409);
     } finally {
-      delete process.env.JOURNAL_ROUTE_KEY;
+      delete process.env.JOURNAL_ROUTE_API_KEY;
     }
   });
 

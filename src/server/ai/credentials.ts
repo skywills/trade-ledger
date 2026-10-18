@@ -22,6 +22,12 @@ import type { ProfileMode } from "./profiles.js";
 export const LOCAL_PLACEHOLDER_API_KEY = "journal-local-no-key-required";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/**
+ * The only environment variables a profile may read: provider-style API key
+ * names such as `OPENAI_API_KEY`. Without this, an imported profile could point
+ * `env:AWS_SECRET_ACCESS_KEY` (or any other process secret) at its endpoint.
+ */
+const ALLOWED_ENV_NAME = /^[A-Z][A-Z0-9_]*_API_KEY$/;
 const URL_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*@/i;
 
 export type CredentialKind = "none" | "env" | "file";
@@ -96,6 +102,25 @@ function parseRef(ref: string): ParsedRef {
   );
 }
 
+function envNotAllowed(): AppError {
+  return new AppError(
+    "CREDENTIAL_REF_NOT_ALLOWED",
+    "An env: credential reference must name an uppercase *_API_KEY variable, e.g. env:OPENAI_API_KEY.",
+    400,
+  );
+}
+
+/**
+ * Throws CREDENTIAL_REF_NOT_ALLOWED for an `env:` reference outside the
+ * `*_API_KEY` allowlist. Syntax errors are left to `isValidCredentialRef`.
+ * `file:` containment depends on the runtime secrets directory, so it is
+ * enforced when the reference is resolved instead.
+ */
+export function assertCredentialRefAllowed(ref: unknown): void {
+  if (typeof ref !== "string" || !ref.startsWith("env:")) return;
+  if (!ALLOWED_ENV_NAME.test(ref.slice("env:".length))) throw envNotAllowed();
+}
+
 /** Whether a ref is syntactically a supported reference (does not resolve it). */
 export function isValidCredentialRef(ref: unknown): boolean {
   if (ref === null || ref === undefined) return true;
@@ -159,6 +184,7 @@ export function createSecretResolver(
       }
       const parsed = parseRef(ref);
       if (parsed.kind === "env") {
+        if (!ALLOWED_ENV_NAME.test(parsed.name)) throw envNotAllowed();
         const value = options.env[parsed.name];
         return value === undefined || value === "" ? null : value;
       }
@@ -193,7 +219,11 @@ export function createSecretResolver(
           ref,
           kind: "env",
           label: parsed.name,
-          configured: value !== undefined && value !== "",
+          // A pre-existing out-of-allowlist ref is reported, never resolved.
+          configured:
+            ALLOWED_ENV_NAME.test(parsed.name) &&
+            value !== undefined &&
+            value !== "",
         };
       }
       const allowed = options.allowedFileRoots.some((root) =>
