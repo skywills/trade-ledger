@@ -6,7 +6,9 @@ Reviewed branch: `main`
 
 Reviewed HEAD: `a90a92c` (`Merge pull request #8 from skywills/feature/trade-lifecycles`)
 
-Status: **12 high/medium findings open — no critical findings**
+Status: **R01–R12 resolved on `fix/review-2026-10-19` (one sub-point of R06 withdrawn as spec-conformant); R13–R24 low findings open**
+
+See [Resolution — 2026-10-19](#resolution--2026-10-19) for the fixes, the review of those fixes, and the residual risks. The findings below describe the reviewed baseline `a90a92c`.
 
 ## Scope and method
 
@@ -206,3 +208,63 @@ There is no FIFO lot matching. A close larger than any single opening group is n
 4. R03: restore hardening.
 5. Add coverage reporting and `test:build-smoke` to CI, then write `WriterQueue` tests.
 6. R04 and R05: validate against a real IBKR export.
+
+## Resolution — 2026-10-19
+
+Branch: `fix/review-2026-10-19` (based on `a90a92c`). Every fix was written test-first, with a failing test before the change. A second, independent review of the fix diff was then run, and its follow-ups were applied.
+
+### Per-finding status
+
+| ID | Status | Fix | Tests | Commits |
+|---|---|---|---|---|
+| R01 | Fixed | `assertConservingAllocations` in `src/server/decisions/service.ts` rejects unknown execution keys (`UNKNOWN_EXECUTION`) and zero quantities. It then runs the build's own `validateProjection` with and without the candidate, and rejects only the `ALLOCATION_*` errors the candidate introduces, so submit and build cannot disagree. Superseded decisions are excluded. | `test/integration/decisions.test.ts` (2 new). Two existing tests that relied on invalid allocations were adjusted. | `2ff990c` |
+| R02 | Fixed | `rebuild()` marks a thrown candidate `failed` with a `build:<code>` diagnostic and rethrows the original error. That still holds if marking it failed itself fails. Rollback accepts only `active`/`stale` builds and re-checks inside the write (`isRestorable` in `switchActiveBuild`). | `test/integration/builds.test.ts` (2 new, including a deterministic rollback race) | `07c0673`, `aee9569` |
+| R03 | Fixed | **Lock and validation:** the data-dir lock is held for the whole restore. Unlisted archive entries are rejected before extraction. The staged DB is opened read-only for `integrity_check`, and its schema version is read from `schema_migrations`. **Swap:** staging now lives inside the data dir, and the swap goes entry by entry, so restore works on a `/data` mount point. The previous contents are kept in `<data>/.pre-restore-*`. **Errors:** filesystem failures return `RESTORE_FAILED` (500), not `BACKUP_INVALID`. **Interrupted swap:** a `.restore-in-progress` marker is written before the swap. Startup refuses with `RESTORE_INCOMPLETE` while it exists, instead of creating an empty journal. | `test/integration/restore-hardening.test.ts` (10). The `backup.test.ts` pre-restore test was updated. | `7d12910`, `39f602c` |
+| R04 | Fixed | The fingerprint now covers account, raw datetime, quantity, price, currency, commission and the instrument's broker identifiers, with decimals compared by value. It was never persisted, so stored identities are unchanged. When duplicate rows merge, proceeds, taxes, basis and broker P&L are filled from whichever source has them, regardless of import order. | `test/integration/identity-fingerprint.test.ts` (7, covering both import orders) | `c3d18c3`, `7221279` |
+| R05 | Fixed | Confirmed from the spec (cost basis is on every execution row) and the IBKR-shaped fixture (`CostBasis` set on ordinary trades). `hasBasisTransfer` now checks only assignment, exercise and unsupported events. | `test/unit/accounting.test.ts` (1 new, 1 updated) | `a6d7c37` |
+| R06 | Fixed, one part withdrawn | Valuation uses the newest snapshot that marks every open position. Marks are still never combined across timestamps, and `VALUATION_MARKS_INCOMPLETE` is reported only when no snapshot is complete. **Withdrawn:** reporting closed-lifecycle unrealized P&L as `0`. The [lifecycle spec](../superpowers/specs/2026-10-18-trade-lifecycles-design.md) defines `unrealizedPnl = totalPnl − realizedBrokerPnl` as a labelled residual, so the original behaviour is kept. | `test/unit/lifecycle-valuation.test.ts` | `528fc4a`, `847aed4` |
+| R07 | Fixed | A global Host allowlist hook returns 421 `HOST_NOT_ALLOWED` on every method and on static and SPA routes. It allows the `ALLOWED_ORIGIN` host, `ALLOWED_HOSTS`, and loopback on any port. | `test/integration/host-guard.test.ts` (8) | `108ffc9` |
+| R08 | Fixed | New `HOST` setting, default `127.0.0.1`. The Dockerfile and Compose set `0.0.0.0` (Compose still publishes on loopback only). | `test/integration/host-guard.test.ts` | `e4c0b32` |
+| R09 | Fixed | **https:** a cloud profile must use `https:` unless it is on loopback (`INSECURE_ENDPOINT`). This is checked on save and on import, and again when a connection opens, so profiles stored before the rule are covered too. **env refs:** `env:` credential refs must match `*_API_KEY`. | `test/integration/credential-hardening.test.ts` (7) | `762ac7d`, `56cb395`, `b6b9790` |
+| R10 | Fixed | **DecisionEditor:** a ref-based in-flight guard, and buttons disabled while a request is pending. One `clientRequestId` per payload (keyed by JSON value), reused on retry and cleared after success. **Lifecycle saves:** the decision and the rebuild are separate calls, and "Retry rebuild" only rebuilds. | `e2e/review-editor.spec.ts` (5), `e2e/lifecycles.spec.ts` (3) | `e7b9e73` |
+| R11 | Fixed | `key={second}` on `LifecycleDetail`, `CampaignDetail` and `StrategyDetail`. | `e2e/lifecycles.spec.ts` | `41e19a6` |
+| R12 | Fixed | A failed transactions fetch shows the error panel. Pickers show "Showing the first N of T" when the API's `total` exceeds the page. The notice was chosen over fetching every page because the transaction count has no upper bound. | `e2e/review-editor.spec.ts` | `9ddfa26` |
+
+### Review of the fixes
+
+Three independent reviewers read the fix diff and found no high-severity issues. Their medium findings were handled as follows:
+
+- **R04, applied:** merged duplicates used to keep the first row's values silently, which could hide a broker amount a later re-export carries. The merge now fills omitted amounts. The first version of the regression test passed only because of source ordering (`compareSources` sorts by `importId`), so it now runs in both import orders.
+- **R06, applied:** zeroing closed-lifecycle unrealized P&L contradicted the spec, and was reverted.
+- **R09, applied:** stored plain-http cloud profiles were not re-checked when used. They are now checked in `openModelConnection`.
+- **R03, applied:** a crash mid-swap would let the next start create an empty journal silently. The new in-progress marker covers this.
+- **R02, applied:** a failing failure-mark could replace the original error, which is now always the one surfaced.
+- **R01, accepted:** the submit-time check regroups the whole ledger twice inside the write transaction. That is acceptable for a single-user journal. Revisit if ledgers grow large (see Maintainability 3).
+- **Frontend:** no issues found.
+
+### Behaviour changes to note
+
+- **HOST default:** outside Docker the server now listens on `127.0.0.1`. Set `HOST=0.0.0.0` for LAN access.
+- **ALLOWED_HOSTS:** behind a reverse proxy or a custom hostname, add the public host to `ALLOWED_HOSTS` (or `ALLOWED_ORIGIN`). Otherwise requests get 421. A Kubernetes `httpGet` probe sends the pod IP as Host and would need it allowed.
+- **env credential names:** existing `env:` refs whose name does not end in `_API_KEY` now show as not configured, and fail with `CREDENTIAL_REF_NOT_ALLOWED`. Rename the variable, for example `HF_TOKEN` → `HF_API_KEY`.
+- **Pre-restore copy location:** the pre-restore copy now lives inside the data dir (`.pre-restore-*`). It is never backed up or moved by a later restore, and it is deleted manually (see `docs/SETUP.md` §8).
+- **Reconstructed P&L by strategy:** it is now available for ordinary closes that carry `CostBasis` (R05).
+
+### Verification
+
+Run on the final branch head:
+
+| Gate | Result |
+|---|---|
+| Lint (`biome check`) | 0 errors; baseline 4 warnings and 26 infos unchanged |
+| Typecheck | Clean |
+| Unit and integration tests | 628 / 628 passed across 57 files (baseline 590 / 53) |
+| Build and `scripts/smoke-built-server.mjs` | Passed |
+| Playwright e2e | 72 / 72 passed |
+
+### Still open
+
+- **R13–R24:** low findings, unchanged.
+- **Tests and CI:** coverage reporting, `test:build-smoke` in CI, `WriterQueue` tests, and the flaky-wait cleanup are not yet done.
+- **R09 import UI:** showing endpoints before a model-configuration import is confirmed is not yet done (frontend).
+- **R04 and R05:** still worth confirming against a real IBKR Flex export.
