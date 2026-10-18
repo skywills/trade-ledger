@@ -31,7 +31,10 @@ import { registerModelRoutes } from "./http/routes-models.js";
 import { registerReviewRoutes } from "./http/routes-review.js";
 import { recoverImportFiles } from "./imports/service.js";
 import { JobService } from "./jobs/service.js";
-import { acquireDataDirLock } from "./maintenance/lock.js";
+import {
+  acquireDataDirLock,
+  assertNoIncompleteRestore,
+} from "./maintenance/lock.js";
 import { registerJournalReset } from "./maintenance/reset.js";
 import {
   checkDataAccess,
@@ -161,6 +164,7 @@ export async function createApp(
   const lock = acquireDataDirLock(config.dataDir);
   let store: Store;
   try {
+    assertNoIncompleteRestore(config.dataDir);
     store = openStore(config.dataDir);
   } catch (error) {
     lock.release();

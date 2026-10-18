@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -18,6 +19,29 @@ import { AppError } from "../../shared/errors.js";
  * provably gone.
  */
 export const LOCK_FILENAME = "journal.lock";
+
+/**
+ * Written by a restore before its entry-by-entry swap and removed once the swap
+ * or its rollback completes. If it survives, the process died mid-swap and the
+ * data directory may be missing its journal; the previous data is in the
+ * `.pre-restore-*` directory the marker names.
+ */
+export const RESTORE_MARKER_FILENAME = ".restore-in-progress";
+
+/**
+ * Refuses to open a data directory whose restore never finished, instead of
+ * silently creating an empty journal over the half-swapped contents.
+ */
+export function assertNoIncompleteRestore(dataDir: string): void {
+  const marker = join(dataDir, RESTORE_MARKER_FILENAME);
+  if (!existsSync(marker)) return;
+  const preRestore = readFileSync(marker, "utf8").trim();
+  throw new AppError(
+    "RESTORE_INCOMPLETE",
+    `A restore into ${dataDir} was interrupted. Move the contents of ${join(dataDir, preRestore)} back into the data directory (or re-run the restore), then delete ${marker}.`,
+    500,
+  );
+}
 
 export interface DataDirLock {
   readonly path: string;

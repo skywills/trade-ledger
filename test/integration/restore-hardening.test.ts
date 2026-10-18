@@ -15,6 +15,8 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { create, extract } from "tar";
 import { afterEach, describe, expect, it } from "vitest";
+import { createApp } from "../../src/server/app.js";
+import { readConfig } from "../../src/server/config.js";
 import {
   commitImport,
   previewImport,
@@ -26,6 +28,7 @@ import {
 import {
   acquireDataDirLock,
   isDataDirLocked,
+  RESTORE_MARKER_FILENAME,
 } from "../../src/server/maintenance/lock.js";
 import { restoreBackup } from "../../src/server/maintenance/restore.js";
 import { closeStore, openStore } from "../../src/server/storage/database.js";
@@ -310,4 +313,29 @@ describe("restore hardening (R03)", () => {
       expect(isDataDirLocked(targetDir)).toBe(false);
     },
   );
+
+  it("refuses to start on a data dir whose restore swap never finished", async () => {
+    const dataDir = trackTemp("ibkr-hardening-marker-");
+    writeFileSync(
+      join(dataDir, RESTORE_MARKER_FILENAME),
+      ".pre-restore-123-abc\n",
+    );
+    await expect(
+      createApp(
+        readConfig({
+          DATA_DIR: dataDir,
+          ALLOWED_ORIGIN: "http://localhost:3000",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "RESTORE_INCOMPLETE" });
+    expect(existsSync(join(dataDir, "journal.sqlite"))).toBe(false);
+    expect(isDataDirLocked(dataDir)).toBe(false);
+  });
+
+  it("leaves no in-progress marker after a completed restore", async () => {
+    const archive = await makeArchive();
+    const target = makeExistingTarget();
+    await restoreBackup(archive, target);
+    expect(existsSync(join(target, RESTORE_MARKER_FILENAME))).toBe(false);
+  });
 });

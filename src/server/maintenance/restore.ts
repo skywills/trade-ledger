@@ -7,8 +7,9 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import Database from "better-sqlite3";
 import { extract, list } from "tar";
 import { AppError } from "../../shared/errors.js";
@@ -21,7 +22,12 @@ import {
   MANIFEST_FILENAME,
   SNAPSHOT_FILENAME,
 } from "./backup.js";
-import { acquireDataDirLock, type DataDirLock, LOCK_FILENAME } from "./lock.js";
+import {
+  acquireDataDirLock,
+  type DataDirLock,
+  LOCK_FILENAME,
+  RESTORE_MARKER_FILENAME,
+} from "./lock.js";
 
 /**
  * Restore works entirely inside the data directory so it also runs where the
@@ -60,6 +66,7 @@ function restoreFailed(error: unknown): AppError {
 function isReservedEntry(name: string): boolean {
   return (
     name === LOCK_FILENAME ||
+    name === RESTORE_MARKER_FILENAME ||
     name.startsWith(STAGING_PREFIX) ||
     name.startsWith(PRE_RESTORE_PREFIX)
   );
@@ -300,6 +307,11 @@ function swapIn(stagingDir: string, targetDir: string): void {
       ? null
       : mkdtempSync(join(targetDir, `${PRE_RESTORE_PREFIX}${Date.now()}-`));
 
+  const marker = join(targetDir, RESTORE_MARKER_FILENAME);
+  writeFileSync(
+    marker,
+    `${preRestoreDir === null ? "" : basename(preRestoreDir)}\n`,
+  );
   const movedOut: string[] = [];
   const movedIn: string[] = [];
   try {
@@ -311,6 +323,7 @@ function swapIn(stagingDir: string, targetDir: string): void {
       moveEntries([name], stagingDir, targetDir);
       movedIn.push(name);
     }
+    rmSync(marker, { force: true });
   } catch (error) {
     try {
       moveEntries(movedIn.reverse(), targetDir, stagingDir);
@@ -318,6 +331,7 @@ function swapIn(stagingDir: string, targetDir: string): void {
         moveEntries(movedOut.reverse(), preRestoreDir, targetDir);
         rmSync(preRestoreDir, { recursive: true, force: true });
       }
+      rmSync(marker, { force: true });
     } catch (rollbackError) {
       throw new AppError(
         "RESTORE_FAILED",
