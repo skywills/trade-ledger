@@ -1,3 +1,4 @@
+import { Decimal } from "decimal.js";
 import type { Execution, Id, Issue, SourceRef } from "../../shared/domain.js";
 
 export interface Candidate {
@@ -97,30 +98,41 @@ function bindingTargets(bindings: readonly IdentityBinding[]): {
   return { targets: bySource, conflicts: [...conflicted.values()] };
 }
 
+/** Compares decimals by value so "5" and "5.00" from two exports agree. */
+function decimalKey(value: string | null): string | null {
+  return value === null ? null : new Decimal(value).toFixed();
+}
+
 /**
- * Financial fingerprint over canonical normalized values. Broker identifiers
- * are excluded because re-exports may carry partial identifier sets (for
- * example an execution id without a trade id); instrument objects serialize
- * in a fixed field order because normalizeExecution constructs them.
+ * Financial fingerprint over broker-stable, financially significant values
+ * only. It is compared in memory to detect identity conflicts and is never
+ * persisted. Excluded on purpose, because they vary between exports or uploads
+ * of the same trade:
+ * - timezone, which comes from the upload query when the row has none;
+ * - Notes/Codes (order and extra markers) and the action/event derived from it;
+ * - the multiplier, which may be inferred from Proceeds;
+ * - proceeds, basis, broker P&L, net cash and taxes, which re-exports may omit
+ *   or derive differently.
+ * Broker identifiers are excluded because re-exports may carry partial
+ * identifier sets (for example an execution id without a trade id); their
+ * disagreement is checked separately by brokerIdConflict. The raw datetime is
+ * the unshifted source wall-clock time, so it does not depend on the timezone.
  */
 function payloadFingerprint(execution: Execution): string {
+  const { instrument } = execution;
   return JSON.stringify([
-    execution.date,
+    execution.account,
     execution.rawDateTime,
-    execution.quantity,
-    execution.price,
+    decimalKey(execution.quantity),
+    decimalKey(execution.price),
     execution.currency,
-    execution.netCash,
-    execution.proceeds,
-    execution.commission,
-    execution.taxes,
-    execution.basis,
-    execution.brokerPnl,
-    execution.action,
-    execution.event,
-    execution.instrument,
-    execution.codes,
-    execution.timezone,
+    decimalKey(execution.commission),
+    instrument.assetClass,
+    instrument.symbol,
+    instrument.conid,
+    instrument.expiry,
+    decimalKey(instrument.strike),
+    instrument.putCall,
   ]);
 }
 
