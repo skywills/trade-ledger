@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { Id } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { type Store, write } from "../storage/database.js";
-import { isValidCredentialRef } from "./credentials.js";
+import {
+  assertCredentialRefAllowed,
+  isValidCredentialRef,
+} from "./credentials.js";
 
 /**
  * Local/cloud model profiles. A profile row is retained and revisioned: edits
@@ -221,10 +224,28 @@ function validateInput(input: ProfileInput): void {
       "credentialRef must be env:NAME or file:/absolute/path with no URL userinfo.",
     );
   }
-  if (input.mode === "cloud" && (input.credentialRef ?? "") === "") {
-    // A cloud profile without a reference is permitted but never falls back to
-    // an ambient key; it simply resolves to missing and fails the check.
+  assertCredentialRefAllowed(input.credentialRef);
+  // A cloud profile without a reference is permitted but never falls back to
+  // an ambient key; it simply resolves to missing and fails the check.
+  if (input.mode === "cloud") requireSecureCloudEndpoint(input.endpoint);
+}
+
+const LOOPBACK_HOSTNAME = /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i;
+
+/**
+ * Cloud profiles send `Authorization: Bearer <key>`, so their endpoint must be
+ * https unless it stays on this machine (e.g. a local TLS-less gateway).
+ */
+function requireSecureCloudEndpoint(endpoint: string): void {
+  const url = new URL(endpoint);
+  if (url.protocol === "https:" || LOOPBACK_HOSTNAME.test(url.hostname)) {
+    return;
   }
+  throw new AppError(
+    "INSECURE_ENDPOINT",
+    "A cloud profile endpoint must use https unless it is on loopback.",
+    400,
+  );
 }
 
 function toProfile(row: ProfileRow): LlmProfile {

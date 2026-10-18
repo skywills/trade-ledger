@@ -110,8 +110,10 @@ container image already sets sensible defaults.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATA_DIR` | `/data` (image), `.data` (Node) | Writable root for the SQLite database, `originals/`, `transcripts/` and `backups/`. |
-| `PORT` | `3000` | HTTP port. The container binds `0.0.0.0`; Compose maps it to host loopback only. |
+| `HOST` | `127.0.0.1` (Node), `0.0.0.0` (image) | Listener bind address. `npm start` stays on loopback; the image binds `0.0.0.0` and Compose maps it to host loopback only. The app has no authentication, so never widen it on a host without an authenticating reverse proxy. |
+| `PORT` | `3000` | HTTP port. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations, e.g. `http://localhost:3000`. No path, no userinfo. |
+| `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header, e.g. `journal.lan:3000`. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` (any port) are always accepted. Every other Host, on every request, gets `421 HOST_NOT_ALLOWED`; this blocks DNS-rebinding reads. |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |
 | `STATIC_DIR` | `dist/web` when `NODE_ENV=production` | Directory of compiled frontend assets to serve. |
 | `JOURNAL_SECRETS_DIR` | unset | Allowlisted directory of mounted secret files that a profile's `file:` credential reference may read. |
@@ -208,11 +210,15 @@ profile under **Maintenance → Models**:
 - **Name** — a label.
 - **Mode** — `local` (uses a documented placeholder key and never borrows an
   ambient cloud credential) or `cloud`.
-- **Endpoint** — the OpenAI-compatible base URL, including `/v1`.
+- **Endpoint** — the OpenAI-compatible base URL, including `/v1`. A `cloud`
+  endpoint must use `https://` unless it is on loopback (`localhost`,
+  `127.0.0.1`, `[::1]`), so its key is never sent in cleartext.
 - **Provider** / **Protocol** — the wire adapter to use.
 - **Model id**, **Thinking levels**, **Context window**, **Max tokens**,
   **Timeout (s)** — model parameters.
-- **Credential ref** — `env:NAME` reads environment variable `NAME`;
+- **Credential ref** — `env:NAME_API_KEY` reads environment variable
+  `NAME_API_KEY` (only uppercase names ending in `_API_KEY`, e.g.
+  `env:OPENAI_API_KEY`, are allowed);
   `file:/absolute/path` reads an allowlisted file under `JOURNAL_SECRETS_DIR`.
   Leave empty for local endpoints that need no key.
 - **Supports tools** — must be enabled for a profile to pass compatibility,
@@ -236,9 +242,9 @@ configured/missing status, never its value.
 # Pass a key via the environment
 docker run --rm -p 127.0.0.1:3000:3000 -v journal-data:/data \
   -e ALLOWED_ORIGIN=http://localhost:3000 \
-  -e MY_PROVIDER_KEY=sk-... \
+  -e MY_PROVIDER_API_KEY=sk-... \
   trade-ledger
-# then set the profile credential ref to: env:MY_PROVIDER_KEY
+# then set the profile credential ref to: env:MY_PROVIDER_API_KEY
 ```
 
 ```bash
@@ -342,6 +348,7 @@ same-origin.
 | Symptom | Cause / fix |
 | --- | --- |
 | Startup aborts: `ALLOWED_ORIGIN must be configured in production.` | You ran with `NODE_ENV=production` but no origin. Set `ALLOWED_ORIGIN` to the exact origin you browse (e.g. `http://localhost:3000`). |
+| Every request returns 421 `HOST_NOT_ALLOWED` | The `Host` you browse is neither the `ALLOWED_ORIGIN` host nor loopback, e.g. a LAN name or a reverse proxy that rewrites `Host`. Set `ALLOWED_ORIGIN` to that origin or add the host to `ALLOWED_HOSTS`. |
 | Mutations return 403 / cross-origin rejected | The browser origin does not match `ALLOWED_ORIGIN`. Match scheme, host and port exactly; no trailing slash or path. |
 | Container cannot write `/data` (bind mount) | `sudo chown -R 1000:1000 ./data`, or switch to a named volume. |
 | `SQLITE_BUSY` or corruption warnings | The data directory is on a network filesystem, or more than one replica is running. Use local disk and a single replica. |
