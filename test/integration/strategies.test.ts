@@ -338,6 +338,154 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       ]);
     }));
 
+  it.each([
+    [
+      "short_call",
+      [
+        ["C", "100", "-1"],
+        ["C", "100", "-2"],
+      ],
+    ],
+    [
+      "long_call",
+      [
+        ["C", "100", "1"],
+        ["C", "100", "2"],
+      ],
+    ],
+    ["short_put", [["P", "100", "-1"]]],
+    ["long_put", [["P", "100", "1"]]],
+    [
+      "bull_call_spread",
+      [
+        ["C", "35", "1"],
+        ["C", "35", "1"],
+        ["C", "75", "-1"],
+        ["C", "75", "-1"],
+      ],
+    ],
+    [
+      "iron_condor",
+      [
+        ["P", "7510", "1"],
+        ["P", "7530", "-1"],
+        ["C", "7730", "-1"],
+        ["C", "7735", "1"],
+      ],
+    ],
+    [
+      "reverse_iron_condor",
+      [
+        ["P", "90", "-2"],
+        ["P", "95", "2"],
+        ["C", "105", "2"],
+        ["C", "110", "-2"],
+      ],
+    ],
+    [
+      "iron_butterfly",
+      [
+        ["P", "90", "1"],
+        ["P", "100", "-1"],
+        ["C", "100", "-1"],
+        ["C", "110", "1"],
+      ],
+    ],
+    [
+      "call_butterfly",
+      [
+        ["C", "90", "1"],
+        ["C", "100", "-2"],
+        ["C", "110", "1"],
+      ],
+    ],
+    [
+      "broken_wing_call_butterfly",
+      [
+        ["C", "145", "1"],
+        ["C", "150", "-2"],
+        ["C", "160", "1"],
+      ],
+    ],
+    [
+      "put_butterfly",
+      [
+        ["P", "90", "1"],
+        ["P", "100", "-2"],
+        ["P", "110", "1"],
+      ],
+    ],
+    [
+      "call_ratio_spread",
+      [
+        ["C", "90", "1"],
+        ["C", "100", "-2"],
+      ],
+    ],
+    [
+      "custom",
+      [
+        ["C", "100", "1"],
+        ["C", "100", "-1"],
+      ],
+    ],
+    [
+      "custom",
+      [
+        ["P", "90", "1"],
+        ["P", "95", "-1"],
+        ["C", "105", "-2"],
+        ["C", "110", "1"],
+      ],
+    ],
+  ] as const)("classifies %s from contract quantities", (expected, legs) =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable(
+        legs.map(([putCall, strike, quantity], index) =>
+          optionLeg("COMBO", `T-${index}`, {
+            "Put/Call": putCall,
+            Strike: strike,
+            Quantity: quantity,
+          }),
+        ),
+      );
+      const ledger = await ledgerFrom(store, "combo.csv", rows);
+      const projection = groupStrategies(ledger, [], resolveId);
+      expect(projection.strategies).toHaveLength(1);
+      expect(projection.strategies[0]?.type).toBe(expected);
+      // Classification must not collapse the financial allocation rows.
+      expect(projection.allocations).toHaveLength(legs.length);
+    }),
+  );
+
+  it("projects the requested option description from imported broker rows", () =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable([
+        optionLeg("UNH-SPREAD", "UNH-SHORT", {
+          Symbol: "UNH",
+          UnderlyingSymbol: "UNH",
+          Strike: "390",
+          Expiry: "2026-09-18",
+          "Put/Call": "P",
+          Quantity: "-1",
+        }),
+        optionLeg("UNH-SPREAD", "UNH-LONG", {
+          Symbol: "UNH",
+          UnderlyingSymbol: "UNH",
+          Strike: "380",
+          Expiry: "2026-09-18",
+          "Put/Call": "P",
+          Quantity: "1",
+        }),
+      ]);
+      const ledger = await ledgerFrom(store, "unh.csv", rows);
+      const projection = groupStrategies(ledger, [], resolveId);
+      expect(projection.strategies).toHaveLength(1);
+      expect(projection.strategies[0]?.description).toBe(
+        "UNH Sep18'26 380/390 Bull Put Spread",
+      );
+    }));
+
   it("labels mixed-expiry groups as Mixed with no expiry year", () =>
     withStore(async (store) => {
       const rows = buildExecutionTable([

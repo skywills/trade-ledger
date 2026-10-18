@@ -623,7 +623,7 @@ test("Berkshire aliases find the journal entry while transactions retain the con
   await page.goto("/journal");
   for (const alias of ["BRK B", "BRK.B", "BRK-B"]) {
     await page.getByRole("searchbox", { name: "Search strategies" }).fill(alias);
-    await expect(page.getByRole("link", { name: "BRK.B long option", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "BRK.B Dec18'26 500 Long Call", exact: true })).toBeVisible();
   }
   await page.goto("/transactions");
   const table = page.getByRole("table", { name: "Transactions", exact: true });

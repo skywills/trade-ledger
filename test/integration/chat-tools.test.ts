@@ -74,6 +74,12 @@ describe("journal read tools", () => {
       (await call(tools, "get_strategy", { strategyId: id })).content,
     );
     expect(detail.strategy.id).toBe(id);
+    expect(listed.items[0].description).toBe(
+      "AXON Oct16'26 470/480 Bull Put Spread",
+    );
+    expect(detail.strategy.description).toBe(
+      "AXON Oct16'26 470/480 Bull Put Spread",
+    );
     const txns = JSON.parse(
       (await call(tools, "list_transactions", {})).content,
     );

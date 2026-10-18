@@ -8,7 +8,7 @@ import type {
   SourceRef,
   Strategy,
 } from "../../shared/domain.js";
-import { underlyingSymbol } from "../../shared/symbols.js";
+import { describeLegs } from "./description.js";
 import { classifyLegs, isDerivative, yearOf } from "./matching.js";
 
 export interface LegRecord {
@@ -176,11 +176,7 @@ export function recomputePresentation(draft: StrategyDraft): void {
   // "Mixed" label rather than an ambiguous null; zero known expiries (shares,
   // unknown contracts) stay null, not "Mixed".
   draft.expiry = expiries.length > 1 ? "Mixed" : (expiries[0] ?? null);
-  const symbol = draft.openingLegs[0]
-    ? underlyingSymbol(draft.openingLegs[0].instrument)
-    : "";
-  draft.description =
-    symbol === "" ? draft.type : `${symbol} ${draft.type.replaceAll("_", " ")}`;
+  draft.description = describeLegs(draft.type, draft.openingLegs);
 }
 
 export function finalizeDraft(draft: StrategyDraft): Strategy {
