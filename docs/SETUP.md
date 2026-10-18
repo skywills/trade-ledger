@@ -112,6 +112,7 @@ container image already sets sensible defaults.
 | `DATA_DIR` | `/data` (image), `.data` (Node) | Writable root for the SQLite database, `originals/`, `transcripts/` and `backups/`. |
 | `PORT` | `3000` | HTTP port. The container binds `0.0.0.0`; Compose maps it to host loopback only. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations, e.g. `http://localhost:3000`. No path, no userinfo. |
+| `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header, e.g. `journal.lan:3000`. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` (any port) are always accepted. Every other Host, on every request, gets `421 HOST_NOT_ALLOWED`; this blocks DNS-rebinding reads. |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |
 | `STATIC_DIR` | `dist/web` when `NODE_ENV=production` | Directory of compiled frontend assets to serve. |
 | `JOURNAL_SECRETS_DIR` | unset | Allowlisted directory of mounted secret files that a profile's `file:` credential reference may read. |
@@ -313,6 +314,7 @@ same-origin.
 | Symptom | Cause / fix |
 | --- | --- |
 | Startup aborts: `ALLOWED_ORIGIN must be configured in production.` | You ran with `NODE_ENV=production` but no origin. Set `ALLOWED_ORIGIN` to the exact origin you browse (e.g. `http://localhost:3000`). |
+| Every request returns 421 `HOST_NOT_ALLOWED` | The `Host` you browse is neither the `ALLOWED_ORIGIN` host nor loopback, e.g. a LAN name or a reverse proxy that rewrites `Host`. Set `ALLOWED_ORIGIN` to that origin or add the host to `ALLOWED_HOSTS`. |
 | Mutations return 403 / cross-origin rejected | The browser origin does not match `ALLOWED_ORIGIN`. Match scheme, host and port exactly; no trailing slash or path. |
 | Container cannot write `/data` (bind mount) | `sudo chown -R 1000:1000 ./data`, or switch to a named volume. |
 | `SQLITE_BUSY` or corruption warnings | The data directory is on a network filesystem, or more than one replica is running. Use local disk and a single replica. |

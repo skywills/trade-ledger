@@ -62,6 +62,7 @@ image, never on `/data`.
 | `DATA_DIR` | `/data` (image) | Writable root for SQLite, imports, transcripts, backups. |
 | `PORT` | `3000` | HTTP port; the container binds `0.0.0.0`. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations (e.g. `http://localhost:3000`). |
+| `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` are always accepted; any other Host gets `421 HOST_NOT_ALLOWED` (DNS-rebinding defence). |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |
 | `STATIC_DIR` | `dist/web` in production | Optional override of the compiled frontend directory. |
 | `JOURNAL_SECRETS_DIR` | unset | Optional allowlisted directory for mounted secret files (`file:` credential refs). |

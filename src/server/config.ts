@@ -5,6 +5,11 @@ export interface AppConfig {
   dataDir: string;
   port: number;
   allowedOrigin: string;
+  /**
+   * Normalized `host[:port]` values accepted in the `Host` header, besides
+   * loopback names. Always contains the host of `allowedOrigin`.
+   */
+  allowedHosts: readonly string[];
   uploadLimitBytes: number;
   /**
    * Directory of built web assets to serve. Defaults to the compiled Vite
@@ -68,6 +73,41 @@ function readAllowedOrigin(
   return url.origin;
 }
 
+/**
+ * Normalizes a `Host` header or `ALLOWED_HOSTS` entry to the lowercased
+ * `host[:port]` form that `URL.host` produces (default port 80 omitted).
+ * Returns null for anything that is not a bare authority.
+ */
+export function normalizeHost(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === "" || /[\s/\\@?#]/.test(trimmed)) return null;
+  try {
+    const url = new URL(`http://${trimmed}`);
+    return url.host === "" ? null : url.host;
+  } catch {
+    return null;
+  }
+}
+
+function readAllowedHosts(
+  value: string | undefined,
+  allowedOrigin: string,
+): string[] {
+  const originHost = normalizeHost(new URL(allowedOrigin).host);
+  const hosts = originHost === null ? [] : [originHost];
+  for (const entry of (value ?? "").split(",")) {
+    if (entry.trim() === "") continue;
+    const host = normalizeHost(entry);
+    if (host === null) {
+      throw new ConfigurationError(
+        "ALLOWED_HOSTS must be a comma-separated list of host[:port] values.",
+      );
+    }
+    if (!hosts.includes(host)) hosts.push(host);
+  }
+  return hosts;
+}
+
 function readUploadLimit(value: string | undefined): number {
   if (value === undefined) return DEFAULT_UPLOAD_LIMIT_BYTES;
   if (!/^\d+$/.test(value)) {
@@ -93,10 +133,16 @@ export function readConfig(env: NodeJS.ProcessEnv): AppConfig {
     env.STATIC_DIR ??
     (env.NODE_ENV === "production" ? resolve("dist/web") : undefined);
   const secretsDir = env.JOURNAL_SECRETS_DIR;
+  const allowedOrigin = readAllowedOrigin(
+    env.ALLOWED_ORIGIN,
+    port,
+    env.NODE_ENV,
+  );
   return {
     dataDir,
     port,
-    allowedOrigin: readAllowedOrigin(env.ALLOWED_ORIGIN, port, env.NODE_ENV),
+    allowedOrigin,
+    allowedHosts: readAllowedHosts(env.ALLOWED_HOSTS, allowedOrigin),
     uploadLimitBytes: readUploadLimit(env.UPLOAD_LIMIT_BYTES),
     ...(staticDir === undefined || staticDir.trim() === ""
       ? {}

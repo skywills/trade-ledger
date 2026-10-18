@@ -18,7 +18,7 @@ import {
 import { ChatService } from "./chat/service.js";
 import { recoverChatThreads } from "./chat/threads.js";
 import type { AppConfig } from "./config.js";
-import { createOriginGuard } from "./http/origin.js";
+import { createHostGuard, createOriginGuard } from "./http/origin.js";
 import { registerAnalysisRoutes } from "./http/routes-analysis.js";
 import { registerAnalyticsRoutes } from "./http/routes-analytics.js";
 import { registerChatRoutes } from "./http/routes-chat.js";
@@ -200,6 +200,8 @@ export async function createApp(
       await closeStore(store);
       lock.release();
     });
+    // Host first: a DNS-rebinding request is refused before anything else.
+    app.addHook("onRequest", createHostGuard(config.allowedHosts));
     app.addHook("onRequest", createOriginGuard(config.allowedOrigin));
     app.setErrorHandler(
       (error: unknown, _request: FastifyRequest, reply: FastifyReply) => {
