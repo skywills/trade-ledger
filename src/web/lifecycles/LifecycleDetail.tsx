@@ -1,5 +1,5 @@
 import { Decimal } from "decimal.js";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   AllocationRef,
   LifecycleMember,
@@ -11,8 +11,9 @@ import { Link, navigate, useLocation } from "../navigation.js";
 import {
   LifecycleDetailSchema,
   LifecycleListSchema,
+  rebuildLifecycles,
+  recordLifecycleDecision,
   type SaveDecision,
-  saveLifecycleDecision,
 } from "./api.js";
 import { BuildAction } from "./BuildAction.js";
 import { MembershipEditor, SourcePartitionEditor } from "./MembershipEditor.js";
@@ -47,33 +48,66 @@ export function LifecycleDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [campaignId, setCampaignId] = useState<string | null>(null);
+  // Set once a decision is recorded and cleared when its rebuild completes, so
+  // a retry after a failed rebuild only rebuilds.
+  const [rebuildPending, setRebuildPending] = useState(false);
+  // Synchronous double-submit guard; `busy` only disables after a re-render.
+  const inFlight = useRef(false);
+  // One clientRequestId per decision, reused if the same decision is retried.
+  const pendingRequest = useRef<{ key: string; id: string } | null>(null);
   function refresh() {
     navigate(`/lifecycles/${encodeURIComponent(id)}`);
     remote.reload();
     all.reload();
   }
-  const save: SaveDecision = async (kind, payload) => {
-    if (!remote.data) return;
+  function onBuilt() {
+    setRebuildPending(false);
+    refresh();
+  }
+  async function run(task: () => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await saveLifecycleDecision(
-        remote.data.watermark,
-        kind,
-        payload,
-        supersedesId.trim() || null,
-      );
+      await task();
       setNotice("Decision saved and journal rebuilt.");
-      setSupersedesId("");
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       remote.reload();
       all.reload();
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
+  }
+  async function rebuild() {
+    await rebuildLifecycles();
+    setRebuildPending(false);
+  }
+  const save: SaveDecision = async (kind, payload) => {
+    const data = remote.data;
+    if (!data || rebuildPending) return;
+    const supersedes = supersedesId.trim() || null;
+    const key = JSON.stringify([kind, payload, supersedes]);
+    if (pendingRequest.current?.key !== key)
+      pendingRequest.current = { key, id: crypto.randomUUID() };
+    const clientRequestId = pendingRequest.current.id;
+    await run(async () => {
+      await recordLifecycleDecision(
+        data.watermark,
+        kind,
+        payload,
+        supersedes,
+        clientRequestId,
+      );
+      pendingRequest.current = null;
+      setSupersedesId("");
+      setRebuildPending(true);
+      await rebuild();
+    });
   };
   if (remote.status === "loading")
     return <Loading label="Loading lifecycle…" />;
@@ -85,7 +119,7 @@ export function LifecycleDetail({ id }: { id: string }) {
       >
         <Link to="/lifecycles">Back to lifecycles</Link>
         {remote.error?.code === "LIFECYCLE_REBUILD_REQUIRED" && (
-          <BuildAction onBuilt={refresh} />
+          <BuildAction onBuilt={onBuilt} />
         )}
       </ErrorPanel>
     );
@@ -99,7 +133,7 @@ export function LifecycleDetail({ id }: { id: string }) {
       c.currency === l.currency &&
       c.underlyingKey === l.underlyingKey,
   );
-  const disabled = busy || d.stale || d.rebuildRequired;
+  const disabled = busy || rebuildPending || d.stale || d.rebuildRequired;
   return (
     <section className="lifecycles">
       <p>
@@ -110,11 +144,26 @@ export function LifecycleDetail({ id }: { id: string }) {
       {(d.stale || d.rebuildRequired) && (
         <div className="error-panel">
           <p>Rebuild the journal before changing this lifecycle.</p>
-          <BuildAction onBuilt={refresh} />
+          <BuildAction onBuilt={onBuilt} />
         </div>
       )}
       {busy && <Loading label="Saving decision and rebuilding journal…" />}
-      {error && <ErrorPanel message={error} onRetry={refresh} />}
+      {error &&
+        (rebuildPending ? (
+          <ErrorPanel
+            message={`The decision was saved, but the rebuild failed: ${error}`}
+          >
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(rebuild)}
+            >
+              Retry rebuild
+            </button>
+          </ErrorPanel>
+        ) : (
+          <ErrorPanel message={error} onRetry={refresh} />
+        ))}
       <p role="status">{notice}</p>
       <div className="card-grid">
         <section className="card">

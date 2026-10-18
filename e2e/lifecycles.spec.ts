@@ -750,3 +750,119 @@ test("open lifecycle shows known broker realized P&L independently from dated pr
     0,
   );
 });
+
+test("double-clicking a lifecycle save records exactly one decision", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  await page.route("**/api/decisions", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await route.fallback();
+  });
+  await page.goto("/lifecycles/cycle-one");
+  await page.getByLabel("New campaign name").fill("ABC wheel");
+  await page
+    .getByRole("button", { name: "Create campaign and rebuild" })
+    .dblclick();
+  await expect(page.getByTestId("build-id")).toContainText("build-2");
+  expect(state.decisions.map((d) => d.kind)).toEqual(["wheel_campaign"]);
+});
+
+test("retrying after a failed rebuild only rebuilds and does not append the decision again", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  let failBuild = true;
+  await page.route("**/api/jobs/job", (route) =>
+    route.fulfill({
+      json: {
+        job: {
+          id: "job",
+          kind: "build",
+          status: failBuild ? "failed" : "complete",
+          progress: null,
+          error: failBuild ? "rebuild exploded" : null,
+          input: {},
+          createdAt: "2026-10-18T00:00:00Z",
+          finishedAt: "2026-10-18T00:00:01Z",
+        },
+      },
+    }),
+  );
+  let builds = 0;
+  await page.route("**/api/builds", (route) => {
+    builds++;
+    return route.fallback();
+  });
+  await page.goto("/lifecycles/cycle-one");
+  await page.getByLabel("New campaign name").fill("ABC wheel");
+  await page
+    .getByRole("button", { name: "Create campaign and rebuild" })
+    .click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "rebuild exploded" }),
+  ).toBeVisible();
+  expect(state.decisions).toHaveLength(1);
+  failBuild = false;
+  await page.getByRole("button", { name: "Retry rebuild" }).click();
+  await expect(
+    page.getByText("Decision saved and journal rebuilt."),
+  ).toBeVisible();
+  expect(state.decisions).toHaveLength(1);
+  expect(builds).toBe(2);
+});
+
+test("navigating to another lifecycle resets the unsaved campaign selection", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  state.campaigns.push({
+    id: "campaign-a",
+    name: "ABC wheel",
+    account: "U1",
+    currency: "USD",
+    underlyingKey: "ABC",
+    lifecycleIds: [],
+  });
+  await page.route("**/api/lifecycles/cycle-two*", (route) =>
+    route.fulfill({
+      json: {
+        buildId: "build-1",
+        ledgerId: "ledger",
+        stale: false,
+        generatedAt: "2026-10-18T00:00:00Z",
+        watermark: 0,
+        rebuildRequired: false,
+        lifecycle: other,
+        members: [],
+        executions,
+        suggestions: [],
+        valuation: null,
+        campaigns: state.campaigns,
+      },
+    }),
+  );
+  await page.goto("/lifecycles/cycle-one");
+  await page
+    .getByLabel("Campaign", { exact: true })
+    .selectOption({ label: "ABC wheel" });
+  await page.getByLabel("New campaign name").fill("draft name");
+  // In-app navigation, as a Link click does.
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/lifecycles/cycle-two");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(
+    page.getByRole("heading", { name: other.description }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Campaign", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("New campaign name")).toHaveValue("");
+  await page
+    .getByRole("button", { name: "Save campaign membership and rebuild" })
+    .click();
+  await expect.poll(() => state.decisions.length).toBe(1);
+  expect(state.decisions[0]?.payload).toEqual({
+    lifecycleId: other.id,
+    campaignId: null,
+  });
+});
