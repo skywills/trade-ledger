@@ -478,11 +478,16 @@ describe("consistent backup and offline restore", () => {
       });
 
       await restoreBackup(archive, targetDir);
-      const siblings = readdirSync(parent);
-      const preRestore = siblings.filter((name) =>
-        name.startsWith(`${basename(targetDir)}.pre-restore`),
+      // The pre-restore backup lives inside the data directory so restore also
+      // works when the data directory is a mount point with an unwritable parent.
+      expect(readdirSync(parent)).toEqual([basename(targetDir)]);
+      const preRestore = readdirSync(targetDir).filter((name) =>
+        name.startsWith(".pre-restore-"),
       );
-      expect(preRestore.length).toBeGreaterThan(0);
+      expect(preRestore.length).toBe(1);
+      const preRestoreDir = join(targetDir, preRestore[0] as string);
+      expect(existsSync(join(preRestoreDir, "journal.sqlite"))).toBe(true);
+      expect(existsSync(join(preRestoreDir, "originals"))).toBe(true);
     } finally {
       await dispose();
     }

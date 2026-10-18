@@ -275,13 +275,42 @@ Or use the CLI (it takes the data-directory lock, so stop the server first):
 npm run backup -- --output ./backup.tar --data-dir ./data
 ```
 
-**Restore is offline only** and refuses to run while an instance holds the
-data-directory lock. It validates checksums, schema compatibility and
-referenced-file completeness, and makes a pre-restore backup before swapping:
+**Restore is offline only.** It takes the data-directory lock for the whole
+restore, so it refuses to run while an instance holds it and a server cannot
+start mid-restore. Before anything is replaced it rejects an archive that holds
+files the manifest does not list, checks every checksum and referenced file,
+opens the database snapshot read-only to run `PRAGMA integrity_check`, and
+checks that the snapshot's schema version matches the manifest and is not newer
+than the application:
 
 ```bash
 npm run restore -- --archive ./backup.tar --data-dir ./data
 ```
+
+Restore works entirely inside the data directory, so it also works when the
+data directory is a volume mount point (the Docker `/data` layout). The archive
+is staged in `<data-dir>/.restore-staging-*`, then the current contents are
+moved into `<data-dir>/.pre-restore-<timestamp>-*` and the staged files are
+moved in. If any move fails, the earlier moves are undone. The
+`.pre-restore-*` directory is the pre-restore backup: to go back, stop the
+server, remove the restored `journal.sqlite`, `originals` and `transcripts`,
+and move the contents of that directory back up one level. Backups never
+include these directories. Delete old `.pre-restore-*` directories yourself
+when you no longer need them.
+
+In Docker, run the restore with the server stopped, as the container user, for
+example:
+
+```bash
+docker compose stop journal
+docker compose run --rm -v "$PWD/backup.tar:/tmp/backup.tar:ro" journal \
+  node dist/src/server/maintenance/cli.js restore --archive /tmp/backup.tar --data-dir /data
+docker compose start journal
+```
+
+A rejected archive fails with `BACKUP_INVALID`. A filesystem problem during the
+restore, such as missing permissions, fails with `RESTORE_FAILED` and the
+underlying error message.
 
 After a restore, reconfigure credentials — secrets are never stored in a
 backup.
