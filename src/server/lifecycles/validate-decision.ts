@@ -4,6 +4,7 @@ import type {
   Projection,
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
+import type { RetainedLifecycleAnchor } from "../../shared/lifecycles.js";
 import {
   CampaignPayloadSchema,
   LifecycleRejectionPayloadSchema,
@@ -18,6 +19,7 @@ export function validateLifecycleDecision(
   decisions: readonly Decision[],
   candidate: Decision,
   origins?: Projection,
+  retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
 ): void {
   if (candidate.kind === "wheel_campaign") {
     const payload = CampaignPayloadSchema.parse(candidate.payload);
@@ -87,6 +89,7 @@ export function validateLifecycleDecision(
       decisions,
       undefined,
       origins,
+      retainedAnchors,
     );
     const suggestion = draft.suggestions.find(
       (s) => refKey(s.callOpening) === refKey(p.callOpening),
@@ -109,6 +112,7 @@ export function validateLifecycleDecision(
     [...decisions, candidate],
     undefined,
     origins,
+    retainedAnchors,
   );
   if (validateMembership(ledger, projection, draft.members).length)
     throw new AppError(

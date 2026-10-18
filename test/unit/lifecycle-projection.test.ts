@@ -522,3 +522,105 @@ it("shows the assigned-stock stage for manually corrected trade-coded assignment
     projectLifecycles(f.ledger, f.projection, [], ids).lifecycles[0]?.stage,
   ).toBe("assigned_stock");
 });
+it("keeps a confirmed call with the chosen lot when another eligible lot remains", () => {
+  const f = assigned();
+  const extra = fixture([
+    [
+      "other-stock",
+      execution("other-stock-open", stock, "100", "-10000", 1, "open"),
+    ],
+    ["calls", execution("chosen-call", call, "-1", "100", 3, "open")],
+  ]);
+  f.ledger.executions.push(...extra.ledger.executions);
+  f.projection.allocations.push(...extra.projection.allocations);
+  f.projection.strategies.push(...extra.projection.strategies);
+  const decisions = [
+    {
+      id: "confirmed",
+      sequence: 1,
+      kind: "lifecycle_attachment",
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      payload: {
+        opening: {
+          strategyId: "calls",
+          executionKey: "chosen-call",
+          role: "open",
+        },
+        targets: [{ lifecycleId: "A:p-open", quantity: "-1" }],
+      },
+    },
+  ];
+  for (let i = 0; i < 2; i++) {
+    const p = projectLifecycles(f.ledger, f.projection, decisions, ids);
+    expect(p.suggestions).toEqual([]);
+    expect(p.lifecycles.map((l) => l.status)).toEqual(["open", "open"]);
+    expect(
+      p.members.find((m) => m.allocation.executionKey === "chosen-call")
+        ?.lifecycleId,
+    ).toBe("A:p-open");
+  }
+  const closes = fixture([
+    [
+      "stock-origin",
+      execution("chosen-sale", stock, "-100", "10500", 8, "close"),
+    ],
+    ["calls", execution("chosen-close", call, "1", "0", 8, "close")],
+  ]);
+  f.ledger.executions.push(...closes.ledger.executions);
+  f.projection.allocations.push(...closes.projection.allocations);
+  const completed = accountLifecycles(
+    f.ledger,
+    f.projection,
+    projectLifecycles(f.ledger, f.projection, decisions, ids),
+  );
+  expect(completed.suggestions).toEqual([]);
+  expect(completed.lifecycles.find((l) => l.id === "A:p-open")).toMatchObject({
+    status: "closed",
+    reconstructedPnl: "800",
+  });
+  expect(
+    completed.lifecycles.find((l) => l.id === "A:other-stock-open")?.status,
+  ).toBe("open");
+});
+it("selects the first intraday fill rather than the first lexical execution key", () => {
+  const first = execution("z-first-fill", stock, "50", "-5000", 1, "open");
+  first.rawDateTime = "2026-10-01T10:00:00Z";
+  const later = execution("a-later-fill", stock, "50", "-5000", 1, "open");
+  later.rawDateTime = "2026-10-01T11:00:00Z";
+  const f = fixture([
+    ["same-order", first],
+    ["same-order", later],
+  ]);
+  expect(
+    projectLifecycles(f.ledger, f.projection, [], ids).lifecycles[0]?.id,
+  ).toBe("A:z-first-fill");
+});
+it("shows confirmed calls against purchased shares as a covered-call stage", () => {
+  const f = fixture([
+    ["holding", execution("holding-open", stock, "100", "-10000", 1, "open")],
+    ["calls", execution("purchased-call", call, "-1", "100", 3, "open")],
+  ]);
+  const d = {
+    id: "confirmed",
+    sequence: 1,
+    kind: "lifecycle_attachment",
+    sources: [],
+    strategyIds: [],
+    supersedesId: null,
+    payload: {
+      opening: {
+        strategyId: "calls",
+        executionKey: "purchased-call",
+        role: "open",
+      },
+      targets: [{ lifecycleId: "A:holding-open", quantity: "-1" }],
+    },
+  };
+  const p = projectLifecycles(f.ledger, f.projection, [d], ids);
+  expect(p.lifecycles[0]).toMatchObject({
+    stage: "covered_call",
+    coveredShares: "100",
+  });
+});

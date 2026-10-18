@@ -1,5 +1,18 @@
-import type { LifecycleProjection } from "../../shared/lifecycles.js";
+import type {
+  LifecycleProjection,
+  RetainedLifecycleAnchor,
+} from "../../shared/lifecycles.js";
 import type { Store } from "../storage/database.js";
+/** Earlier persisted anchors take precedence over newly discovered fills. */
+export function readLifecycleAnchors(
+  db: Store["db"],
+): RetainedLifecycleAnchor[] {
+  return db
+    .prepare(
+      "SELECT id, account, opening_execution_key AS openingExecutionKey FROM lifecycle_identities ORDER BY rowid",
+    )
+    .all() as RetainedLifecycleAnchor[];
+}
 export function persistLifecycleProjection(
   db: Store["db"],
   buildId: string,

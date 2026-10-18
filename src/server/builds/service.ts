@@ -26,6 +26,7 @@ import {
   projectLifecycles,
   validateMembership,
 } from "../lifecycles/project.js";
+import { readLifecycleAnchors } from "../lifecycles/repository.js";
 import { valueLifecycles } from "../lifecycles/valuation.js";
 import type { Store } from "../storage/database.js";
 import { loadLedgerSnapshot } from "../storage/ledger.js";
@@ -171,6 +172,7 @@ export async function computeProjection(
       decisions,
       undefined,
       remapStrategyIds(origins, remap),
+      readLifecycleAnchors(store.db),
     ),
   );
   const snapshots = decisions

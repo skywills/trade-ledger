@@ -264,8 +264,10 @@ Review the written spec and this draft together before implementing. Suggested e
 
 Implemented on `feature/trade-lifecycles`. Reviewed fixes and limitations are recorded in `docs/reviews/2026-10-18-trade-lifecycles-review.md`.
 
-- Full Vitest suite: 585 tests passed across 53 files.
+- Full Vitest suite: 590 tests passed across 53 files.
 - Full Playwright suite: 64 tests passed.
 - `npm run check:all`: passed with existing repository diagnostics.
 - `npm run test:build-smoke`: passed production build, migration packaging, server health, and shutdown.
 - Backup/restore/rebuild preserves lifecycle projection data in the existing 18-test backup suite.
+
+Final PR review fixed confirmed-attachment re-suggestions, retained origin identity across same-order fill imports (including equal timestamps), and purchased-stock covered-call stage presentation. Independent scoped verification found all findings addressed. See the checked-in review report for regression evidence.

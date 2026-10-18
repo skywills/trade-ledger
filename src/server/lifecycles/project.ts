@@ -9,8 +9,12 @@ import type {
 import type {
   LifecycleAnchor,
   LifecycleProjection,
+  RetainedLifecycleAnchor,
 } from "../../shared/lifecycles.js";
-import { LifecycleMembershipPayloadSchema } from "../../shared/lifecycles.js";
+import {
+  LifecycleAttachmentPayloadSchema,
+  LifecycleMembershipPayloadSchema,
+} from "../../shared/lifecycles.js";
 import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
 import { applyMembershipChanges } from "./decisions.js";
@@ -28,7 +32,14 @@ export function projectLifecycles(
   decisions: readonly Decision[],
   resolveId: (a: LifecycleAnchor) => string = lifecycleId,
   originProjection?: Projection,
+  retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
 ): LifecycleProjection {
+  const retained = new Map(
+    retainedAnchors.map((anchor, rank) => [
+      JSON.stringify([anchor.account, anchor.openingExecutionKey]),
+      { id: anchor.id, rank },
+    ]),
+  );
   const finalProjection = projection;
   projection = originProjection ?? projection;
   const sourceRef = (
@@ -82,13 +93,22 @@ export function projectLifecycles(
         y = exec.get(b.executionKey);
       return (
         (a.role === "open" ? 0 : 1) - (b.role === "open" ? 0 : 1) ||
+        ((x
+          ? retained.get(JSON.stringify([x.account, x.key]))?.rank
+          : undefined) ?? Number.MAX_SAFE_INTEGER) -
+          ((y
+            ? retained.get(JSON.stringify([y.account, y.key]))?.rank
+            : undefined) ?? Number.MAX_SAFE_INTEGER) ||
+        (x && y ? (compareLifecycleTime(x, y) ?? 0) : 0) ||
         (x?.date ?? "").localeCompare(y?.date ?? "") ||
         a.executionKey.localeCompare(b.executionKey)
       );
     })[0];
     const e = opening && exec.get(opening.executionKey);
     if (!e) continue;
-    const id = resolveId({ account: e.account, openingExecutionKey: e.key });
+    const id =
+      retained.get(JSON.stringify([e.account, e.key]))?.id ??
+      resolveId({ account: e.account, openingExecutionKey: e.key });
     roots.set(s.id, id);
     const underlyingKeys = new Set(
       rows
@@ -260,6 +280,27 @@ export function projectLifecycles(
   }
   applyMembershipChanges(ledger, projection, draft, decisions);
   recomputeLifecycles(ledger, projection, draft, explicitCloseRefs);
+  const confirmedOpenings = new Set(
+    decisions.flatMap((d) => {
+      if (
+        draft.issues.some((issue) => issue.key === `lifecycle:decision:${d.id}`)
+      )
+        return [];
+      if (d.kind === "lifecycle_attachment") {
+        const result = LifecycleAttachmentPayloadSchema.safeParse(d.payload);
+        return result.success ? [refKey(result.data.opening)] : [];
+      }
+      if (d.kind === "lifecycle_membership") {
+        const result = LifecycleMembershipPayloadSchema.safeParse(d.payload);
+        return result.success
+          ? result.data.assignments
+              .filter((a) => a.allocation.role === "open")
+              .map((a) => refKey(a.allocation))
+          : [];
+      }
+      return [];
+    }),
+  );
   // Suggestions carry no ownership until confirmed. Existing positions at call
   // opening are measured chronologically, including reservations by attached calls.
   for (const a of projection.allocations) {
@@ -271,6 +312,7 @@ export function projectLifecycles(
       !new Decimal(a.quantity).lt(0)
     )
       continue;
+    if (confirmedOpenings.has(refKey(a))) continue;
     const owners = draft.members
       .filter((m) => refKey(m.allocation) === refKey(a))
       .map((m) => m.lifecycleId);
@@ -568,7 +610,13 @@ export function recomputeLifecycles(
     l.stage =
       l.status === "closed"
         ? "closed"
-        : calls.gt(0) && assigned
+        : calls.gt(0) &&
+            (assigned ||
+              members.some(
+                (m) =>
+                  exec.get(m.allocation.executionKey)?.instrument.assetClass ===
+                  "STK",
+              ))
           ? "covered_call"
           : assigned && shares.gt(0)
             ? "assigned_stock"

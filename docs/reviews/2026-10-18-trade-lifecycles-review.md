@@ -1,6 +1,6 @@
 # Trade lifecycles implementation review
 
-Implemented on `feature/trade-lifecycles` from `main`, following the reviewed design and nine-task plan. Independent workers implemented reporting and screens; an independent reviewer inspected the core and then the complete change. This report records the disposition after the implementation's fix pass; it does not claim that a second independent approval was obtained after those fixes.
+Implemented on `feature/trade-lifecycles` from `main`, following the reviewed design and nine-task plan. Independent workers implemented reporting and screens; an independent reviewer inspected the core and then the complete change. This report records the initial implementation fix pass and the subsequent independent PR review and scoped verification below.
 
 ## Review findings and fixes
 
@@ -35,8 +35,19 @@ Implemented on `feature/trade-lifecycles` from `main`, following the reviewed de
 
 ## Verification and limits
 
-The complete Vitest suite passes **585 tests across 53 files**, including real CSV import/build/report acceptance, source correction, campaign replay, and backup/restore/rebuild preservation. The full browser suite passes **64 tests**. Production build/server smoke passes, including SQLite migration packaging, startup health, and SIGTERM shutdown. Lint and typecheck pass; existing repository informational diagnostics and warnings remain.
+The complete Vitest suite passes **590 tests across 53 files**, including real CSV import/build/report acceptance, source correction, campaign replay, and backup/restore/rebuild preservation. The full browser suite passes **64 tests**. Production build/server smoke passes, including SQLite migration packaging, startup health, and SIGTERM shutdown. Lint and typecheck pass; existing repository informational diagnostics and warnings remain.
 
 Broker-specific lot interpretations of missing assignment P&L remain conservative. The retained instrument model has no authoritative option-underlying Conid or adjusted deliverable field; the implementation rejects known contradictions and requires confirmation for compatible covered-call suggestions. It does not certify absent contractual metadata.
 
 Browser tests exercise the compiled UI with controlled API responses; separate real importer/build/API tests cover server behavior. Backup/restore is checked explicitly, but no test claims to enumerate every possible broker report or import-order permutation. Execution-cashflow totals exclude unimported dividends, interest, borrowing charges, and transfers. Manual prices are optional dated estimates before future exit costs, not a live quote feed or tax-lot engine.
+
+
+## Final PR review
+
+A fresh independent review of commit `ad978a7` found two important issues and one minor presentation issue. All were reproduced, fixed, and independently rechecked in a scoped follow-up review:
+
+- A confirmed call against one of several eligible stock lots could generate another attachment suggestion for a different lot. Successful retained opening ownership now prevents replacement suggestions; invalid replay still preserves its review issue and suggestion. Regression coverage follows the chosen ownership through repeated projection and final closure while the unrelated lot remains open.
+- Later same-day fills could replace the lifecycle anchor through lexical execution-key sorting. New origins use proven execution chronology, while already persisted anchors retain precedence when more same-order fills arrive, including equal timestamps. Rebuilds and decision validation use the same retained identities. Real staged-import tests verify campaign membership survives both later-time and equal-time fills.
+- Calls attached to ordinary purchased shares displayed the options stage because assignment history was required. Confirmed covered calls now show the covered-call stage for purchased shares as well.
+
+The scoped reviewer independently exercised confirmation, invalid replay, equal-time identity preservation, and purchased-stock stage probes; all findings were addressed and no important introduced issue was found. Final full verification: **590 unit/integration tests**, **64 browser tests**, `npm run check:all`, and `npm run test:build-smoke` passed. The existing four repository lint warnings remain unchanged. No merge is included in this review.

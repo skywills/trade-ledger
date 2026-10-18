@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors.js";
 import { loadProjection, readActiveBuild } from "../builds/repository.js";
 import { retainedNormalizationInputsChanged } from "../builds/snapshot.js";
 import { LEDGER_PARSER_VERSION } from "../ledger/normalize.js";
+import { readLifecycleAnchors } from "../lifecycles/repository.js";
 import { validateLifecycleDecision } from "../lifecycles/validate-decision.js";
 import { type Store, write } from "../storage/database.js";
 import { loadLedgerSnapshot } from "../storage/ledger.js";
@@ -635,6 +636,7 @@ export async function appendDecision(
           supersedesId: input.supersedesId,
         },
         origins,
+        readLifecycleAnchors(store.db),
       );
     }
     const id = randomUUID();

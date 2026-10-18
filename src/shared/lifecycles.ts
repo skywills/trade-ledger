@@ -86,6 +86,9 @@ export interface LifecycleAnchor {
   account: string;
   openingExecutionKey: string;
 }
+export interface RetainedLifecycleAnchor extends LifecycleAnchor {
+  id: Id;
+}
 export const LifecycleAttachmentPayloadSchema = z.object({
   opening: AllocationRefSchema,
   targets: z
