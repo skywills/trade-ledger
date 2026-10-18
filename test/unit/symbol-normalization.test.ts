@@ -197,6 +197,6 @@ describe("Berkshire symbol normalization", () => {
       ),
     ];
     recomputePresentation(draft);
-    expect(draft.description).toBe("BRK.B stock");
+    expect(draft.description).toBe("BRK.B Stock");
   });
 });
