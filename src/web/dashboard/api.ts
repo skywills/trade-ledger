@@ -6,7 +6,13 @@ import {
   AnalyticsResponseSchema,
   type DetailQuery,
 } from "../../shared/analytics.js";
-import { ApiError, type RemoteState } from "../api.js";
+import {
+  ApiError,
+  errorFrom,
+  type RemoteState,
+  readBody,
+  request,
+} from "../api.js";
 export function queryString(query: object): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(query))
@@ -29,17 +35,7 @@ function useResource<T>(
     if (!path) return;
     const controller = new AbortController();
     setState({ key, status: "loading", data: null, error: null });
-    fetch(path, { signal: controller.signal })
-      .then(async (response) => {
-        const raw = await response.json();
-        if (!response.ok)
-          throw new ApiError(
-            raw.code ?? "REQUEST_FAILED",
-            raw.message ?? "Unable to load analytics.",
-            response.status,
-          );
-        return schema.parse(raw);
-      })
+    request(path, schema, { signal: controller.signal })
       .then((data) => {
         if (!controller.signal.aborted)
           setState({ key, status: "ready", data, error: null });
@@ -87,14 +83,7 @@ export async function downloadAnalyticsCsv(
   query: import("../../shared/analytics.js").ExportQuery,
 ): Promise<void> {
   const response = await fetch(`/api/analytics/export?${queryString(query)}`);
-  if (!response.ok) {
-    const body = await response.json();
-    throw new ApiError(
-      body.code ?? "EXPORT_FAILED",
-      body.message ?? "Could not export analytics.",
-      response.status,
-    );
-  }
+  if (!response.ok) throw errorFrom(response, await readBody(response));
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

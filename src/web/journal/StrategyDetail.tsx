@@ -19,13 +19,16 @@ type Tab = (typeof TABS)[number];
 function sourceTarget(execution: Execution | undefined): string | null {
   const source = execution?.sources[0];
   if (source === undefined) return null;
-  return `/imports?import=${source.importId}&row=${source.rowNumber}`;
+  return `/imports?import=${encodeURIComponent(source.importId)}&row=${source.rowNumber}`;
 }
 
 /** Strategy detail: source precision, ledger allocations, lots and decisions. */
 export function StrategyDetail({ id }: { id: string }) {
   const lifecycles = useJson("/api/lifecycles", LifecycleListSchema);
-  const detail = useJson(`/api/strategies/${id}`, StrategyDetailSchema);
+  const detail = useJson(
+    `/api/strategies/${encodeURIComponent(id)}`,
+    StrategyDetailSchema,
+  );
   const transactions = useJson(
     "/api/transactions?pageSize=100",
     TransactionsEnvelope,
@@ -258,7 +261,7 @@ export function StrategyDetail({ id }: { id: string }) {
                 const target =
                   source === undefined
                     ? null
-                    : `/imports?import=${source.importId}&row=${source.rowNumber}`;
+                    : `/imports?import=${encodeURIComponent(source.importId)}&row=${source.rowNumber}`;
                 return (
                   <tr key={lot.rowNumber}>
                     <td>{lot.rowNumber}</td>

@@ -10,6 +10,7 @@ import {
   RestoreInstructionsSchema,
   RollbackResponseSchema,
   requestJson,
+  useJobSignal,
   useJson,
 } from "../api.js";
 import { BuildBadge, ErrorPanel } from "../components.js";
@@ -21,6 +22,7 @@ import { ResetJournal } from "./ResetJournal.js";
  * the model profiles panel. It never fabricates any chart or risk metric.
  */
 export function MaintenancePage() {
+  const jobSignal = useJobSignal();
   const journal = useJson("/api/journal?pageSize=1", JournalEnvelope);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,6 +38,7 @@ export function MaintenancePage() {
   );
 
   async function startBuild(mode: "full" | "projection") {
+    const signal = jobSignal();
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -47,13 +50,15 @@ export function MaintenancePage() {
         "POST",
         { mode },
       );
-      const finished = await pollJob(jobId, setJob);
+      const finished = await pollJob(jobId, setJob, { signal });
+      signal.throwIfAborted();
       setJob(finished);
       journal.reload();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (!signal.aborted)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
@@ -72,6 +77,7 @@ export function MaintenancePage() {
   }
 
   async function startBackup() {
+    const signal = jobSignal();
     setBackupBusy(true);
     setError(null);
     setBackupJob(null);
@@ -81,12 +87,14 @@ export function MaintenancePage() {
         BackupStartResponseSchema,
         "POST",
       );
-      const finished = await pollJob(jobId, setBackupJob);
+      const finished = await pollJob(jobId, setBackupJob, { signal });
+      signal.throwIfAborted();
       setBackupJob(finished);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (!signal.aborted)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setBackupBusy(false);
+      if (!signal.aborted) setBackupBusy(false);
     }
   }
 

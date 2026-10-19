@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useJobSignal } from "../api.js";
 import { rebuildLifecycles } from "./api.js";
 export function BuildAction({ onBuilt }: { onBuilt: () => void }) {
+  const jobSignal = useJobSignal();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -9,15 +11,18 @@ export function BuildAction({ onBuilt }: { onBuilt: () => void }) {
         type="button"
         disabled={busy}
         onClick={async () => {
+          const signal = jobSignal();
           setBusy(true);
           setError(null);
           try {
-            await rebuildLifecycles();
+            await rebuildLifecycles(signal);
+            signal.throwIfAborted();
             onBuilt();
           } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
+            if (!signal.aborted)
+              setError(e instanceof Error ? e.message : String(e));
           } finally {
-            setBusy(false);
+            if (!signal.aborted) setBusy(false);
           }
         }}
       >

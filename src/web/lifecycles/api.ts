@@ -89,14 +89,16 @@ export const LifecycleDetailSchema = z.object({
 });
 export type LifecycleDetailData = z.infer<typeof LifecycleDetailSchema>;
 export type SaveDecision = (kind: string, payload: unknown) => Promise<void>;
-export async function rebuildLifecycles() {
+export async function rebuildLifecycles(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const { jobId } = await requestJson(
     "/api/builds",
     BuildResponseSchema,
     "POST",
     { mode: "projection" },
   );
-  const job = await pollJob(jobId);
+  const job = await pollJob(jobId, undefined, signal ? { signal } : {});
+  signal?.throwIfAborted();
   if (job.status !== "complete")
     throw new Error(
       job.error ??

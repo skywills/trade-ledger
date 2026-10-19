@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { listEnvelopeSchema, RunSummarySchema } from "../shared/api.js";
 
@@ -226,7 +226,7 @@ export const DecisionResponseSchema = z.object({
 });
 export type DecisionResponse = z.infer<typeof DecisionResponseSchema>;
 
-async function readBody(response: Response): Promise<unknown> {
+export async function readBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (text.trim() === "") return null;
   try {
@@ -236,7 +236,7 @@ async function readBody(response: Response): Promise<unknown> {
   }
 }
 
-function errorFrom(response: Response, body: unknown): ApiError {
+export function errorFrom(response: Response, body: unknown): ApiError {
   const record =
     body !== null && typeof body === "object"
       ? (body as { code?: unknown; message?: unknown; issues?: unknown })
@@ -373,16 +373,49 @@ export function isTerminalJob(job: Job): boolean {
   return (TERMINAL_JOB_STATUSES as readonly string[]).includes(job.status);
 }
 
-/** Polls a persisted job until it reaches a terminal state, reporting progress. */
+/** Stops observing when the owner unmounts or its resource changes. */
+export function useJobSignal(resource?: string): () => AbortSignal {
+  const owner = useRef({ resource, controller: new AbortController() });
+  if (owner.current.resource !== resource)
+    owner.current = { resource, controller: new AbortController() };
+  const current = owner.current;
+  useEffect(() => {
+    if (current.controller.signal.aborted)
+      current.controller = new AbortController();
+    return () => current.controller.abort();
+  }, [current]);
+  return () => current.controller.signal;
+}
+
+/** Observe a persisted job until terminal or aborted; abort never cancels the job. */
 export async function pollJob(
   jobId: string,
   onProgress?: (job: Job) => void,
+  options: { signal?: AbortSignal; intervalMs?: number } = {},
 ): Promise<Job> {
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    const { job } = await request(`/api/jobs/${jobId}`, JobEnvelopeSchema);
+  const { signal, intervalMs = 100 } = options;
+  while (true) {
+    signal?.throwIfAborted();
+    const { job } = await request(
+      `/api/jobs/${encodeURIComponent(jobId)}`,
+      JobEnvelopeSchema,
+      signal ? { signal } : {},
+    );
+    signal?.throwIfAborted();
     onProgress?.(job);
+    signal?.throwIfAborted();
     if (isTerminalJob(job)) return job;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, intervalMs);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
-  throw new ApiError("JOB_TIMEOUT", "The job did not finish in time.", 0);
 }
