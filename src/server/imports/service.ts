@@ -297,6 +297,23 @@ function sweepExpiredPreviews(store: Store, now: Date): Promise<void> {
   });
 }
 
+/** Discards only uncommitted previews owned by a failed upload request. */
+export async function discardImportPreviews(
+  store: Store,
+  previewIds: readonly Id[],
+): Promise<void> {
+  if (previewIds.length === 0) return;
+  const removed = await write(store, () => {
+    const statement = store.db.prepare(
+      "DELETE FROM import_previews WHERE id = ? AND status = 'staged' RETURNING id",
+    );
+    return previewIds.filter((id) => statement.get(id) !== undefined);
+  });
+  for (const id of removed) {
+    removeDataFileQuietly(store.dataDir, stagingRelativePath(id));
+  }
+}
+
 /**
  * Creates a durable staged preview. Original bytes are written to a
  * hash-independent, preview-id-addressed staging file and fsynced before the
@@ -411,7 +428,8 @@ export async function commitImport(
   const bytes = readDataFile(store.dataDir, contentRelativePath(record.sha256));
   const parsed = parseFlex(
     bytes,
-    options.limitBytes ?? DEFAULT_FLEX_LIMIT_BYTES,
+    // Retained originals already passed the upload limit during preview.
+    options.limitBytes ?? bytes.byteLength,
   );
   if (parsed.hash !== record.sha256) {
     throw new AppError(

@@ -345,6 +345,23 @@ describe("parseFlex", () => {
     );
   });
 
+  it("normalizes a quoted comma-separated IBKR DateTime without shifting its timezone", () => {
+    const fields = validExecutionFields({
+      DateTime: "2026-09-03, 10:15:30",
+      TimeZone: "America/New_York",
+    });
+    const parsed = parseFlex(
+      csvFile([csvLine(Object.keys(fields)), csvLine(Object.values(fields))]),
+    );
+    const result = normalizeExecution(expectRow(parsed.rows, 0), ref, null);
+    expect(result.execution).toMatchObject({
+      date: "2026-09-03",
+      rawDateTime: "2026-09-03T10:15:30",
+      timezone: "America/New_York",
+    });
+    expect(result.issues).toEqual([]);
+  });
+
   it("preserves the source timezone and never applies the server timezone", () => {
     const withSourceZone = normalizeExecution(
       rawRow(validExecutionFields({ TimeZone: "EST" })),
