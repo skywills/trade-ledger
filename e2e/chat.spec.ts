@@ -107,6 +107,99 @@ test("asks a P&L question and gets a tool-backed answer", async ({
   );
 });
 
+test("streams thinking and answer text, supports keyboard collapse, and restores thinking after reload", async ({ page, request, baseURL }) => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  inference = await startInferenceServer({
+    mode: "tool-call",
+    planGateTool: "get_pnl_summary",
+    plan: [{
+      kind: "text",
+      thinking: "Checking the open review issues against your trades.",
+      textChunks: ["First finding. ", "Second finding."],
+      textChunkGate: (index) => index === 0 ? gate : Promise.resolve(),
+    }],
+  });
+  const block = page.locator(".thinking-block").last();
+  const thinking = block.locator(".thinking-text");
+  const toggle = block.locator(":scope > summary");
+  const answer = page.getByTestId("message-assistant").last().locator(":scope > .md");
+  try {
+    await configureModel(request, baseURL ?? "", inference.url);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.goto("/");
+    await page.getByTestId("composer-input").fill("Review the open issues");
+    await page.getByTestId("composer-send").click();
+    await expect(thinking).toContainText("Checking the open review issues against your trades.");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(thinking).toBeHidden();
+    await page.keyboard.press("Enter");
+    await expect(thinking).toBeVisible();
+    await expect(answer).toHaveText("First finding. ");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.reload();
+    await expect(thinking).toContainText("Checking the open review issues against your trades.");
+    await expect(answer).toHaveText("First finding. ");
+  } finally {
+    release();
+  }
+  await expect(answer).toHaveText("First finding. Second finding.");
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+  await expect(block).not.toHaveAttribute("open");
+  await toggle.click();
+  await expect(thinking).toBeVisible();
+  await page.reload();
+  await expect(block).not.toHaveAttribute("open");
+  await toggle.click();
+  await expect(thinking).toHaveText("Checking the open review issues against your trades.");
+});
+
+test("recovers thinking beyond the replay tail on a delayed first stream connection", async ({ page, request, baseURL }) => {
+  let startReply = () => {};
+  let finishReply = () => {};
+  let connectStream = () => {};
+  const replyGate = new Promise<void>((resolve) => { startReply = resolve; });
+  const finishGate = new Promise<void>((resolve) => { finishReply = resolve; });
+  const connectionGate = new Promise<void>((resolve) => { connectStream = resolve; });
+  // Larger than the SSE replay byte budget: recovery requires a new snapshot.
+  const thought = `${"Checking trades. ".repeat(17000)}Recovered thinking.`;
+  inference = await startInferenceServer({
+    mode: "tool-call", planGateTool: "get_pnl_summary",
+    plan: [{ kind: "text", thinking: thought, text: "Ready.", beforeReply: () => replyGate, textChunkGate: () => finishGate }],
+  });
+  try {
+    await configureModel(request, baseURL ?? "", inference.url);
+    await page.route("**/api/chat/threads/*/events", async (route) => {
+      await connectionGate;
+      await route.continue();
+    });
+    await page.goto("/");
+    await page.getByTestId("composer-input").fill("Review with a delayed connection");
+    const initialDetail = page.waitForResponse((response) => response.request().method() === "GET" && /\/api\/chat\/threads\/[^/]+$/.test(new URL(response.url()).pathname));
+    await page.getByTestId("composer-send").click();
+    const initial = await (await initialDetail).json();
+    expect(initial.messages[1].thinking).toBe("");
+    startReply();
+    await expect.poll(async () => {
+      const detail = await request.get(`/api/chat/threads/${initial.thread.id}`);
+      return (await detail.json()).messages[1].thinking.length;
+    }).toBe(thought.length);
+    connectStream();
+    await expect(page.locator(".thinking-text")).toContainText("Recovered thinking.");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+  } finally {
+    startReply();
+    connectStream();
+    finishReply();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+});
+
 test("attaching a CSV shows a preview chip", async ({
   page,
   request,

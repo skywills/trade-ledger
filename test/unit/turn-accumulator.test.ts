@@ -8,6 +8,58 @@ const ev = (body: Record<string, unknown>) =>
   ({ ...base, ...body }) as SessionEvent;
 
 describe("TurnAccumulator", () => {
+  it("streams thinking separately from the answer and rolls back only the retried round", () => {
+    const acc = new TurnAccumulator("m1");
+    expect(
+      acc.apply(
+        ev({ type: "thinking_delta", round: 1, text: "Checking trades. " }),
+      ),
+    ).toEqual([
+      {
+        event: "thinking",
+        data: {
+          messageId: "m1",
+          text: "Checking trades. ",
+          offset: 0,
+          revision: 1,
+        },
+      },
+    ]);
+    acc.apply(ev({ type: "text_delta", round: 1, text: "First finding. " }));
+    acc.apply(ev({ type: "thinking_delta", round: 2, text: "Discard this" }));
+    acc.apply(ev({ type: "text_delta", round: 2, text: "Wrong answer" }));
+    expect(
+      acc.apply(ev({ type: "stream_reset", round: 2, attempt: 1 })),
+    ).toEqual([
+      {
+        event: "reset",
+        data: { messageId: "m1", text: "First finding. ", revision: 5 },
+      },
+      {
+        event: "thinking_reset",
+        data: { messageId: "m1", text: "Checking trades. ", revision: 5 },
+      },
+    ]);
+    acc.apply(
+      ev({ type: "thinking_delta", round: 2, text: "Comparing issues." }),
+    );
+    expect(acc.thinking).toBe("Checking trades. Comparing issues.");
+    expect(acc.text).toBe("First finding. ");
+    expect(
+      acc.apply(ev({ type: "text_delta", round: 2, text: "Final finding." })),
+    ).toEqual([
+      {
+        event: "delta",
+        data: {
+          messageId: "m1",
+          text: "Final finding.",
+          offset: 15,
+          revision: 7,
+        },
+      },
+    ]);
+  });
+
   it("streams deltas and voids the current round on stream_reset", () => {
     const acc = new TurnAccumulator("m1");
     acc.apply(ev({ type: "text_delta", round: 1, text: "Hello " }));
@@ -16,7 +68,14 @@ describe("TurnAccumulator", () => {
       ev({ type: "stream_reset", round: 2, attempt: 1 }),
     );
     expect(frames).toEqual([
-      { event: "reset", data: { messageId: "m1", text: "Hello " } },
+      {
+        event: "reset",
+        data: { messageId: "m1", text: "Hello ", revision: 3 },
+      },
+      {
+        event: "thinking_reset",
+        data: { messageId: "m1", text: "", revision: 3 },
+      },
     ]);
     acc.apply(ev({ type: "text_delta", round: 2, text: "world" }));
     expect(acc.text).toBe("Hello world");

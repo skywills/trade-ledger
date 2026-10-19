@@ -81,6 +81,66 @@ async function idle(app: FastifyInstance, id: string) {
 }
 
 describe("chat HTTP API", () => {
+  it("streams thinking and answer text before completion and retains thinking in REST history", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const app = await appWithModel([
+      {
+        kind: "text",
+        thinking: "Checking the journal.",
+        textChunks: ["First ", "answer."],
+        textChunkGate: (index) => (index === 0 ? gate : Promise.resolve()),
+      },
+    ]);
+    const id = await createChatThread(app);
+    try {
+      const base = await app.listen({ port: 0, host: "127.0.0.1" });
+      const response = await fetch(`${base}/api/chat/threads/${id}/events`);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("missing SSE reader");
+      streams.push(reader);
+      await reader.read();
+      await app.inject({
+        method: "POST",
+        url: `/api/chat/threads/${id}/messages`,
+        headers: { origin: ORIGIN },
+        payload: { clientMessageId: "streamed", text: "Review my journal" },
+      });
+      let stream = "";
+      const decoder = new TextDecoder();
+      while (!stream.includes('"text":"First "')) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("stream closed before answer");
+        stream += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(stream).toContain("event: thinking");
+      expect(stream).toContain("Checking the journal.");
+      expect(stream).not.toContain("event: message");
+      const running = (await app.inject(`/api/chat/threads/${id}`)).json();
+      expect(running.thread.status).toBe("running");
+      expect(running.messages[1]).toMatchObject({
+        thinking: "Checking the journal.",
+        content: "First ",
+        status: "streaming",
+      });
+    } finally {
+      release();
+    }
+    const completed = await idle(app, id);
+    expect(completed).toMatchObject({
+      messages: [
+        { role: "user", thinking: "" },
+        {
+          thinking: "Checking the journal.",
+          content: "First answer.",
+          status: "complete",
+        },
+      ],
+    });
+  });
+
   it("creates a thread, sends, streams and reads back", async () => {
     const app = await appWithModel([
       { kind: "tool-call", toolName: "get_pnl_summary", arguments: {} },

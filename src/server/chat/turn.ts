@@ -125,6 +125,7 @@ async function finishTurn(
   const turnCost = new Decimal(meter.costUsd).toFixed();
   await updateMessage(store, input.assistantMessageId, {
     content: acc.finalContent(),
+    thinking: acc.thinking,
     tools: acc.tools,
     status,
     error,

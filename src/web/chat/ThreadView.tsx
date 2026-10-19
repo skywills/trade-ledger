@@ -10,6 +10,7 @@ import { MessageItem } from "./MessageItem.js";
 import { ThreadActions } from "./ThreadActions.js";
 import {
   messageText,
+  messageThinking,
   messageTools,
   type ThreadState,
 } from "./threadController.js";
@@ -67,6 +68,7 @@ function MessageList({
           key={m.id}
           message={m}
           text={messageText(state, m)}
+          thinking={messageThinking(state, m)}
           tools={messageTools(state, m)}
         />
       ))}

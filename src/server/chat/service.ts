@@ -27,6 +27,7 @@ import {
   type ChatThread,
   createThread,
   findMessageByClientId,
+  listMessages,
   readThread,
   deleteThread as removeThread,
   updateMessage,
@@ -116,6 +117,22 @@ export class ChatService {
   }
 
   readonly bus = new ThreadEventBus();
+
+  /** Include the current turn so refresh/reconnect can recover beyond the SSE replay tail. */
+  messages(threadId: Id) {
+    const acc = ACTIVE_CHATS.get(threadId)?.accumulator;
+    return listMessages(this.deps.store, threadId).map((message) =>
+      message.status === "streaming" && acc != null
+        ? {
+            ...message,
+            content: acc.text,
+            thinking: acc.thinking,
+            tools: acc.tools,
+            streamRevision: acc.revision,
+          }
+        : message,
+    );
+  }
   private readonly limits: ChatLimits;
   private readonly now: () => Date;
 

@@ -27,6 +27,14 @@ export interface InferencePlanStep {
   /** Parsed arguments object; serialized as the function-call arguments string. */
   readonly arguments?: unknown;
   readonly text?: string;
+  /** Provider-visible thinking, delivered before the answer. */
+  readonly thinking?: string;
+  /** Separate chunks to test rendering before turn completion. */
+  readonly textChunks?: readonly string[];
+  /** Pause a scripted reply until the test is ready to observe it. */
+  readonly beforeReply?: () => Promise<void>;
+  /** Hold a chunk until the test has observed the in-progress reply. */
+  readonly textChunkGate?: (index: number) => Promise<void>;
   /** Include a `usage` block (defaults to true) so token accounting is exercised. */
   readonly usage?: boolean;
   readonly outputTokens?: number;
@@ -222,6 +230,10 @@ export async function startInferenceServer(
       }
 
       if (planStep !== undefined) {
+        await planStep.beforeReply?.();
+        if (planStep.thinking !== undefined) {
+          sendChunk({ reasoning_content: planStep.thinking });
+        }
         if (planStep.kind === "tool-call") {
           sendChunk({
             tool_calls: [
@@ -238,7 +250,13 @@ export async function startInferenceServer(
           });
           sendChunk({}, "tool_calls");
         } else {
-          sendChunk({ content: planStep.text ?? "synthetic plan text" });
+          let chunkIndex = 0;
+          for (const text of planStep.textChunks ?? [
+            planStep.text ?? "synthetic plan text",
+          ]) {
+            sendChunk({ content: text });
+            await planStep.textChunkGate?.(chunkIndex++);
+          }
           sendChunk({}, "stop");
         }
       } else if (planActive) {

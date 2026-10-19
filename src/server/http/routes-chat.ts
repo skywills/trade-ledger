@@ -10,12 +10,7 @@ import {
 import { AppError } from "../../shared/errors.js";
 import { listRunsForThread } from "../ai/runs.js";
 import type { ChatService } from "../chat/service.js";
-import {
-  listMessages,
-  listThreads,
-  readThread,
-  updateThread,
-} from "../chat/threads.js";
+import { listThreads, readThread, updateThread } from "../chat/threads.js";
 import type { Store } from "../storage/database.js";
 
 const KEEPALIVE_MS = 15_000;
@@ -82,7 +77,7 @@ function registerThreadCrud(
     const thread = requireThread(store, id);
     return {
       thread: publicThread(thread),
-      messages: listMessages(store, id),
+      messages: chat.messages(id),
       runs: listRunsForThread(store, id),
     };
   });

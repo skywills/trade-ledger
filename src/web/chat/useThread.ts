@@ -10,6 +10,7 @@ import { ApiError, request, requestJson } from "../api.js";
 import { createReloader } from "./reloader.js";
 import {
   applyFrame,
+  beginReload,
   initialThreadState,
   type ThreadState,
   withDetail,
@@ -20,6 +21,8 @@ const REFETCH_EVENTS = new Set(["message", "thread", "proposal", "error"]);
 const FRAME_EVENTS = [
   "delta",
   "reset",
+  "thinking",
+  "thinking_reset",
   "tool",
   "approval",
   "question",
@@ -40,10 +43,17 @@ export function useThread(threadId: string) {
   const [state, setState] = useState<ThreadState>(initialThreadState);
   const [reloader] = useState(() =>
     createReloader({
-      fetch: (id: string) =>
-        request(`/api/chat/threads/${id}`, ThreadDetailSchema),
+      fetch: (id: string) => {
+        setState((s) => beginReload(s));
+        return request(`/api/chat/threads/${id}`, ThreadDetailSchema);
+      },
       apply: (_id, detail) => setState((s) => withDetail(s, detail)),
-      fail: (_id, err) => setState((s) => ({ ...s, error: loadFailure(err) })),
+      fail: (_id, err) =>
+        setState((s) => ({
+          ...s,
+          bufferedFrames: null,
+          error: loadFailure(err),
+        })),
     }),
   );
 
@@ -58,10 +68,10 @@ export function useThread(threadId: string) {
     reloader.reload(threadId);
     if (typeof EventSource === "undefined") return () => reloader.deactivate();
     const source = new EventSource(`/api/chat/threads/${threadId}/events`);
-    let opened = false;
     source.addEventListener("ready", () => {
-      if (opened) reloader.reload(threadId); // a reconnect: REST is the source of truth
-      opened = true;
+      // Even the first connection may arrive after the replay tail has filled.
+      // REST supplies the full snapshot; frames arriving during it are buffered.
+      reloader.reload(threadId);
     });
     for (const name of FRAME_EVENTS) {
       source.addEventListener(name, (event) => {

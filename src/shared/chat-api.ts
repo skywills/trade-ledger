@@ -54,6 +54,8 @@ export const ChatMessageSchema = z.object({
   seq: z.number().int(),
   role: z.enum(["user", "assistant"]),
   content: z.string(),
+  thinking: z.string().default(""),
+  streamRevision: z.number().int().nonnegative().optional(),
   attachments: z.array(AttachmentSchema),
   tools: z.array(ToolRecordSchema),
   status: z.enum(["complete", "streaming", "cancelled", "failed"]),

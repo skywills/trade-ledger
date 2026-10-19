@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ChatMessageDto, ToolRecordDto } from "../../shared/chat-api.js";
 import { CheckIcon, ShieldIcon, WrenchIcon, XIcon } from "./icons.js";
 import { Markdown } from "./Markdown.js";
@@ -37,25 +38,7 @@ function ToolChips({ tools }: { tools: ToolRecordDto[] }) {
   );
 }
 
-function StatusLine({
-  message,
-  text,
-}: {
-  message: ChatMessageDto;
-  text: string;
-}) {
-  if (message.status === "streaming" && text === "") {
-    return (
-      <p className="thinking">
-        <span className="dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-        Thinking…
-      </p>
-    );
-  }
+function StatusLine({ message }: { message: ChatMessageDto }) {
   if (message.status === "failed") {
     return (
       <p className="error-text">Failed: {message.error ?? "unknown error"}</p>
@@ -65,14 +48,85 @@ function StatusLine({
   return null;
 }
 
-export function MessageItem({
+function ThinkingBlock({
   message,
+  thinking,
   text,
   tools,
 }: {
   message: ChatMessageDto;
+  thinking: string;
   text: string;
   tools: ToolRecordDto[];
+}) {
+  const running = message.status === "streaming";
+  const [expanded, setExpanded] = useState(running);
+  useEffect(() => {
+    if (!running) setExpanded(false);
+  }, [running]);
+  if (!running && thinking === "" && tools.length === 0) return null;
+  const label = running
+    ? text !== ""
+      ? "Writing reply…"
+      : tools.some((t) => t.status === "running")
+        ? "Using tools…"
+        : "Thinking…"
+    : message.status === "complete"
+      ? "Complete"
+      : message.status === "cancelled"
+        ? "Stopped"
+        : "Failed";
+  return (
+    <details
+      className="thinking-block"
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <span>Thinking</span>
+        <span className="thinking-state">
+          {running ? (
+            <span className="chip-spinner" aria-hidden="true" />
+          ) : null}
+          {label}
+        </span>
+      </summary>
+      <div className="thinking-content">
+        {thinking !== "" ? (
+          <div className="thinking-text">
+            <Markdown text={thinking} />
+          </div>
+        ) : (
+          <p className="muted">
+            {running
+              ? "Waiting for thinking or response text from the model."
+              : "No thinking text was provided by the model."}
+          </p>
+        )}
+        <ToolChips tools={tools} />
+        {tools
+          .filter((tool) => tool.isError && tool.error)
+          .map((tool) => (
+            <details key={tool.callId} className="error-text">
+              <summary>{tool.name}: error details</summary>
+              <p className="pre-wrap">{tool.error}</p>
+            </details>
+          ))}
+      </div>
+    </details>
+  );
+}
+
+export function MessageItem({
+  message,
+  text,
+  tools,
+  thinking = message.thinking,
+}: {
+  message: ChatMessageDto;
+  text: string;
+  tools: ToolRecordDto[];
+  thinking?: string;
 }) {
   const isUser = message.role === "user";
   return (
@@ -86,17 +140,16 @@ export function MessageItem({
           Attached: {message.attachments.map((a) => a.filename).join(", ")}
         </p>
       ) : null}
-      <ToolChips tools={tools} />
-      {tools
-        .filter((tool) => tool.isError && tool.error)
-        .map((tool) => (
-          <details key={tool.callId} className="error-text">
-            <summary>{tool.name}: error details</summary>
-            <p className="pre-wrap">{tool.error}</p>
-          </details>
-        ))}
+      {!isUser ? (
+        <ThinkingBlock
+          message={message}
+          thinking={thinking}
+          text={text}
+          tools={tools}
+        />
+      ) : null}
       {isUser ? <p className="pre-wrap">{text}</p> : <Markdown text={text} />}
-      <StatusLine message={message} text={text} />
+      <StatusLine message={message} />
     </article>
   );
 }

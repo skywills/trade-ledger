@@ -1334,6 +1334,44 @@ button.chip-remove {
   animation: spin 800ms linear infinite;
 }
 
+.thinking-block {
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
+
+.thinking-block > summary {
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  color: var(--text);
+}
+
+.thinking-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.thinking-content {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.thinking-content > :last-child {
+  margin-bottom: 0;
+}
+
+.thinking-text {
+  max-height: 20rem;
+  overflow-y: auto;
+  margin-bottom: var(--space-3);
+  scrollbar-gutter: stable;
+}
+
 .thinking {
   display: flex;
   align-items: center;
