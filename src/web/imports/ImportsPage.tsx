@@ -113,13 +113,12 @@ export function ImportsPage() {
         PreviewResponseSchema,
         form,
       );
-      signal.throwIfAborted();
-      setPreviews(previewResponse.previews);
-
-      setStep("committing");
+      if (!signal.aborted) {
+        setPreviews(previewResponse.previews);
+        setStep("committing");
+      }
       const commits = [];
       for (const entry of previewResponse.previews) {
-        signal.throwIfAborted();
         commits.push(
           await requestJson(
             `/api/imports/${encodeURIComponent(entry.id)}/commit`,
@@ -128,10 +127,9 @@ export function ImportsPage() {
           ),
         );
       }
-      signal.throwIfAborted();
       const duplicates = commits.filter((entry) => entry.duplicate).length;
 
-      setStep("building");
+      if (!signal.aborted) setStep("building");
       const build = await requestJson(
         "/api/builds",
         BuildResponseSchema,

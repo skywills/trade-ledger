@@ -181,6 +181,9 @@ function registerEvents(
       if (blocked) {
         const bytes = Buffer.byteLength(chunk);
         if (pendingBytes + bytes > MAX_PENDING_STREAM_BYTES) {
+          // A peer that stopped reading cannot drain a graceful end. Close its
+          // socket before releasing admission and shutdown tracking.
+          raw.destroy();
           end();
           return;
         }

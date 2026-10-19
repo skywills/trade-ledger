@@ -28,7 +28,17 @@ function NotFound() {
 function renderRoute(pathname: string) {
   const segments = pathname.split("/").filter((segment) => segment !== "");
   const first = segments[0];
-  const second = segments[1];
+  let second = segments[1];
+  if (
+    second !== undefined &&
+    ["strategies", "lifecycles", "campaigns", "chat"].includes(first ?? "")
+  ) {
+    try {
+      second = decodeURIComponent(second);
+    } catch {
+      return <NotFound />;
+    }
+  }
   switch (first) {
     case undefined:
       return <ChatPage threadId={undefined} />;

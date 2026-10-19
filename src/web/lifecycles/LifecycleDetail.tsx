@@ -118,10 +118,11 @@ export function LifecycleDetail({ id }: { id: string }) {
         supersedes,
         clientRequestId,
       );
-      signal.throwIfAborted();
-      pendingRequest.current = null;
-      setSupersedesId("");
-      setRebuildPending(true);
+      if (!signal.aborted) {
+        pendingRequest.current = null;
+        setSupersedesId("");
+        setRebuildPending(true);
+      }
       await rebuild(signal);
     });
   };

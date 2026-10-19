@@ -1,3 +1,5 @@
+import { createGate } from "./gate.js";
+import { strategy } from "../test/fixtures/analytics.js";
 import type { AddressInfo } from "node:net";
 import type { Page } from "playwright";
 import { createServer, type ViteDevServer } from "vite";
@@ -14,6 +16,30 @@ let releaseBuild: () => void = () => {
 };
 let errorBody = "upstream unavailable";
 const paths: string[] = [];
+const committedImports: string[] = [];
+let commitGate = createGate();
+let decisionGate = createGate();
+let decisionPending = false;
+const lifecycle = {
+  ...strategy({ id: "cycle-one", description: "Confirmed lifecycle" }),
+  account: "SIM",
+  underlyingKey: "A",
+  originStrategyType: "stock",
+  stage: "closed",
+  campaignId: null,
+  coveredShares: "0",
+  uncoveredShares: "0",
+  componentIds: [],
+};
+const provenance = {
+  buildId: "build-one",
+  ledgerId: "ledger-one",
+  stale: false,
+  generatedAt: "2026-10-19",
+  watermark: 0,
+  rebuildRequired: false,
+};
+
 const reservedId = "id/with?query&fragment#value%";
 test.beforeAll(async ({ browser }) => {
   server = await createServer({
@@ -58,15 +84,96 @@ test.beforeAll(async ({ browser }) => {
                 res.setHeader("content-type", "application/json");
                 res.end(JSON.stringify({ jobId: "held-build" }));
               };
+            } else if (req.url === "/api/imports/preview") {
+              res.setHeader("content-type", "application/json");
+              res.end(
+                JSON.stringify({
+                  previews: ["first", "second"].map((id) => ({
+                    id,
+                    hash: id,
+                    capabilities: [],
+                    issues: [],
+                    committable: true,
+                    counts: {
+                      total: 1,
+                      executions: 1,
+                      lots: 0,
+                      summaries: 0,
+                      markers: 0,
+                      quarantined: 0,
+                    },
+                  })),
+                }),
+              );
+            } else if (req.url?.endsWith("/commit")) {
+              const id = req.url.split("/")[3] ?? "";
+              committedImports.push(id);
+              const finish = () => {
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ importId: id, duplicate: false }));
+              };
+              if (id === "first") void commitGate.wait.then(finish);
+              else finish();
+            } else if (req.url === "/api/decisions" && req.method === "POST") {
+              decisionPending = true;
+              void decisionGate.wait.then(() => {
+                res.setHeader("content-type", "application/json");
+                res.end(
+                  JSON.stringify({
+                    decision: {
+                      id: "decision-one",
+                      sequence: 1,
+                      kind: "wheel_campaign_membership",
+                      payload: {},
+                    },
+                  }),
+                );
+              });
+            } else if (req.url?.startsWith("/api/lifecycles/")) {
+              paths.push(req.url);
+              res.setHeader("content-type", "application/json");
+              res.end(
+                JSON.stringify({
+                  ...provenance,
+                  lifecycle,
+                  members: [],
+                  executions: [],
+                  suggestions: [],
+                  valuation: null,
+                  campaigns: [],
+                }),
+              );
+            } else if (req.url === "/api/lifecycles") {
+              res.setHeader("content-type", "application/json");
+              res.end(JSON.stringify({ ...provenance, lifecycles: null }));
+            } else if (req.url?.startsWith("/api/campaigns/")) {
+              paths.push(req.url);
+              res.statusCode = 404;
+              res.end("unknown campaign");
+            } else if (req.url?.startsWith("/api/strategies/")) {
+              paths.push(req.url);
+              res.setHeader("content-type", "application/json");
+              res.end(
+                JSON.stringify({
+                  strategy: strategy({ id: reservedId }),
+                  allocations: [],
+                  links: [],
+                  metadata: { notes: null, stopLoss: null },
+                  buildId: null,
+                  stale: false,
+                }),
+              );
             } else if (
-              req.url?.startsWith("/api/strategies/") ||
-              req.url?.startsWith("/api/imports/")
+              req.url?.startsWith("/api/imports") ||
+              req.url?.startsWith("/api/journal")
             ) {
               paths.push(req.url);
               res.setHeader("content-type", "application/json");
               res.end(
                 JSON.stringify({
-                  items: [],
+                  items: req.url.startsWith("/api/journal")
+                    ? [strategy({ id: reservedId })]
+                    : [],
                   page: 1,
                   pageSize: 100,
                   total: 0,
@@ -239,38 +346,119 @@ for (const body of ["upstream unavailable", "{bad json", "null"]) {
   });
 }
 
-test("encodes reserved characters in strategy and import detail resource paths", async () => {
+async function navigate(path: string) {
+  await page.evaluate(async (path) => {
+    const { navigate } = await new Function(
+      'return import("/src/web/navigation.tsx")',
+    )();
+    navigate(path);
+  }, path);
+}
+
+for (const route of ["strategies", "lifecycles", "campaigns"]) {
+  test(`decodes ${route} route IDs exactly once before requesting the resource`, async () => {
+    await page.goto(`${new URL(page.url()).origin}/imports`);
+    for (const id of [reservedId, "literal%2Fvalue"]) {
+      paths.length = 0;
+      await navigate(`/${route}/${encodeURIComponent(id)}`);
+      await expect
+        .poll(() => paths)
+        .toContain(`/api/${route}/${encodeURIComponent(id)}`);
+    }
+  });
+  test(`rejects malformed percent escapes in ${route} route IDs`, async () => {
+    await page.goto(`${new URL(page.url()).origin}/imports`);
+    paths.length = 0;
+    await navigate(`/${route}/bad%escape`);
+    await expect(
+      page.getByRole("heading", { name: "Not found", exact: true }),
+    ).toBeVisible();
+    expect(paths.some((path) => path.startsWith(`/api/${route}/`))).toBe(false);
+  });
+}
+
+test("journal links encode IDs before navigating through App", async () => {
+  await page.goto(`${new URL(page.url()).origin}/journal`);
+  const link = page.getByRole("link", { name: "Synthetic trade", exact: true });
+  await expect(link).toHaveAttribute(
+    "href",
+    `/strategies/${encodeURIComponent(reservedId)}`,
+  );
   paths.length = 0;
-  await page.evaluate(async (id) => {
-    const [{ createElement, createRoot }, { StrategyDetail }] =
-      await Promise.all([
-        new Function('return import("/browser-api-harness.tsx")')(),
-        new Function('return import("/src/web/journal/StrategyDetail.tsx")')(),
-      ]);
-    createRoot(document.createElement("div")).render(
-      createElement(StrategyDetail, { id }),
-    );
-  }, reservedId);
+  await link.click();
   await expect
     .poll(() => paths)
     .toContain(`/api/strategies/${encodeURIComponent(reservedId)}`);
+});
+
+test("imports query IDs remain decoded exactly once", async () => {
+  paths.length = 0;
   await page.goto(
     `${new URL(page.url()).origin}/imports?import=${encodeURIComponent(reservedId)}&row=1`,
   );
-  await page.evaluate(async () => {
-    const [{ createElement, createRoot }, { ImportsPage }] = await Promise.all([
-      new Function('return import("/browser-api-harness.tsx")')(),
-      new Function('return import("/src/web/imports/ImportsPage.tsx")')(),
-    ]);
-    createRoot(document.createElement("div")).render(
-      createElement(ImportsPage),
-    );
-  });
   await expect
     .poll(() => paths)
     .toContain(
       `/api/imports/${encodeURIComponent(reservedId)}/rows?pageSize=100`,
     );
+});
+
+test("confirmed imports finish every commit and submit the build after navigation", async () => {
+  polls = 0;
+  committedImports.length = 0;
+  commitGate = createGate();
+  buildPending = false;
+  await page.goto(`${new URL(page.url()).origin}/imports`);
+  await page.getByLabel("CSV files").setInputFiles([
+    { name: "first.csv", mimeType: "text/csv", buffer: Buffer.from("one") },
+    { name: "second.csv", mimeType: "text/csv", buffer: Buffer.from("two") },
+  ]);
+  await page
+    .getByRole("button", { name: "Confirm import", exact: true })
+    .click();
+  await expect.poll(() => committedImports).toEqual(["first"]);
+  await page.getByRole("link", { name: "Journal", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Journal", exact: true }),
+  ).toBeVisible();
+  commitGate.open();
+  await expect.poll(() => committedImports).toEqual(["first", "second"]);
+  await expect.poll(() => buildPending).toBe(true);
+  const response = page.waitForResponse((response) =>
+    response.url().endsWith("/api/builds"),
+  );
+  releaseBuild();
+  await (await response).finished();
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect(polls).toBe(0);
+});
+
+test("an accepted lifecycle decision submits its rebuild after navigation", async () => {
+  polls = 0;
+  decisionGate = createGate();
+  decisionPending = false;
+  buildPending = false;
+  await page.goto(`${new URL(page.url()).origin}/lifecycles/cycle-one`);
+  await page
+    .getByRole("button", {
+      name: "Save campaign membership and rebuild",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => decisionPending).toBe(true);
+  await page.getByRole("link", { name: "Journal", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Journal", exact: true }),
+  ).toBeVisible();
+  decisionGate.open();
+  await expect.poll(() => buildPending).toBe(true);
+  const response = page.waitForResponse((response) =>
+    response.url().endsWith("/api/builds"),
+  );
+  releaseBuild();
+  await (await response).finished();
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect(polls).toBe(0);
 });
 
 for (const cleanup of ["unmount", "resource change"]) {

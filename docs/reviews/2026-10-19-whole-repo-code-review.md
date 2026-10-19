@@ -405,11 +405,22 @@ R16 currency preference and R20 endpoint restrictions require explicit product p
 ### Verification
 
 - Baseline on merged main: 678 tests passed.
-- Final whole-source V8 coverage run: 709 tests passed across 64 files; line coverage 71.20%. Browser execution is reported separately and is not included in this coverage number.
-- Full Chromium browser acceptance: 82 tests passed with two workers.
+- Final whole-source V8 coverage run: 710 tests passed across 64 files; line coverage 71.20%. Browser execution is reported separately and is not included in this coverage number.
+- Full Chromium browser acceptance: 91 tests passed with two workers.
 - Lint and typecheck passed with the existing four warnings and 26 informational diagnostics.
 - Production build and compiled-server migration, health and SIGTERM smoke passed.
 - Docker smoke passed: non-root UID, readiness, import, local model profile and restart persistence.
 - Independent review: year-9999 month rollover, SSE subscription accounting/drain behavior, navigation ownership and tool-error sanitization were corrected and rechecked; no remaining findings in this fix set.
 
 The real above-default-limit CSV regression parses over 20 MiB twice. Its initial 20-second timeout was exceeded under coverage instrumentation; the correctness test now has a documented 120-second budget. This is not a throughput guarantee. No live journal data was changed.
+
+
+### Final PR #12 review corrections
+
+A fresh review of `4650479` found three P2 regressions. All were reproduced by failing regressions before correction:
+
+- **Route IDs:** the router passed encoded segments to detail components, which encoded them again for API requests. Dynamic route IDs now decode exactly once, malformed escapes render Not found, and journal links encode strategy IDs. Browser coverage uses actual App navigation, including reserved characters and a literal `%2F` inside an ID.
+- **SSE overflow:** graceful `end()` released admission while a nonreading peer could leave its socket alive. Overflow now destroys the socket before releasing the slot. A native HTTP client that never reads the response reproduces the old failure and verifies immediate socket destruction; normal large replay still drains successfully.
+- **Confirmed mutations after navigation:** observation cancellation could stop a multi-file import between commits or prevent a retained lifecycle decision from scheduling its rebuild. Confirmed imports now finish all commits and submit their full rebuild; accepted lifecycle decisions still submit their projection rebuild. Navigation stops polling and UI updates. Browser gates hold the initial commit/decision response, navigate through App, then verify durable follow-up requests without detached polling.
+
+Final verification after these corrections: 710 unit/integration tests across 64 files passed with V8 coverage (71.20% whole-source lines); all 91 Chromium browser tests passed with two workers. Lint/typecheck, production build/compiled-server smoke, Docker restart-persistence smoke and diff formatting checks passed. Independent re-review confirmed all three P2 findings closed with no new findings.

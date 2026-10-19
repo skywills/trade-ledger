@@ -243,7 +243,7 @@ export function JournalPage() {
                 <td data-column="expiry">{strategy.expiry ?? "—"}</td>
                 <td data-column="year">{strategy.expiryYear ?? "—"}</td>
                 <td data-column="description">
-                  <Link to={`/strategies/${strategy.id}`}>
+                  <Link to={`/strategies/${encodeURIComponent(strategy.id)}`}>
                     {strategy.description}
                   </Link>
                 </td>

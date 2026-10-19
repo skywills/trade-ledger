@@ -1,3 +1,5 @@
+import { get, type IncomingMessage } from "node:http";
+import type { Socket } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { selectDefaultProfile } from "../../src/server/ai/profiles.js";
@@ -180,6 +182,47 @@ describe("chat HTTP API", () => {
     expect((text.match(/event: delta/g) ?? []).length).toBe(100);
   }, 4000);
 
+  it("destroys an overflowing socket even when its peer never reads the stream", async () => {
+    let context: AppContext | undefined;
+    const app = await appWithModel([], {
+      onReady: (value) => {
+        context = value;
+      },
+    });
+    const id = await createChatThread(app);
+    if (context === undefined) throw new Error("missing app context");
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const connected = new Promise<Socket>((resolve) => {
+      app.server.once("connection", resolve);
+    });
+    let response: IncomingMessage | undefined;
+    const request = get(`${base}/api/chat/threads/${id}/events`);
+    const socket = await connected;
+    try {
+      response = await new Promise<IncomingMessage>((resolve, reject) => {
+        request.once("response", resolve);
+        request.once("error", reject);
+      });
+      response.pause();
+      for (let i = 0; i < 1000; i++)
+        context.chat.bus.emit(id, {
+          event: "delta",
+          data: { messageId: "m", text: "x".repeat(2000) },
+        });
+      // Overflow must close the actual socket, not wait for this paused peer
+      // to consume buffered output after its admission slot has been released.
+      expect(socket.destroyed).toBe(true);
+      const releases = Array.from({ length: 8 }, () =>
+        context?.chat.bus.subscribe(id, () => {}),
+      );
+      for (const release of releases) release?.();
+    } finally {
+      response?.destroy();
+      request.destroy();
+      socket.destroy();
+    }
+  }, 4000);
+
   it("disconnects an overflowing stream and releases its subscription", async () => {
     let context: AppContext | undefined;
     const app = await appWithModel([], {
@@ -203,7 +246,10 @@ describe("chat HTTP API", () => {
       });
     let bytes = 0;
     for (;;) {
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((error: unknown) => {
+        expect(error).toBeInstanceOf(TypeError);
+        return { done: true as const, value: undefined };
+      });
       if (chunk.done) break;
       bytes += chunk.value.length;
     }

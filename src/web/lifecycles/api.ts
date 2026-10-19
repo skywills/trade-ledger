@@ -90,7 +90,8 @@ export const LifecycleDetailSchema = z.object({
 export type LifecycleDetailData = z.infer<typeof LifecycleDetailSchema>;
 export type SaveDecision = (kind: string, payload: unknown) => Promise<void>;
 export async function rebuildLifecycles(signal?: AbortSignal) {
-  signal?.throwIfAborted();
+  // A confirmed mutation must still schedule its rebuild after navigation.
+  // The signal controls observation of the resulting job only.
   const { jobId } = await requestJson(
     "/api/builds",
     BuildResponseSchema,
