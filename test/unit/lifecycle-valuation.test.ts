@@ -85,6 +85,18 @@ it("reports a closed lifecycle's unrealized P&L as the spec residual to broker-r
 
 it.each([
   {
+    raw: "2026-02-30T12:00:00Z",
+    zone: "UTC",
+    asOf: "2026-10-03T12:00:00Z",
+    available: false,
+  },
+  {
+    raw: "2026-10-02T12:00:00.000000001Z",
+    zone: null,
+    asOf: "2026-10-02T12:00:00Z",
+    available: false,
+  },
+  {
     raw: "2026-10-02T12:00:00",
     zone: "UTC",
     asOf: "2026-10-02T12:01:00Z",

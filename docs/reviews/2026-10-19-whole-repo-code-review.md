@@ -188,6 +188,8 @@ There is no FIFO lot matching. A close larger than any single opening group is n
 
 ## Maintainability
 
+Follow-up: items 1 and 2 below are addressed by the [chronology and grouping refactor](#chronology-and-grouping-refactor--2026-10-19). The list describes the reviewed baseline.
+
 1. `groupStrategies` in `src/server/strategies/grouping.ts` (1,180 lines) is a single function of about 850 lines, built from closures over shared maps. Split it into phases that take an explicit context object.
 2. Three chronology helpers decide execution ordering with different rules: `compareExecutionTime` (`grouping.ts:88`), `compareLifecycleTime` (`lifecycles/chronology.ts`) and `latestExecutionBound` (`valuation.ts:12`). Consolidate them under one tested contract.
 3. Performance as the journal grows:
@@ -268,3 +270,44 @@ Run on the final branch head:
 - **Tests and CI:** coverage reporting, `test:build-smoke` in CI, `WriterQueue` tests, and the flaky-wait cleanup are not yet done.
 - **R09 import UI:** showing endpoints before a model-configuration import is confirmed is not yet done (frontend).
 - **R04 and R05:** still worth confirming against a real IBKR Flex export.
+
+## Chronology and grouping refactor — 2026-10-19
+
+This addresses Maintainability items 1 and 2 above. The PR is based on `51c8036` and includes chronology/grouping code and tests; the earlier reliability and test-infrastructure work is separate.
+
+### Shared execution chronology
+
+`src/server/ledger/chronology.ts` owns timestamp interpretation, safe pairwise comparison and the conservative latest-execution bound. Strategy matching and close ordering use its comparator. The existing lifecycle comparator and valuation helper exports remain available through compatibility exports.
+
+- Explicit UTC offsets and UTC aliases compare by actual instants. Fractional seconds compare numerically through nanosecond precision, including equivalent fractional spellings.
+- Malformed calendar dates, times and offsets return unknown ordering or an unavailable bound. Parsing does not use the host timezone.
+- Same-zone wall clocks and unzoned rows sharing a report retain their established comparison rules. Date-only evidence remains uncertain within its day; different clock frames retain the existing uncertainty envelope through two calendar days. Stable execution keys determine output order without establishing otherwise unknown chronology.
+- Valuation retains the conservative latest possible time for unknown zones. Timed sub-millisecond evidence rounds its bound upward so a snapshot cannot predate the fill through millisecond truncation.
+- Parsed evidence is cached for repeated grouping comparisons, with invalidation when timestamp/timezone inputs change; source provenance is checked live.
+
+Regression tests reproduced explicit-offset strategy matching failures, invalid-date normalization, fractional ordering/equivalence and unsafe mixed-clock comparisons before correction. Integration caught an overly broad interval inference during the refactor; the established cross-clock uncertainty policy was restored and protected by direct tests.
+
+Fresh pre-PR review found a P2 regression for a UTC date-only opening followed by a next-day explicit timestamp. UTC calendar days now compare their absolute interval bounds against exact instants, including offset crossings, while overlapping instants remain uncertain. Five direct boundary cases and a strategy-matching regression reproduced the defect before correction; independent re-review confirmed the fix.
+
+### Explicit grouping phases
+
+`groupStrategies` is now a 45-line entry point, including imports and documentation, that orchestrates explicit phases. Ten focused helper modules (64–203 lines each) hold context/indexes and consumption, retained decision parsing, allocation reservation, opening groups and unsupported inventory, close candidates, topological ordering, close matching, lifecycle/roll links and merge/finalization.
+
+The public grouping API and resolver type remain compatible. Decimal arithmetic, allocation policy, durable identities, issue keys/sources, merge guards and phase order were retained. FIFO matching and `group_split` behavior were not changed.
+
+Before extraction, complete projections were captured for all five synthetic broker fixtures in forward and reversed execution order. After extraction, all ten projections matched exactly, including allocations, positions, links and diagnostics. Four additional characterization tests cover partial closes, manual residual allocation, duplicate allocation diagnostics and retained merge identities. The existing input-dependent order of roll-link source references was preserved rather than normalized incidentally.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Unit/integration suite | 666 / 666 passed across 60 files (38 additional cases) |
+| Lint and typecheck | Passed; baseline 4 warnings and 26 infos unchanged |
+| Build and compiled-server smoke | Passed |
+| Playwright | 72 / 72 passed with the base branch's browser setup |
+| Chronology/grouping tests under Los Angeles and Kuala Lumpur host timezones | 32 / 32 passed in each timezone |
+| Before/after broker-fixture comparison | Exact match for 5 fixtures in both input orders |
+| Retained real-data validation | Passed: 31 executions, no conflicts, 8 complete closed strategies with reconstructed P&L; all six controlled overlap checks and basis-removal control passed |
+| Independent reviews | One P2 chronology regression fixed; final chronology and grouping reviews have no remaining findings |
+
+The 80% whole-source coverage target and other findings in this review remain separate follow-ups. This change retains the existing matching algorithm and adds cached timestamp parsing. No live journal data was changed. Verification above was repeated on an isolated checkout containing only this PR, without the earlier uncommitted reliability/test-infrastructure changes. Coverage results from that combined working tree are not claimed for this PR.
