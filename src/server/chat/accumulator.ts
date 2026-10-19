@@ -15,7 +15,10 @@ const APPROVAL_LABEL = { timeout: "expired", cancelled: "cancelled" } as const;
 export class TurnAccumulator {
   private committed = "";
   private current = "";
+  private committedThinking = "";
+  private currentThinking = "";
   private round = 0;
+  private version = 0;
   private toolList: ToolRecord[] = [];
   private pendingAsk: PendingInteraction | null = null;
   private approvalCalls = new Map<string, string>();
@@ -28,6 +31,12 @@ export class TurnAccumulator {
   }
   get tools(): ToolRecord[] {
     return this.toolList;
+  }
+  get thinking(): string {
+    return this.committedThinking + this.currentThinking;
+  }
+  get revision(): number {
+    return this.version;
   }
   get pending(): PendingInteraction | null {
     return this.pendingAsk;
@@ -43,15 +52,31 @@ export class TurnAccumulator {
   }
 
   apply(event: SessionEvent): ChatFrame[] {
+    this.version += 1;
+    return this.applyEvent(event).map((frame) => {
+      if ("messageId" in frame.data) frame.data.revision = this.version;
+      return frame;
+    });
+  }
+
+  private applyEvent(event: SessionEvent): ChatFrame[] {
     switch (event.type) {
       case "text_delta":
         return this.delta(event.round, event.text);
+      case "thinking_delta":
+        return this.delta(event.round, event.text, true);
       case "stream_reset":
+        this.startRound(event.round);
         this.current = "";
+        this.currentThinking = "";
         return [
           {
             event: "reset",
             data: { messageId: this.messageId, text: this.text },
+          },
+          {
+            event: "thinking_reset",
+            data: { messageId: this.messageId, text: this.thinking },
           },
         ];
       case "tool_call":
@@ -183,14 +208,27 @@ export class TurnAccumulator {
     return [{ event: "resolved", data: { requestId } }];
   }
 
-  private delta(round: number, text: string): ChatFrame[] {
+  private startRound(round: number): void {
     if (round !== this.round) {
       this.committed += this.current;
+      this.committedThinking += this.currentThinking;
       this.current = "";
+      this.currentThinking = "";
       this.round = round;
     }
-    this.current += text;
-    return [{ event: "delta", data: { messageId: this.messageId, text } }];
+  }
+
+  private delta(round: number, text: string, thinking = false): ChatFrame[] {
+    this.startRound(round);
+    const offset = thinking ? this.thinking.length : this.text.length;
+    if (thinking) this.currentThinking += text;
+    else this.current += text;
+    return [
+      {
+        event: thinking ? "thinking" : "delta",
+        data: { messageId: this.messageId, text, offset },
+      },
+    ];
   }
 
   private resolved(

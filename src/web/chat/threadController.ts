@@ -8,7 +8,13 @@ import type {
 
 export interface ThreadState {
   readonly detail: ThreadDetailDto | null;
+  readonly bufferedFrames: ReadonlyArray<{
+    event: string;
+    data: unknown;
+  }> | null;
   readonly live: Readonly<Record<string, string>>;
+  readonly liveRevision: Readonly<Record<string, number>>;
+  readonly liveThinking: Readonly<Record<string, string>>;
   readonly liveTools: Readonly<Record<string, ToolRecordDto[]>>;
   readonly pending: PendingDto | null;
   readonly error: string | null;
@@ -18,7 +24,10 @@ export interface ThreadState {
 export function initialThreadState(): ThreadState {
   return {
     detail: null,
+    bufferedFrames: null,
     live: {},
+    liveThinking: {},
+    liveRevision: {},
     liveTools: {},
     pending: null,
     error: null,
@@ -26,23 +35,51 @@ export function initialThreadState(): ThreadState {
   };
 }
 
-/** Fresh REST state is authoritative: drop provisional deltas and chips. */
+/** Buffer only events arriving during a REST request, so an older snapshot
+ * can be brought forward without guessing freshness from text lengths. */
+export function beginReload(state: ThreadState): ThreadState {
+  return { ...state, bufferedFrames: [] };
+}
+
 export function withDetail(
   state: ThreadState,
   detail: ThreadDetailDto,
 ): ThreadState {
-  return {
+  let next: ThreadState = {
     ...state,
     detail,
     live: {},
+    liveThinking: {},
     liveTools: {},
+    liveRevision: Object.fromEntries(
+      detail.messages.map((m) => [m.id, m.streamRevision ?? 0]),
+    ),
+    bufferedFrames: null,
     pending: detail.thread.pending,
     error: null,
     needsRefetch: false,
   };
+  for (const frame of state.bufferedFrames ?? []) {
+    const version = VersionedFrame.safeParse(frame.data);
+    const snapshot = version.success
+      ? next.detail?.messages.find((m) => m.id === version.data.messageId)
+      : undefined;
+    if (
+      version.success &&
+      snapshot?.streamRevision !== undefined &&
+      version.data.revision <= snapshot.streamRevision
+    )
+      continue;
+    next = applyFrame(next, frame.event, frame.data);
+  }
+  return next;
 }
 
-const Delta = z.object({ messageId: z.string(), text: z.string() });
+const Delta = z.object({
+  messageId: z.string(),
+  text: z.string(),
+  offset: z.number().int().nonnegative().optional(),
+});
 const Tool = z.object({
   messageId: z.string(),
   callId: z.string(),
@@ -99,13 +136,24 @@ function applyDelta(
   state: ThreadState,
   data: unknown,
   replace: boolean,
+  thinking = false,
 ): ThreadState {
   const f = Delta.safeParse(data);
   if (!f.success) return state;
-  const previous = replace ? "" : (state.live[f.data.messageId] ?? "");
+  const field = thinking ? "liveThinking" : "live";
+  const saved = state.detail?.messages.find((m) => m.id === f.data.messageId);
+  const previous = replace
+    ? ""
+    : (state[field][f.data.messageId] ??
+      (thinking ? saved?.thinking : saved?.content) ??
+      "");
+  const offset = replace ? 0 : (f.data.offset ?? previous.length);
+  // SSE replays can overlap a REST snapshot. Append only unseen characters.
+  const unseen = Math.max(0, previous.length - offset);
+  const text = previous + f.data.text.slice(unseen);
   return {
     ...state,
-    live: { ...state.live, [f.data.messageId]: previous + f.data.text },
+    [field]: { ...state[field], [f.data.messageId]: text },
   };
 }
 
@@ -117,7 +165,12 @@ function applyTool(state: ThreadState, data: unknown): ThreadState {
     ...state,
     liveTools: {
       ...state.liveTools,
-      [messageId]: upsertTool(state.liveTools[messageId] ?? [], f.data),
+      [messageId]: upsertTool(
+        state.liveTools[messageId] ??
+          state.detail?.messages.find((m) => m.id === messageId)?.tools ??
+          [],
+        f.data,
+      ),
     },
   };
 }
@@ -162,7 +215,7 @@ function applyError(state: ThreadState, data: unknown): ThreadState {
     : state;
 }
 
-export function applyFrame(
+function applyKnownFrame(
   state: ThreadState,
   event: string,
   data: unknown,
@@ -172,6 +225,10 @@ export function applyFrame(
       return applyDelta(state, data, false);
     case "reset":
       return applyDelta(state, data, true);
+    case "thinking":
+      return applyDelta(state, data, false, true);
+    case "thinking_reset":
+      return applyDelta(state, data, true, true);
     case "tool":
       return applyTool(state, data);
     case "approval":
@@ -191,6 +248,44 @@ export function applyFrame(
   }
 }
 
+const VersionedFrame = z.object({
+  messageId: z.string(),
+  revision: z.number().int().nonnegative(),
+});
+const VERSIONED_EVENTS = new Set([
+  "delta",
+  "reset",
+  "thinking",
+  "thinking_reset",
+  "tool",
+]);
+
+export function applyFrame(
+  state: ThreadState,
+  event: string,
+  data: unknown,
+): ThreadState {
+  const frame = VERSIONED_EVENTS.has(event)
+    ? VersionedFrame.safeParse(data)
+    : null;
+  if (frame?.success) {
+    const previous = state.liveRevision[frame.data.messageId] ?? 0;
+    if (frame.data.revision < previous) return state;
+  }
+  const next = applyKnownFrame(state, event, data);
+  if (next === state) return state;
+  return {
+    ...next,
+    liveRevision: frame?.success
+      ? { ...next.liveRevision, [frame.data.messageId]: frame.data.revision }
+      : next.liveRevision,
+    bufferedFrames:
+      state.bufferedFrames === null
+        ? null
+        : [...state.bufferedFrames, { event, data }],
+  };
+}
+
 export function messageText(
   state: ThreadState,
   message: ChatMessageDto,
@@ -207,4 +302,13 @@ export function messageTools(
   return message.status === "streaming"
     ? (state.liveTools[message.id] ?? message.tools)
     : message.tools;
+}
+
+export function messageThinking(
+  state: ThreadState,
+  message: ChatMessageDto,
+): string {
+  return message.status === "streaming"
+    ? (state.liveThinking[message.id] ?? message.thinking ?? "")
+    : (message.thinking ?? "");
 }

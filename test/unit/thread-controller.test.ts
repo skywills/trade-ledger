@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createReloader } from "../../src/web/chat/reloader.js";
 import {
   applyFrame,
+  beginReload,
   initialThreadState,
   messageText,
+  messageThinking,
   type ThreadState,
   withDetail,
 } from "../../src/web/chat/threadController.js";
@@ -53,6 +55,228 @@ const detail = {
 } as const;
 
 describe("threadController", () => {
+  it("restores snapshot text after a missed reset even when only newer tool events are replayed", () => {
+    let s = withDetail(initialThreadState(), {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          streamRevision: 5,
+          content: "Discarded old answer",
+          thinking: "Discarded old thinking",
+        },
+      ],
+    } as never);
+    s = beginReload(s);
+    s = applyFrame(s, "tool", {
+      messageId: "m1",
+      callId: "last",
+      name: "get_strategy",
+      phase: "result",
+      revision: 11,
+    });
+    s = withDetail(s, {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          streamRevision: 10,
+          content: "New",
+          thinking: "Corrected",
+        },
+      ],
+    } as never);
+    expect(messageText(s, firstMessage(s))).toBe("New");
+    expect(messageThinking(s, firstMessage(s))).toBe("Corrected");
+    expect(s.liveTools.m1?.[0]?.callId).toBe("last");
+  });
+
+  it("joins a truncated replay tail to the full snapshot without losing its prefix", () => {
+    let s = beginReload(initialThreadState());
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "trades",
+      offset: 6,
+      revision: 3,
+    });
+    s = applyFrame(s, "delta", {
+      messageId: "m1",
+      text: "world",
+      offset: 6,
+      revision: 4,
+    });
+    s = withDetail(s, {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          streamRevision: 2,
+          content: "Hello ",
+          thinking: "Check ",
+        },
+      ],
+    } as never);
+    expect(messageText(s, firstMessage(s))).toBe("Hello world");
+    expect(messageThinking(s, firstMessage(s))).toBe("Check trades");
+  });
+
+  it("rejects snapshots and replay frames older than a retry, even when old text is longer", () => {
+    const old = {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          streamRevision: 2,
+          thinking: "Old discarded thinking",
+          content: "Old discarded answer",
+        },
+      ],
+    } as never;
+    let s = beginReload(withDetail(initialThreadState(), old));
+    s = applyFrame(s, "reset", { messageId: "m1", text: "", revision: 3 });
+    s = applyFrame(s, "thinking_reset", {
+      messageId: "m1",
+      text: "",
+      revision: 3,
+    });
+    s = withDetail(s, old);
+    expect(messageThinking(s, firstMessage(s))).toBe("");
+    expect(messageText(s, firstMessage(s))).toBe("");
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "Old discarded thinking",
+      offset: 0,
+      revision: 2,
+    });
+    expect(messageThinking(s, firstMessage(s))).toBe("");
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "New",
+      offset: 0,
+      revision: 4,
+    });
+    s = applyFrame(s, "delta", {
+      messageId: "m1",
+      text: "Fresh",
+      offset: 0,
+      revision: 5,
+    });
+    expect(messageThinking(s, firstMessage(s))).toBe("New");
+    expect(messageText(s, firstMessage(s))).toBe("Fresh");
+    // A reconnect's newer snapshot replaces a longer discarded local attempt.
+    s = withDetail(s, {
+      ...detail,
+      messages: [
+        { ...detail.messages[0], streamRevision: 6, thinking: "", content: "" },
+      ],
+    } as never);
+    expect(messageThinking(s, firstMessage(s))).toBe("");
+    expect(messageText(s, firstMessage(s))).toBe("");
+  });
+
+  it("keeps snapshot tool history when replay includes only the latest tool result", () => {
+    const earlier = {
+      callId: "first",
+      name: "list_review_issues",
+      status: "done",
+      isError: false,
+      approval: null,
+    };
+    let s = withDetail(initialThreadState(), {
+      ...detail,
+      messages: [
+        { ...detail.messages[0], streamRevision: 2, tools: [earlier] },
+      ],
+    } as never);
+    s = beginReload(s);
+    s = applyFrame(s, "tool", {
+      messageId: "m1",
+      callId: "last",
+      name: "get_strategy",
+      phase: "result",
+      revision: 4,
+    });
+    s = withDetail(s, {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          streamRevision: 3,
+          tools: [
+            earlier,
+            {
+              ...earlier,
+              callId: "last",
+              name: "get_strategy",
+              status: "running",
+            },
+          ],
+        },
+      ],
+    } as never);
+    expect(s.liveTools.m1?.map((tool) => [tool.callId, tool.status])).toEqual([
+      ["first", "done"],
+      ["last", "done"],
+    ]);
+  });
+
+  it("keeps thinking separate, survives running refetches and uses persisted thinking at completion", () => {
+    let s = beginReload(withDetail(initialThreadState(), detail as never));
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "Checking ",
+      offset: 0,
+    });
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "trades",
+      offset: 9,
+    });
+    s = applyFrame(s, "delta", { messageId: "m1", text: "Answer", offset: 0 });
+    s = withDetail(s, detail as never);
+    expect(messageThinking(s, firstMessage(s))).toBe("Checking trades");
+    expect(messageText(s, firstMessage(s))).toBe("Answer");
+    s = applyFrame(s, "thinking_reset", { messageId: "m1", text: "Checking " });
+    expect(messageThinking(s, firstMessage(s))).toBe("Checking ");
+    s = withDetail(s, {
+      ...detail,
+      messages: [
+        {
+          ...detail.messages[0],
+          status: "complete",
+          content: "Final",
+          thinking: "Saved thinking",
+        },
+      ],
+    } as never);
+    expect(messageThinking(s, firstMessage(s))).toBe("Saved thinking");
+  });
+
+  it("does not duplicate replayed thinking or answer chunks after a REST snapshot", () => {
+    let s = withDetail(initialThreadState(), {
+      ...detail,
+      messages: [
+        { ...detail.messages[0], content: "Hello", thinking: "Check trades" },
+      ],
+    } as never);
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "Check ",
+      offset: 0,
+    });
+    s = applyFrame(s, "delta", { messageId: "m1", text: "Hel", offset: 0 });
+    s = applyFrame(s, "thinking", {
+      messageId: "m1",
+      text: "trades",
+      offset: 6,
+    });
+    s = applyFrame(s, "delta", { messageId: "m1", text: "lo", offset: 3 });
+    s = applyFrame(s, "thinking", { messageId: "m1", text: ".", offset: 12 });
+    s = applyFrame(s, "delta", { messageId: "m1", text: "!", offset: 5 });
+    expect(messageThinking(s, firstMessage(s))).toBe("Check trades.");
+    expect(messageText(s, firstMessage(s))).toBe("Hello!");
+  });
+
   it("appends deltas and replaces text on reset", () => {
     let s = withDetail(initialThreadState(), detail as never);
     s = applyFrame(s, "delta", { messageId: "m1", text: "Hel" });

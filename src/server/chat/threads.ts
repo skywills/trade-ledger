@@ -53,6 +53,7 @@ export interface ChatMessage {
   readonly seq: number;
   readonly role: "user" | "assistant";
   readonly content: string;
+  readonly thinking: string;
   readonly attachments: Attachment[];
   readonly tools: ToolRecord[];
   readonly status: MessageStatus;
@@ -89,6 +90,7 @@ export interface NewMessage {
 }
 export interface MessagePatch {
   readonly content?: string;
+  readonly thinking?: string;
   readonly tools?: ToolRecord[];
   readonly status?: MessageStatus;
   readonly error?: string | null;
@@ -127,6 +129,7 @@ interface MessageRow {
   seq: number;
   role: string;
   content: string;
+  thinking: string;
   attachments_json: string | null;
   tools_json: string | null;
   status: string;
@@ -167,6 +170,7 @@ function toMessage(row: MessageRow): ChatMessage {
     seq: row.seq,
     role: row.role as ChatMessage["role"],
     content: row.content,
+    thinking: row.thinking,
     attachments: parse(row.attachments_json, []),
     tools: parse(row.tools_json, []),
     status: row.status as MessageStatus,
@@ -377,10 +381,11 @@ export function updateMessage(
     const usage = patch.usage !== undefined ? patch.usage : current.usage;
     store.db
       .prepare(
-        `UPDATE chat_messages SET content = ?, tools_json = ?, status = ?, error = ?, usage_json = ?, cost = ? WHERE id = ?`,
+        `UPDATE chat_messages SET content = ?, thinking = ?, tools_json = ?, status = ?, error = ?, usage_json = ?, cost = ? WHERE id = ?`,
       )
       .run(
         patch.content ?? current.content,
+        patch.thinking ?? current.thinking,
         JSON.stringify(patch.tools ?? current.tools),
         patch.status ?? current.status,
         patch.error !== undefined ? patch.error : current.error,

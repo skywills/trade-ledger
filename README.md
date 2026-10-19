@@ -108,6 +108,9 @@ bounded read-only tools.
 - Decisions are never written by the agent directly; they are only created from
   proposals you accept.
 - CSV files can be attached to a message for an import preview.
+- Replies stream as the model generates them. Expand **Thinking** to see live
+  thinking text when the provider supplies it, plus tool activity. Thinking is
+  saved with the conversation and the block collapses when the reply finishes.
 - Open a conversation to **Rename conversation** or **Delete conversation** in its header. Stop an active reply first. Deleting a conversation removes its messages and chat transcripts; accepted journal decisions remain.
 - Each thread is capped at $5 of estimated cost and 1M generated tokens.
 

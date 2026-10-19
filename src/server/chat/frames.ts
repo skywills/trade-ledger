@@ -4,8 +4,23 @@ import type { RunUsage } from "../ai/runs.js";
 import type { ThreadStatus } from "./threads.js";
 
 export type ChatFrame =
-  | { event: "delta"; data: { messageId: string; text: string } }
-  | { event: "reset"; data: { messageId: string; text: string } }
+  | {
+      event: "delta" | "thinking";
+      data: {
+        messageId: string;
+        text: string;
+        offset?: number;
+        revision?: number;
+      };
+    }
+  | {
+      event: "reset";
+      data: { messageId: string; text: string; revision?: number };
+    }
+  | {
+      event: "thinking_reset";
+      data: { messageId: string; text: string; revision?: number };
+    }
   | {
       event: "tool";
       data: {
@@ -15,6 +30,7 @@ export type ChatFrame =
         phase: "call" | "result";
         isError?: boolean;
         error?: string;
+        revision?: number;
       };
     }
   | {
@@ -39,7 +55,7 @@ export type ChatFrame =
       };
     }
   | { event: "proposal"; data: { runId: string; proposalId: string } }
-  | { event: "message"; data: { messageId: string } }
+  | { event: "message"; data: { messageId: string; revision?: number } }
   | {
       event: "thread";
       data: { status: ThreadStatus; usage: RunUsage; cost: string };
