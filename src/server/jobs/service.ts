@@ -96,23 +96,15 @@ export class JobService {
   progress(jobId: Id, progress: string): Promise<void> {
     return write(this.store, () => {
       this.store.db
-        .prepare("UPDATE jobs SET progress = ? WHERE id = ?")
+        .prepare(
+          "UPDATE jobs SET progress = ? WHERE id = ? AND status = 'running'",
+        )
         .run(progress, jobId);
     });
   }
 
-  finish(jobId: Id, status: string, error?: string): Promise<void> {
-    this.controllers.delete(jobId);
-    this.activeWork.delete(jobId);
-    return write(this.store, () => {
-      this.store.db
-        .prepare(
-          `UPDATE jobs
-           SET status = ?, progress = ?, finished_at = ?, error = ?
-           WHERE id = ?`,
-        )
-        .run(status, status, this.now().toISOString(), error ?? null, jobId);
-    });
+  async finish(jobId: Id, status: string, error?: string): Promise<void> {
+    await this.finishIfRunning(jobId, status, error);
   }
 
   /**

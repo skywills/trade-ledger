@@ -6,7 +6,7 @@ Reviewed branch: `main`
 
 Reviewed HEAD: `a90a92c` (`Merge pull request #8 from skywills/feature/trade-lifecycles`)
 
-Status: **R01–R12 resolved on `fix/review-2026-10-19` (one sub-point of R06 withdrawn as spec-conformant); R13–R24 low findings open**
+Status: **R01–R12 resolved on `fix/review-2026-10-19` (one sub-point of R06 withdrawn as spec-conformant); R13 resolved by the build-job lifecycle follow-up; R14–R24 low findings open**
 
 See [Resolution — 2026-10-19](#resolution--2026-10-19) for the fixes, the review of those fixes, and the residual risks. The findings below describe the reviewed baseline `a90a92c`.
 
@@ -266,7 +266,7 @@ Run on the final branch head:
 
 ### Still open
 
-- **R13–R24:** low findings, unchanged.
+- **R14–R24:** low findings, unchanged. R13 is resolved by the build-job lifecycle follow-up below.
 - **Tests and CI:** coverage reporting, `test:build-smoke` in CI, `WriterQueue` tests, and the flaky-wait cleanup are not yet done.
 - **R09 import UI:** showing endpoints before a model-configuration import is confirmed is not yet done (frontend).
 - **R04 and R05:** still worth confirming against a real IBKR Flex export.
@@ -311,3 +311,14 @@ Before extraction, complete projections were captured for all five synthetic bro
 | Independent reviews | One P2 chronology regression fixed; final chronology and grouping reviews have no remaining findings |
 
 The 80% whole-source coverage target and other findings in this review remain separate follow-ups. This change retains the existing matching algorithm and adds cached timestamp parsing. No live journal data was changed. Verification above was repeated on an isolated checkout containing only this PR, without the earlier uncommitted reliability/test-infrastructure changes. Coverage results from that combined working tree are not claimed for this PR.
+
+
+## R13 build-job lifecycle follow-up — 2026-10-19
+
+- Rebuild jobs use `finishIfRunning`, and the legacy `finish` entry point delegates to that same conditional update. Completion cannot overwrite a cancellation or another terminal job state.
+- Progress updates only affect running jobs, so a queued update cannot replace cancelled progress with `computing`.
+- Job notification, progress, rebuild and completion share one failure-handling path. Progress failures release active-work registrations; if persisting failure also fails, the original error is surfaced and existing startup recovery handles the retained running row.
+- A candidate made stale by changed inputs retains its stale build status, while its completed computation records a terminal `complete` job. Previously the job's `stale` status was never recognized as terminal by polling or SSE.
+- Six deterministic integration tests cover the activation/completion cancellation race, progress-write failure and subsequent rebuild, original-error preservation, pre-candidate validation failure, queued progress after cancellation, and stale candidate completion. Database triggers and a real import provide the failure/race conditions without timing sleeps.
+
+Verification on an isolated checkout of this commit: 672 unit/integration tests across 61 files passed; lint and typecheck passed with the existing 4 warnings and 26 infos.
