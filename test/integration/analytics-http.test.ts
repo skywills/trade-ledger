@@ -101,6 +101,23 @@ describe("analytics HTTP", () => {
       await t.dispose();
     }
   });
+  it("returns a structured range error for oversized charts and summary exports", async () => {
+    const t = await analyticsApp();
+    try {
+      for (const url of [
+        "/api/analytics?unit=strategy&from=0001-01-01&to=9999-12-31",
+        "/api/analytics/export?unit=strategy&dataset=summary&from=0001-01-01&to=9999-12-31",
+      ]) {
+        const response = await t.app.inject(url);
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({
+          code: "INVALID_ANALYTICS_QUERY",
+        });
+      }
+    } finally {
+      await t.close();
+    }
+  });
   it("serves full totals, scoped pages, and structured validation/build errors", async () => {
     const t = await analyticsApp();
     try {

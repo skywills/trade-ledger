@@ -24,6 +24,78 @@ function run(
   return aggregateAnalytics(s, { unit: "strategy", currency: "USD", basis });
 }
 describe("performance analytics", () => {
+  it("rejects monthly spans above 100 years instead of expanding an unbounded calendar", () => {
+    for (const range of [
+      { from: "0001-01-01", to: "9999-12-31" },
+      { from: "1900-01-01", to: "2000-01-01" },
+      { from: "0001-01-01" },
+      { to: "9999-12-31" },
+    ]) {
+      expect(() =>
+        aggregateAnalytics(performanceFixture(), {
+          unit: "strategy",
+          currency: "USD",
+          basis: "broker",
+          ...range,
+        }),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "INVALID_ANALYTICS_QUERY",
+          statusCode: 400,
+        }),
+      );
+    }
+  });
+  it("bounds monthly expansion when widely separated endpoints come from evidence", () => {
+    const s = snapshot();
+    s.projection.strategies = [
+      strategy({ id: "early", closeDate: "0001-01-01" }),
+      strategy({ id: "late", closeDate: "9999-12-31" }),
+    ];
+    expect(() =>
+      aggregateAnalytics(s, {
+        unit: "strategy",
+        currency: "USD",
+        basis: "broker",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "INVALID_ANALYTICS_QUERY" }),
+    );
+  });
+  it("terminates monthly expansion at the last supported calendar year", () => {
+    const result = aggregateAnalytics(snapshot(), {
+      unit: "strategy",
+      basis: "broker",
+      from: "9999-12-01",
+      to: "9999-12-31",
+    });
+    expect(result.monthly).toHaveLength(1);
+    expect(result.monthly[0]).toMatchObject({
+      month: "9999-12",
+      pnl: "0",
+      executions: 0,
+    });
+  });
+  it("retains zero-filled months through the supported calendar boundary", () => {
+    const result = aggregateAnalytics(performanceFixture(), {
+      unit: "strategy",
+      currency: "USD",
+      basis: "broker",
+      from: "1900-01-01",
+      to: "1999-12-31",
+    });
+    expect(result.monthly).toHaveLength(1200);
+    expect(result.monthly[0]).toMatchObject({
+      month: "1900-01",
+      pnl: "0",
+      executions: 0,
+    });
+    expect(result.monthly.at(-1)).toMatchObject({
+      month: "1999-12",
+      pnl: "0",
+      executions: 0,
+    });
+  });
   it("reconciles all 679 trades and 19 current opens", () => {
     const r = aggregateAnalytics(performanceFixture(), {
       unit: "strategy",

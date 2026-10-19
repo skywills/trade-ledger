@@ -941,6 +941,45 @@ describe("retained decisions and stable strategy identities", () => {
       );
     }));
 
+  it.each(["-1", "-.00000001", "-100000000000000000000000000000000000000"])(
+    "rejects negative stop-loss %s without appending a decision",
+    async (price) =>
+      withStore(async (store) => {
+        const input = stopLossInput({
+          strategyId: "strategy-metadata",
+          price: "1",
+        });
+        await expect(
+          appendDecision(
+            store,
+            {
+              ...input,
+              payload: { strategyId: "strategy-metadata", price },
+            },
+            0,
+          ),
+        ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+        expect(decisionWatermark(store)).toBe(0);
+        expect(
+          readStrategyMetadata(store, "strategy-metadata").stopLoss,
+        ).toBeNull();
+      }),
+  );
+  it.each(["0", "-0.00", "+.25", "100000000000000000000000000000000000000"])(
+    "retains nonnegative stop-loss %s exactly",
+    async (price) =>
+      withStore(async (store) => {
+        await appendDecision(
+          store,
+          stopLossInput({ strategyId: "strategy-metadata", price }),
+          0,
+        );
+        expect(readStrategyMetadata(store, "strategy-metadata").stopLoss).toBe(
+          price,
+        );
+      }),
+  );
+
   it("returns retained notes and stop_loss from the read path across a rebuild", async () =>
     withStore(async (store) => {
       const strategy = "strategy-metadata";

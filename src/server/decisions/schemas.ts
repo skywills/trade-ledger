@@ -40,7 +40,10 @@ const StopLossSchema = z.object({
   ...CommonFields,
   payload: z.object({
     strategyId: IdSchema,
-    price: DecimalText,
+    price: DecimalText.refine(
+      (price) => !price.startsWith("-") || !/[1-9]/.test(price),
+      "Stop-loss price must be non-negative.",
+    ),
   }),
 });
 
