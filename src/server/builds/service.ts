@@ -615,21 +615,30 @@ export class BuildScheduler {
       requests: batch.length,
     });
     this.jobs.register(jobId, controller);
-    for (const entry of batch) entry.onJob?.(jobId);
-    await this.jobs.progress(jobId, "computing");
     try {
+      for (const entry of batch) entry.onJob?.(jobId);
+      await this.jobs.progress(jobId, "computing");
       const result = await rebuild(this.store, merged, this.options);
-      await this.jobs.finish(
+      await this.jobs.finishIfRunning(
         jobId,
-        result.status === "active" ? "complete" : result.status,
+        // A stale candidate finished computing but cannot be activated. Keep
+        // staleness on the build; jobs must use a terminal polling status.
+        result.status === "active" || result.status === "stale"
+          ? "complete"
+          : result.status,
       );
       return result;
     } catch (error) {
-      await this.jobs.finish(
-        jobId,
-        "failed",
-        error instanceof Error ? error.message : String(error),
-      );
+      // Finalization releases the in-process registration even if its database
+      // write fails. Preserve the work's original error; startup recovery will
+      // interrupt any persisted job that could not be marked terminal.
+      await this.jobs
+        .finishIfRunning(
+          jobId,
+          merged.signal.aborted ? "cancelled" : "failed",
+          error instanceof Error ? error.message : String(error),
+        )
+        .catch(() => undefined);
       throw error;
     }
   }

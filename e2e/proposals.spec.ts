@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { expect, test } from "playwright/test";
+import { expect, test } from "./fixtures.js";
 import { buildEvidenceSnapshot } from "../src/server/ai/evidence.js";
 import {
   appendRunProposal,

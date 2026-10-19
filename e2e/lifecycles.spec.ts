@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "playwright/test";
+import { expect, test, type Page } from "./fixtures.js";
 import { aggregateAnalytics } from "../src/server/analytics/aggregate.js";
 import { performanceFixture } from "../test/fixtures/analytics.js";
 

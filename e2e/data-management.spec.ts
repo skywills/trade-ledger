@@ -1,4 +1,4 @@
-import { expect, test } from "playwright/test";
+import { expect, test } from "./fixtures.js";
 
 test("imports and exports model configuration in Maintenance", async ({ page, request }) => {
   await page.goto("/maintenance");

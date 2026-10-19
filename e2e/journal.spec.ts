@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
-import { expect, type Page, test } from "playwright/test";
+import { expect, type Page, test } from "./fixtures.js";
+import { createGate } from "./gate.js";
 import {
   buildExecutionTable,
   executionRow,
@@ -9,8 +10,8 @@ import {
 
 /**
  * End-to-end acceptance for the journal/import/ledger/review UI. Every test
- * shares one server and one throwaway data dir (see playwright.config.ts), so
- * the suite runs serially and later steps build on earlier imports.
+ * in this file shares one server and one throwaway data dir, so the scenario
+ * runs serially and later steps build on earlier imports. Other files are isolated.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -424,15 +425,24 @@ test("the journal reports a stale build after inputs change", async ({
 });
 
 test("shows a loading state while the journal is fetched", async ({ page }) => {
+  const requested = createGate();
+  const release = createGate();
   await page.route("**/api/journal**", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    requested.open();
+    await release.wait;
     await route.continue();
   });
-  await page.goto("/journal");
-  await expect(page.getByTestId("journal-loading")).toBeVisible();
-  await expect(page.getByTestId("journal-loading")).toBeHidden({
-    timeout: 10_000,
-  });
+  try {
+    await page.goto("/journal");
+    await requested.wait;
+    await expect(page.getByTestId("journal-loading")).toBeVisible();
+    release.open();
+    await expect(page.getByTestId("journal-loading")).toBeHidden({
+      timeout: 10_000,
+    });
+  } finally {
+    release.open();
+  }
 });
 
 test("shows a failure state with a retry", async ({ page }) => {

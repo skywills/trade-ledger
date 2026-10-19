@@ -15,7 +15,11 @@ import { createTestStore, type TestStore } from "../helpers/store.js";
 const apps: FastifyInstance[] = [];
 const servers: InferenceServer[] = [];
 const stores: TestStore[] = [];
+const streams: ReadableStreamDefaultReader<Uint8Array>[] = [];
 afterEach(async () => {
+  await Promise.all(
+    streams.splice(0).map((reader) => reader.cancel().catch(() => undefined)),
+  );
   await Promise.all(apps.splice(0).map((a) => a.close()));
   await Promise.all(servers.splice(0).map((s) => s.close()));
   await Promise.all(stores.splice(0).map((s) => s.dispose()));
@@ -113,11 +117,11 @@ describe("chat HTTP API", () => {
     const id = await createChatThread(app);
     const base = await app.listen({ port: 0, host: "127.0.0.1" });
     const response = await fetch(`${base}/api/chat/threads/${id}/events`);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
     const reader = response.body?.getReader();
+    if (reader !== undefined) streams.push(reader);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
     const first = new TextDecoder().decode((await reader?.read())?.value);
     expect(first).toContain("event: ready");
-    await reader?.cancel();
   });
 
   it("closes promptly while a browser still has an SSE stream open", async () => {
@@ -126,15 +130,11 @@ describe("chat HTTP API", () => {
     const base = await app.listen({ port: 0, host: "127.0.0.1" });
     const response = await fetch(`${base}/api/chat/threads/${id}/events`);
     const reader = response.body?.getReader();
+    if (reader !== undefined) streams.push(reader);
     const first = new TextDecoder().decode((await reader?.read())?.value);
     expect(first).toContain("event: ready");
-    const closed = await Promise.race([
-      app.close().then(() => "closed"),
-      new Promise((r) => setTimeout(() => r("hung"), 4000)),
-    ]);
-    expect(closed).toBe("closed");
-    await reader?.cancel().catch(() => undefined);
-  });
+    await app.close();
+  }, 4000);
 
   it("validates input and rejects cross-origin mutations", async () => {
     const app = await appWithModel([]);

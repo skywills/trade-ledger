@@ -236,10 +236,22 @@ fix data-directory permissions and repeat reset to finish removing the files.
 npm ci
 npm run check:all      # Biome + typecheck
 npm test               # vitest (unit + integration)
+npm run test:coverage  # whole-source V8 coverage reports in coverage/
 npm run build          # server tsc + migrations + vite frontend
-npm run test:e2e       # Playwright chromium (builds + boots the real server)
+npm run test:build-smoke # build + compiled-server migration smoke
+npm run test:e2e       # Playwright chromium (builds + isolated servers per spec)
 npm run test:docker    # compose config + real Docker smoke
 ```
 
-`.github/workflows/trade-ledger.yml` runs the same gates on Node 22.19.0 for
-changes to the app, packaging, docs and specs. No release tooling is required.
+`.github/workflows/trade-ledger.yml` runs coverage, uploads its reports, and runs
+the compiled-server smoke before browser acceptance on Node 22.19.0. Browser
+specs use separate temporary journals and dynamic loopback ports; the journal
+spec retains its explicit serial scenario within that file. CI reuses the smoke
+build with `E2E_SKIP_BUILD=1`. For local browser tests, omit that variable to build
+first. No release tooling is required.
+
+Coverage includes all TypeScript source, including files not imported by unit or
+integration tests. Open `coverage/index.html` for the report; Playwright execution
+is not included. The latest measured line coverage is 70.92% overall (89.15% for
+server source), so the 80% whole-source target remains open. CI reports coverage
+without enforcing a lower replacement threshold.

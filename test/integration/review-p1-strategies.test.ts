@@ -628,55 +628,62 @@ describe("P1 strategy chronology and merge boundaries", () => {
       expect(mixedGroup?.positions[0]?.quantity).toBe("0");
     }));
 
-  it("orders a large same-time close set with conserved opening exposure", async () =>
-    withStore(async (store) => {
-      const manyCloses = Array.from({ length: 1_500 }, (_, index) =>
-        stockExecution({
-          id: `same-close-${String(index).padStart(4, "0")}`,
-          date: "2026-10-02",
-          quantity: "-1",
-          cash: "110",
-        }),
-      );
-      await importExecutions(
-        store,
-        buildExecutionTable([
+  it(
+    "orders a large same-time close set with conserved opening exposure",
+    async () =>
+      withStore(async (store) => {
+        const manyCloses = Array.from({ length: 1_500 }, (_, index) =>
           stockExecution({
-            id: "scale-open",
-            date: "2026-10-01",
-            quantity: "1",
-            cash: "-100",
+            id: `same-close-${String(index).padStart(4, "0")}`,
+            date: "2026-10-02",
+            quantity: "-1",
+            cash: "110",
           }),
-          ...manyCloses,
-        ]),
-      );
-      const ledger = await normalizeLedger(store, {
-        parserVersion: "flex-v1",
-        decisionWatermark: 0,
-      });
-      const projection = groupStrategies(ledger, [], resolveId);
-      const opening = ledger.executions.find(
-        (execution) => execution.brokerIds.TradeID === "scale-open",
-      );
-      if (opening === undefined) throw new Error("Expected opening execution");
-      const openingStrategyId = projection.allocations.find(
-        (allocation) => allocation.executionKey === opening.key,
-      )?.strategyId;
-      if (openingStrategyId === undefined)
-        throw new Error("Expected opening strategy allocation");
-      const matchedCloseCount = projection.allocations.filter(
-        (allocation) =>
-          allocation.strategyId === openingStrategyId &&
-          allocation.quantity.startsWith("-"),
-      ).length;
+        );
+        await importExecutions(
+          store,
+          buildExecutionTable([
+            stockExecution({
+              id: "scale-open",
+              date: "2026-10-01",
+              quantity: "1",
+              cash: "-100",
+            }),
+            ...manyCloses,
+          ]),
+        );
+        const ledger = await normalizeLedger(store, {
+          parserVersion: "flex-v1",
+          decisionWatermark: 0,
+        });
+        const projection = groupStrategies(ledger, [], resolveId);
+        const opening = ledger.executions.find(
+          (execution) => execution.brokerIds.TradeID === "scale-open",
+        );
+        if (opening === undefined)
+          throw new Error("Expected opening execution");
+        const openingStrategyId = projection.allocations.find(
+          (allocation) => allocation.executionKey === opening.key,
+        )?.strategyId;
+        if (openingStrategyId === undefined)
+          throw new Error("Expected opening strategy allocation");
+        const matchedCloseCount = projection.allocations.filter(
+          (allocation) =>
+            allocation.strategyId === openingStrategyId &&
+            allocation.quantity.startsWith("-"),
+        ).length;
 
-      expect(matchedCloseCount).toBe(1);
-      expect(
-        projection.strategies.find(
-          (strategy) => strategy.id === openingStrategyId,
-        )?.positions[0]?.quantity,
-      ).toBe("0");
-    }));
+        expect(matchedCloseCount).toBe(1);
+        expect(
+          projection.strategies.find(
+            (strategy) => strategy.id === openingStrategyId,
+          )?.positions[0]?.quantity,
+        ).toBe("0");
+      }),
+    // This is a conservation regression, not a performance benchmark. V8
+    // coverage instrumentation adds substantial work to its 1,500-row fixture.
+    20_000,
+  );
 
   it("leaves an apparent match unresolved when timezone ordering is unavailable", async () =>
     withStore(async (store) => {
