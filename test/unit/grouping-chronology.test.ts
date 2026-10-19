@@ -121,4 +121,109 @@ describe("strategy grouping chronology integration", () => {
       ),
     ).toEqual(result);
   });
+
+  it("consumes a same-instant opening when the report lists the opening first", () => {
+    const opening = {
+      ...execution("a-opening", stock, "10", "-100", 1, "open"),
+      rawDateTime: "2026-10-01T12:00:00",
+      timezone: null,
+      sources: [{ importId: "report", rowNumber: 2 }],
+    };
+    const closing = {
+      ...execution("z-closing", stock, "-10", "120", 1, "close"),
+      rawDateTime: "2026-10-01T12:00:00",
+      timezone: null,
+      sources: [{ importId: "report", rowNumber: 3 }],
+    };
+    const result = groupStrategies(
+      {
+        id: "ledger",
+        inputHash: "input",
+        executions: [closing, opening],
+        lots: [],
+        issues: [],
+        conflicts: 0,
+      },
+      [],
+      resolveId,
+    );
+    expect(result.strategies).toHaveLength(1);
+    expect(result.strategies[0]).toMatchObject({ status: "closed" });
+    expect(result.issues).toEqual([]);
+  });
+
+  it("matches explicit same-instant opening and close regardless of report line order", () => {
+    const closing = {
+      ...execution("a-closing", stock, "-10", "120", 1, "close"),
+      rawDateTime: "2026-10-01T12:00:00",
+      timezone: null,
+      sources: [{ importId: "report", rowNumber: 2 }],
+    };
+    const opening = {
+      ...execution("z-opening", stock, "10", "-100", 1, "open"),
+      rawDateTime: "2026-10-01T12:00:00",
+      timezone: null,
+      sources: [{ importId: "report", rowNumber: 3 }],
+    };
+    const result = groupStrategies(
+      {
+        id: "ledger",
+        inputHash: "input",
+        executions: [closing, opening],
+        lots: [],
+        issues: [],
+        conflicts: 0,
+      },
+      [],
+      resolveId,
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.strategies.map((s) => s.status)).toEqual(["closed"]);
+  });
+
+  it.each([false, true])(
+    "matches explicit tied roles independently of report order (reverse sources: %s)",
+    (reverseSources) => {
+      const openingSources = [
+        { importId: "first-report", rowNumber: 2 },
+        { importId: "second-report", rowNumber: 3 },
+      ];
+      const closingSources = [
+        { importId: "first-report", rowNumber: 3 },
+        { importId: "second-report", rowNumber: 2 },
+      ];
+      const opening = {
+        ...execution("opening", stock, "10", "-100", 1, "open"),
+        rawDateTime: "2026-10-01T12:00:00",
+        timezone: null,
+        sources: reverseSources ? openingSources.reverse() : openingSources,
+      };
+      const closing = {
+        ...execution("closing", stock, "-10", "120", 1, "close"),
+        rawDateTime: "2026-10-01T12:00:00",
+        timezone: null,
+        sources: reverseSources ? closingSources.reverse() : closingSources,
+      };
+      const ledger: LedgerSnapshot = {
+        id: "ledger",
+        inputHash: "input",
+        executions: [closing, opening],
+        lots: [],
+        issues: [],
+        conflicts: 0,
+      };
+      const result = groupStrategies(ledger, [], resolveId);
+      expect(result.issues).toEqual([]);
+      expect(
+        result.strategies.map((strategy) => strategy.status).sort(),
+      ).toEqual(["closed"]);
+      expect(
+        groupStrategies(
+          { ...ledger, executions: [opening, closing] },
+          [],
+          resolveId,
+        ),
+      ).toEqual(result);
+    },
+  );
 });

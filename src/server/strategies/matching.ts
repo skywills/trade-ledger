@@ -25,17 +25,25 @@ export function isStock(instrument: Instrument): boolean {
 }
 
 /**
- * Two instruments refer to the same contract. Canonical keys are compared
- * first; when a weak row lacks a conid the contract-defining fields decide.
+ * Two instruments refer to the same contract. Broker contract IDs decide first.
+ * For weak rows the contract terms decide, and an underlying symbol counts as a
+ * term only when some side carries contract terms: IBKR names the underlying on
+ * assignment legs but not on the matching plain share fills.
  */
 export function sameInstrument(left: Instrument, right: Instrument): boolean {
   if (left.assetClass !== right.assetClass) return false;
   if (left.conid !== null && right.conid !== null)
     return left.conid === right.conid;
   if (left.symbol !== right.symbol) return false;
+  const contractTerms =
+    left.expiry !== null ||
+    left.strike !== null ||
+    left.putCall !== null ||
+    right.expiry !== null ||
+    right.strike !== null ||
+    right.putCall !== null;
   return (
-    left.assetClass === right.assetClass &&
-    left.underlying === right.underlying &&
+    (!contractTerms || left.underlying === right.underlying) &&
     left.expiry === right.expiry &&
     left.strike === right.strike &&
     left.putCall === right.putCall
