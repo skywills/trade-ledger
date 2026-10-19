@@ -25,10 +25,13 @@ export function buildGroupingLinks(
   orderedCloseExecutions: readonly Execution[],
 ): Link[] {
   const { ledger, drafts, executionBySource, resolveId, addIssue } = context;
-  const strategyOfExecution = new Map<Id, Id>();
+  const strategiesOfExecution = new Map<Id, Set<Id>>();
   for (const draft of drafts.values()) {
     for (const allocation of draft.allocations) {
-      strategyOfExecution.set(allocation.executionKey, draft.id);
+      const owners =
+        strategiesOfExecution.get(allocation.executionKey) ?? new Set<Id>();
+      owners.add(draft.id);
+      strategiesOfExecution.set(allocation.executionKey, owners);
     }
   }
 
@@ -71,10 +74,11 @@ export function buildGroupingLinks(
       addIssue(issue);
       continue;
     }
-    const from = strategyOfExecution.get(option.key);
-    const to = strategyOfExecution.get(stock.key);
-    if (from === undefined || to === undefined) continue;
-    addLink(from, to, event, [...option.sources, ...stock.sources]);
+    const from = strategiesOfExecution.get(option.key) ?? [];
+    const to = strategiesOfExecution.get(stock.key) ?? [];
+    for (const source of from)
+      for (const target of to)
+        addLink(source, target, event, [...option.sources, ...stock.sources]);
   }
 
   // 6. User lifecycle corrections, validated before linking.
@@ -98,34 +102,38 @@ export function buildGroupingLinks(
       continue;
     }
     const from =
-      strategyOfExecution.get(source.key) ??
-      resolveId(source.account, [source.key]);
+      strategiesOfExecution.get(source.key) ??
+      new Set([resolveId(source.account, [source.key])]);
     const to =
-      strategyOfExecution.get(target.key) ??
-      resolveId(target.account, [target.key]);
-    addLink(from, to, instruction.event, [
-      ...source.sources,
-      ...target.sources,
-    ]);
+      strategiesOfExecution.get(target.key) ??
+      new Set([resolveId(target.account, [target.key])]);
+    for (const sourceId of from)
+      for (const targetId of to)
+        addLink(sourceId, targetId, instruction.event, [
+          ...source.sources,
+          ...target.sources,
+        ]);
   }
 
   // 7. Rolls: an order holding both a close and an open leg links the two
   //    episodes without merging their allocations or P/L.
-  const orderCloses = new Map<string, Id>();
+  const orderCloses = new Map<string, Set<Id>>();
   for (const close of orderedCloseExecutions) {
     const key = groupKeyOf(close);
     if (!orderOpenings.has(key)) continue;
-    const closeDraftId = strategyOfExecution.get(close.key);
-    if (closeDraftId !== undefined) orderCloses.set(key, closeDraftId);
+    const owners = orderCloses.get(key) ?? new Set<Id>();
+    for (const id of strategiesOfExecution.get(close.key) ?? []) owners.add(id);
+    orderCloses.set(key, owners);
   }
   for (const key of [...orderCloses.keys()].sort()) {
     const openDraftId = orderOpenings.get(key);
-    const closeDraftId = orderCloses.get(key);
-    if (openDraftId === undefined || closeDraftId === undefined) continue;
+    const closeDraftIds = orderCloses.get(key);
+    if (openDraftId === undefined || closeDraftIds === undefined) continue;
     const sources = ledger.executions
       .filter((execution) => groupKeyOf(execution) === key)
       .flatMap((execution) => execution.sources);
-    addLink(closeDraftId, openDraftId, "roll", sources);
+    for (const closeDraftId of [...closeDraftIds].sort())
+      addLink(closeDraftId, openDraftId, "roll", sources);
   }
   return links;
 }

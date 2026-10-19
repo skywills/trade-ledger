@@ -22,6 +22,8 @@ export interface LegRecord {
   netCash: string;
   brokerPnl: string | null;
   sources: SourceRef[];
+  /** In-build provenance for basis-supported closes spanning opening fills. */
+  basisLots?: Array<{ executionKey: string; quantity: string }>;
 }
 
 /**
@@ -86,6 +88,7 @@ export interface LegOverrides {
   quantity?: string;
   netCash?: string;
   brokerPnl?: string | null;
+  basisLots?: Array<{ executionKey: string; quantity: string }>;
 }
 
 export function legOf(
@@ -107,6 +110,9 @@ export function legOf(
         ? overrides.brokerPnl
         : execution.brokerPnl,
     sources: execution.sources,
+    ...(overrides.basisLots === undefined
+      ? {}
+      : { basisLots: overrides.basisLots }),
   };
 }
 

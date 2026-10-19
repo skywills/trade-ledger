@@ -1,12 +1,16 @@
 import type { Execution } from "../../shared/domain.js";
+import { splitAmount } from "./allocation.js";
+import { basisCloseAllocation } from "./grouping-basis.js";
 import {
   closeCandidates,
+  closingExposure,
   equivalentOpeningLot,
 } from "./grouping-close-candidates.js";
 import { orderByKnownChronology } from "./grouping-close-order.js";
 import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
 import { looksLikeBookedEvent } from "./lifecycle.js";
+import { signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue, pushDraftIssue } from "./projection.js";
 
 export function matchCloses(context: GroupingContext): Execution[] {
@@ -52,17 +56,71 @@ export function matchCloses(context: GroupingContext): Execution[] {
       }
     }
 
-    if (candidates.length > 1 && lot === undefined) {
-      const equivalent = equivalentOpeningLot(
-        candidates,
-        close,
-        closeQuantity,
-        executionByKey,
+    // Preserve the established whole-lot equivalence rule only when ALL
+    // compatible exposure is covered, including lots too small to hold the
+    // whole close. Otherwise a partial-lot combination could be overlooked.
+    const direction = signOf(closeQuantity);
+    const exposureCandidates =
+      lot === undefined
+        ? [...context.drafts.values()].filter((draft) => {
+            const exposure = closingExposure(context, draft, close);
+            return (
+              !exposure.isZero() &&
+              (exposure.isNegative() ? -1 : 1) !== direction
+            );
+          })
+        : [];
+    const equivalent =
+      exposureCandidates.length > 1
+        ? equivalentOpeningLot(
+            exposureCandidates,
+            close,
+            closeQuantity,
+            executionByKey,
+          )
+        : undefined;
+    if (equivalent !== undefined) candidates = [equivalent];
+    // A single compatible strategy with enough exposure is already a unique
+    // strategy match. Do not invent a fill-level basis assignment inside it.
+    // If other strategies are eligible, even only partially, basis must still
+    // distinguish all supported cross-strategy allocations before matching.
+    const needsBasisChoice =
+      exposureCandidates.length > 1 || candidates.length !== 1;
+    const basisAllocation =
+      lot === undefined && equivalent === undefined && needsBasisChoice
+        ? basisCloseAllocation(context, close, closeQuantity)
+        : undefined;
+    if (basisAllocation !== undefined && basisAllocation !== null) {
+      const netCash = residualNetCash(close);
+      const brokerPnl = residualBrokerPnl(close);
+      const shares = splitAmount(
+        netCash,
+        basisAllocation.map((part) => ({
+          strategyId: part.draft.id,
+          quantity: part.quantity,
+        })),
       );
-      if (equivalent !== undefined) candidates = [equivalent];
+      for (const part of basisAllocation) {
+        const cash = shares.find((share) => share.strategyId === part.draft.id);
+        if (cash === undefined)
+          throw new Error("Missing basis allocation cash");
+        addLeg(
+          part.draft,
+          legOf(close, "close", {
+            quantity: part.quantity,
+            netCash: cash.amount,
+            ...(part.lots === undefined ? {} : { basisLots: part.lots }),
+            // A multi-lot broker total has no per-lot P&L attribution. Accounting
+            // apportions it and marks the amounts estimated, preserving the total.
+            brokerPnl: basisAllocation.length === 1 ? brokerPnl : null,
+          }),
+        );
+      }
+      recordConsumption(close, closeQuantity, netCash, brokerPnl);
+      continue;
     }
 
-    if (candidates.length === 1) {
+    if (candidates.length === 1 && basisAllocation !== null) {
       const target = candidates[0];
       if (target !== undefined) {
         const netCash = residualNetCash(close);
@@ -80,7 +138,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
       }
     }
 
-    if (candidates.length > 1) {
+    if (candidates.length > 1 || basisAllocation === null) {
       addIssue(
         makeIssue("AMBIGUOUS_CLOSE", close.sources, "warning", close.key),
       );

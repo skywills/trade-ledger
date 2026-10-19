@@ -87,117 +87,129 @@ export function equivalentOpeningLot(
   )[0]?.draft;
 }
 
+export function closingExposure(
+  context: GroupingContext,
+  draft: StrategyDraft,
+  close: Execution,
+): Decimal {
+  const { executionByKey } = context;
+  if (draft.account !== close.account || draft.currency !== close.currency) {
+    return new Decimal(0);
+  }
+  let exposure = new Decimal(0);
+  const futureOpenings: { execution: Execution; quantity: Decimal }[] = [];
+  const futureCloses: { execution: Execution; quantity: Decimal }[] = [];
+  const uncertainFutureCloses: Decimal[] = [];
+  let sawOpening = false;
+  for (const leg of draft.legs) {
+    if (!sameInstrument(leg.instrument, close.instrument)) continue;
+    const related = executionByKey.get(leg.executionKey);
+    if (related === undefined) return new Decimal(0);
+    if (leg.role === "close") {
+      const chronological = compareExecutionTime(related, close);
+      const tiedEarlierClose = chronological === 0 && related.key <= close.key;
+      if (chronological !== null && (chronological < 0 || tiedEarlierClose)) {
+        exposure = exposure.plus(leg.quantity);
+      } else if (
+        chronological !== null &&
+        (chronological > 0 || related.key > close.key)
+      ) {
+        futureCloses.push({
+          execution: related,
+          quantity: new Decimal(leg.quantity),
+        });
+      } else {
+        // A later or uncertain assigned/matched close reserves capacity,
+        // but cannot create historical exposure with the opposite sign.
+        uncertainFutureCloses.push(new Decimal(leg.quantity));
+      }
+      continue;
+    }
+    const chronological = compareExecutionTime(related, close);
+    // Different time zones or date-only values on the same day leave
+    // ordering uncertain. A shared unzoned report provides a common
+    // wall-clock basis without claiming an absolute instant.
+    if (chronological === null) return new Decimal(0);
+    // Explicit broker roles establish exposure at a tied timestamp; CSV
+    // line order is not chronology. Unzoned rows still need a shared clock.
+    const tiedExplicitRoles =
+      chronological === 0 &&
+      leg.role === "open" &&
+      related.action === "open" &&
+      close.action === "close";
+    const tiedLifecycleEvent =
+      chronological === 0 && leg.role === "open" && close.event !== "trade";
+    if (
+      chronological > 0 ||
+      (chronological === 0 && !(tiedLifecycleEvent || tiedExplicitRoles))
+    ) {
+      if (chronological > 0) {
+        futureOpenings.push({
+          execution: related,
+          quantity: new Decimal(leg.quantity),
+        });
+      }
+      continue;
+    }
+    exposure = exposure.plus(leg.quantity);
+    if (leg.role === "open") sawOpening = true;
+  }
+  if (!sawOpening || exposure.isZero()) return new Decimal(0);
+  const reservesCurrentExposure = (quantity: Decimal): boolean =>
+    quantity.isNegative() !== exposure.isNegative();
+  const uncertainReservation = uncertainFutureCloses.reduce((sum, quantity) => {
+    return quantity.isNegative() !== exposure.isNegative()
+      ? sum.plus(quantity.abs())
+      : sum;
+  }, new Decimal(0));
+  let knownReservation = new Decimal(0);
+
+  for (const target of futureCloses) {
+    if (!reservesCurrentExposure(target.quantity)) continue;
+    let cumulativeFutureDemand = new Decimal(0);
+    for (const candidate of futureCloses) {
+      if (!reservesCurrentExposure(candidate.quantity)) continue;
+      const chronology = compareExecutionTime(
+        candidate.execution,
+        target.execution,
+      );
+      const precedesOrUnknown =
+        candidate.execution.key === target.execution.key ||
+        chronology === null ||
+        chronology < 0 ||
+        (chronology === 0 && candidate.execution.key < target.execution.key);
+      if (precedesOrUnknown) {
+        cumulativeFutureDemand = cumulativeFutureDemand.plus(
+          candidate.quantity.abs(),
+        );
+      }
+    }
+    const replenishmentBeforeTarget = futureOpenings.reduce((sum, opening) => {
+      if (opening.quantity.isNegative() !== exposure.isNegative()) {
+        return sum;
+      }
+      return compareExecutionTime(opening.execution, target.execution) === -1
+        ? sum.plus(opening.quantity.abs())
+        : sum;
+    }, new Decimal(0));
+    const deficit = cumulativeFutureDemand.minus(replenishmentBeforeTarget);
+    if (deficit.gt(knownReservation)) knownReservation = deficit;
+  }
+  return Decimal.max(
+    0,
+    exposure.abs().minus(uncertainReservation.plus(knownReservation)),
+  ).times(exposure.isNegative() ? -1 : 1);
+}
+
 export function closeCandidates(
   context: GroupingContext,
   close: Execution,
   closeQuantity: string,
 ): StrategyDraft[] {
-  const { drafts, executionByKey } = context;
-  return [...drafts.values()].filter((draft) => {
-    if (draft.account !== close.account || draft.currency !== close.currency) {
-      return false;
-    }
-    let exposure = new Decimal(0);
-    const futureOpenings: { execution: Execution; quantity: Decimal }[] = [];
-    const futureCloses: { execution: Execution; quantity: Decimal }[] = [];
-    const uncertainFutureCloses: Decimal[] = [];
-    let sawOpening = false;
-    for (const leg of draft.legs) {
-      if (!sameInstrument(leg.instrument, close.instrument)) continue;
-      const related = executionByKey.get(leg.executionKey);
-      if (related === undefined) return false;
-      if (leg.role === "close") {
-        const chronological = compareExecutionTime(related, close);
-        const tiedEarlierClose =
-          chronological === 0 && related.key <= close.key;
-        if (chronological !== null && (chronological < 0 || tiedEarlierClose)) {
-          exposure = exposure.plus(leg.quantity);
-        } else if (
-          chronological !== null &&
-          (chronological > 0 || related.key > close.key)
-        ) {
-          futureCloses.push({
-            execution: related,
-            quantity: new Decimal(leg.quantity),
-          });
-        } else {
-          // A later or uncertain assigned/matched close reserves capacity,
-          // but cannot create historical exposure with the opposite sign.
-          uncertainFutureCloses.push(new Decimal(leg.quantity));
-        }
-        continue;
-      }
-      const chronological = compareExecutionTime(related, close);
-      // Different time zones or date-only values on the same day leave
-      // ordering uncertain. A shared unzoned report provides a common
-      // wall-clock basis without claiming an absolute instant.
-      if (chronological === null) return false;
-      const tiedLifecycleEvent =
-        chronological === 0 && leg.role === "open" && close.event !== "trade";
-      if (chronological > 0 || (chronological === 0 && !tiedLifecycleEvent)) {
-        if (chronological > 0) {
-          futureOpenings.push({
-            execution: related,
-            quantity: new Decimal(leg.quantity),
-          });
-        }
-        continue;
-      }
-      exposure = exposure.plus(leg.quantity);
-      if (leg.role === "open") sawOpening = true;
-    }
-    if (!sawOpening || !remainingCompatible(exposure.toFixed(), closeQuantity))
-      return false;
-    const reservesCurrentExposure = (quantity: Decimal): boolean =>
-      quantity.isNegative() !== exposure.isNegative();
-    const uncertainReservation = uncertainFutureCloses.reduce(
-      (sum, quantity) => {
-        return quantity.isNegative() !== exposure.isNegative()
-          ? sum.plus(quantity.abs())
-          : sum;
-      },
-      new Decimal(0),
-    );
-    let knownReservation = new Decimal(0);
-
-    for (const target of futureCloses) {
-      if (!reservesCurrentExposure(target.quantity)) continue;
-      let cumulativeFutureDemand = new Decimal(0);
-      for (const candidate of futureCloses) {
-        if (!reservesCurrentExposure(candidate.quantity)) continue;
-        const chronology = compareExecutionTime(
-          candidate.execution,
-          target.execution,
-        );
-        const precedesOrUnknown =
-          candidate.execution.key === target.execution.key ||
-          chronology === null ||
-          chronology < 0 ||
-          (chronology === 0 && candidate.execution.key < target.execution.key);
-        if (precedesOrUnknown) {
-          cumulativeFutureDemand = cumulativeFutureDemand.plus(
-            candidate.quantity.abs(),
-          );
-        }
-      }
-      const replenishmentBeforeTarget = futureOpenings.reduce(
-        (sum, opening) => {
-          if (opening.quantity.isNegative() !== exposure.isNegative()) {
-            return sum;
-          }
-          return compareExecutionTime(opening.execution, target.execution) ===
-            -1
-            ? sum.plus(opening.quantity.abs())
-            : sum;
-        },
-        new Decimal(0),
-      );
-      const deficit = cumulativeFutureDemand.minus(replenishmentBeforeTarget);
-      if (deficit.gt(knownReservation)) knownReservation = deficit;
-    }
-    return exposure
-      .abs()
-      .minus(uncertainReservation.plus(knownReservation))
-      .gte(new Decimal(closeQuantity).abs());
-  });
+  return [...context.drafts.values()].filter((draft) =>
+    remainingCompatible(
+      closingExposure(context, draft, close).toFixed(),
+      closeQuantity,
+    ),
+  );
 }

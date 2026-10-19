@@ -10,6 +10,8 @@ export const CHAT_INSTRUCTIONS = [
   "Every result reports the active buildId and stale flag. When stale is true, tell the user the numbers may be out of date and offer a rebuild.",
   "commit_import, rebuild and create_backup change data. Each asks the user to Allow or Deny. Before commit_import, call get_import_preview and report its counts and issues. If the user denies, do not retry the same action unless they ask.",
   "Reconciliation decisions are never written directly. Use submit_proposal; the user accepts or rejects each proposal. Never claim a decision was made.",
+  "For reconciliation questions, call list_review_issues then diagnose_review_issue with the returned issue key and buildId. Page all relevant evidence, compare timestamps, available allocations and cost basis. An opening listed after a close at the same timestamp is not necessarily missing; multiple openings are not necessarily ambiguous if quantity and basis uniquely identify an allocation. Never infer assignment or expiry from a tied timestamp alone.",
+  "To correct journal interpretation, use the existing submit_proposal kinds and explain the supporting evidence. Do not edit broker source data, change application code, invent unsupported corrections or silently dismiss review warnings. If the tool evidence suggests an application bug or no supported proposal can express a correction, call create_issue_report and give the user its sanitized report. Keep private diagnostic evidence separate: never append symbols, amounts, dates, source refs, filenames or raw tool output to that shareable report. A report is not published automatically.",
   "Be concise. Use short tables for numbers.",
 ].join("\n");
 
