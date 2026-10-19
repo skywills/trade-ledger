@@ -6,7 +6,7 @@ Reviewed branch: `main`
 
 Reviewed HEAD: `a90a92c` (`Merge pull request #8 from skywills/feature/trade-lifecycles`)
 
-Status: **R01–R12 resolved on `fix/review-2026-10-19` (one sub-point of R06 withdrawn as spec-conformant); R13 resolved by the build-job lifecycle follow-up; R14–R24 low findings open**
+Status: **R01–R12 resolved on `fix/review-2026-10-19` (one sub-point of R06 withdrawn as spec-conformant); R13 resolved by the build-job lifecycle follow-up; R14, R15, R17–R19, R21, R22 and R24 addressed in the low-severity follow-up; R23 stop-loss validation addressed, strategy splits remain open; R16 and R20 open**
 
 See [Resolution — 2026-10-19](#resolution--2026-10-19) for the fixes, the review of those fixes, and the residual risks. The findings below describe the reviewed baseline `a90a92c`.
 
@@ -266,7 +266,7 @@ Run on the final branch head:
 
 ### Still open
 
-- **R14–R24:** low findings, unchanged. R13 is resolved by the build-job lifecycle follow-up below.
+- **Low findings:** R16 (default currency), R20 (local endpoint trust policy), and R23 applied strategy splits remain open. R13 is resolved by the build-job lifecycle follow-up below; the other actionable low findings are addressed in the low-severity follow-up.
 - **Tests and CI:** coverage reporting, compiled-server smoke in CI, direct `WriterQueue` tests, the identified chat/browser fixed-wait cleanup, and isolation between browser spec files are implemented in the reliability follow-up. The 80% whole-source coverage target and the other module-specific test gaps remain open.
 - **R09 import UI:** showing endpoints before a model-configuration import is confirmed is not yet done (frontend).
 - **R04:** validated with controlled overlapping copies of the retained export; confirmation with two independently generated overlapping exports, including `TradeID`, remains open. **R05:** confirmed against the retained export. See [Real-data validation](#real-data-validation--2026-10-19).
@@ -382,3 +382,45 @@ The 80% whole-source coverage target and other findings in this review remain se
 - Six deterministic integration tests cover the activation/completion cancellation race, progress-write failure and subsequent rebuild, original-error preservation, pre-candidate validation failure, queued progress after cancellation, and stale candidate completion. Database triggers and a real import provide the failure/race conditions without timing sleeps.
 
 Verification on an isolated checkout of this commit: 672 unit/integration tests across 61 files passed; lint and typecheck passed with the existing 4 warnings and 26 infos.
+
+
+## Low-severity follow-up — 2026-10-19
+
+Branch: `fix/review-low-severity-followups`, based on merged PR #11 (`1774b67`).
+
+| Finding | Resolution | Regression coverage |
+|---|---|---|
+| R14 | HTTP preview parsing receives the configured upload limit. Failed multipart requests discard only previews created by that request. Commit reparsing preserves accepted files larger than the default limit. | Real multipart uploads above 20 MiB, configured smaller limits, request-owned staging cleanup, and retained execution rows after commit. |
+| R15 | ISO date/time parsing accepts the broker's comma separator without changing timezone interpretation. | Comma timestamps with seconds/fractions and invalid calendar dates. |
+| R17 | Monthly chart and summary-export expansion rejects more than 1,200 months with `400 INVALID_ANALYTICS_QUERY`. The bound includes endpoints inferred from evidence; results are never silently truncated. | Explicit, one-sided and evidence-derived spans; 1,200-month boundary; year-9999 termination; real summary/export routes. |
+| R18 | Session/turn/tool failures expose stable public messages and error codes. Unexpected internal exception text is excluded from model-facing tool results, SSE and persisted errors. | Filesystem and SQLite-trigger failures through the real chat service, including model-facing tool results. |
+| R19 | Replay uses a ring bounded by 2,000 frames and 256 KiB per thread, with at most 128 cached threads. Streams are limited to eight per thread and 64 total; deletion clears replay and closes subscribers. Slow streams have a drain-aware 512 KiB pending queue; overflow disconnects and releases their slots. | Ordered eviction, replay bytes, global/per-thread admission and idempotent slot release, deletion EOF, large replay drainage, burst overflow and reconnection. |
+| R21 | Job polling supports aborting observation and continues beyond 60 seconds while mounted. UI owners release polling on navigation/unmount. Analytics errors retain HTTP status even for malformed or non-JSON bodies. | Real browser/HTTP polling, abort cleanup, long-running jobs, non-JSON export failures and component navigation. |
+| R22 | Browser strategy/import resource IDs are encoded in API paths and source links. | Reserved-character IDs through real browser requests. |
+| R23, validation only | Negative stop-loss prices are rejected before retention, preserving arbitrary decimal precision and allowing zero. | Rejected negative prices leave no decision or metadata; zero/positive and large exact amounts remain supported. |
+| R24 | Both messages and running thread state are accepted in one queued SQLite transaction, so failed setup cannot poison retry idempotency. | Failures during assistant insertion/state update, concurrent retries and exactly one retained turn. |
+
+R16 currency preference and R20 endpoint restrictions require explicit product policies; their existing behavior is unchanged. Applying `group_split` needs a validated allocation mapping and replay semantics and remains a separate feature. Model-configuration endpoint confirmation, independent overlapping Flex exports with TradeID, and the 80% whole-source coverage target remain open.
+
+### Verification
+
+- Baseline on merged main: 678 tests passed.
+- Final whole-source V8 coverage run: 710 tests passed across 64 files; line coverage 71.20%. Browser execution is reported separately and is not included in this coverage number.
+- Full Chromium browser acceptance: 91 tests passed with two workers.
+- Lint and typecheck passed with the existing four warnings and 26 informational diagnostics.
+- Production build and compiled-server migration, health and SIGTERM smoke passed.
+- Docker smoke passed: non-root UID, readiness, import, local model profile and restart persistence.
+- Independent review: year-9999 month rollover, SSE subscription accounting/drain behavior, navigation ownership and tool-error sanitization were corrected and rechecked; no remaining findings in this fix set.
+
+The real above-default-limit CSV regression parses over 20 MiB twice. Its initial 20-second timeout was exceeded under coverage instrumentation; the correctness test now has a documented 120-second budget. This is not a throughput guarantee. No live journal data was changed.
+
+
+### Final PR #12 review corrections
+
+A fresh review of `4650479` found three P2 regressions. All were reproduced by failing regressions before correction:
+
+- **Route IDs:** the router passed encoded segments to detail components, which encoded them again for API requests. Dynamic route IDs now decode exactly once, malformed escapes render Not found, and journal links encode strategy IDs. Browser coverage uses actual App navigation, including reserved characters and a literal `%2F` inside an ID.
+- **SSE overflow:** graceful `end()` released admission while a nonreading peer could leave its socket alive. Overflow now destroys the socket before releasing the slot. A native HTTP client that never reads the response reproduces the old failure and verifies immediate socket destruction; normal large replay still drains successfully.
+- **Confirmed mutations after navigation:** observation cancellation could stop a multi-file import between commits or prevent a retained lifecycle decision from scheduling its rebuild. Confirmed imports now finish all commits and submit their full rebuild; accepted lifecycle decisions still submit their projection rebuild. Navigation stops polling and UI updates. Browser gates hold the initial commit/decision response, navigate through App, then verify durable follow-up requests without detached polling.
+
+Final verification after these corrections: 710 unit/integration tests across 64 files passed with V8 coverage (71.20% whole-source lines); all 91 Chromium browser tests passed with two workers. Lint/typecheck, production build/compiled-server smoke, Docker restart-persistence smoke and diff formatting checks passed. Independent re-review confirmed all three P2 findings closed with no new findings.

@@ -19,6 +19,7 @@ import {
 import type { Store } from "../storage/database.js";
 
 const KEEPALIVE_MS = 15_000;
+const MAX_PENDING_STREAM_BYTES = 512 * 1024;
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body ?? {});
@@ -157,33 +158,80 @@ function registerEvents(
   app.get("/api/chat/threads/:id/events", async (request, reply) => {
     const id = idOf(request);
     const thread = requireThread(store, id);
-    reply.hijack();
     const raw = reply.raw;
+    let keepalive: ReturnType<typeof setInterval> | undefined;
+    let unsubscribe = () => {};
+    let ended = false;
+    let blocked = false;
+    let pendingBytes = 0;
+    let pendingHead = 0;
+    let pending: { chunk: string; bytes: number }[] = [];
+    const end: EndStream = () => {
+      if (ended) return;
+      ended = true;
+      clearInterval(keepalive);
+      pending.length = 0;
+      pendingBytes = 0;
+      unsubscribe();
+      open.delete(end);
+      if (!raw.writableEnded && !raw.destroyed) raw.end();
+    };
+    const send = (chunk: string) => {
+      if (ended || raw.writableEnded || raw.destroyed) return;
+      if (blocked) {
+        const bytes = Buffer.byteLength(chunk);
+        if (pendingBytes + bytes > MAX_PENDING_STREAM_BYTES) {
+          // A peer that stopped reading cannot drain a graceful end. Close its
+          // socket before releasing admission and shutdown tracking.
+          raw.destroy();
+          end();
+          return;
+        }
+        pending.push({ chunk, bytes });
+        pendingBytes += bytes;
+      } else blocked = !raw.write(chunk);
+    };
+    raw.on("drain", () => {
+      if (ended) return;
+      blocked = false;
+      while (pendingHead < pending.length && !blocked) {
+        const item = pending[pendingHead];
+        delete pending[pendingHead++];
+        if (item === undefined) continue;
+        pendingBytes -= item.bytes;
+        blocked = !raw.write(item.chunk);
+      }
+      if (pendingHead === pending.length) {
+        pending.length = 0;
+        pendingHead = 0;
+      } else if (pendingHead >= 1024 && pendingHead >= pending.length / 2) {
+        // Amortize prefix compaction during a sustained, partially drained stream.
+        pending = pending.slice(pendingHead);
+        pendingHead = 0;
+      }
+    });
+    const frame = (value: Parameters<typeof chat.bus.emit>[1]) =>
+      send(`event: ${value.event}\ndata: ${JSON.stringify(value.data)}\n\n`);
+    // Admission may throw 429 and must happen before SSE headers are sent.
+    unsubscribe = chat.bus.subscribe(id, frame, {
+      replay: false,
+      onClose: end,
+    });
+    reply.hijack();
     raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
     });
-    const writable = () => !raw.writableEnded && !raw.destroyed;
-    const send = (chunk: string) => {
-      if (writable()) raw.write(chunk);
-    };
+    open.add(end);
+    raw.on("close", end);
+    raw.on("error", end);
     send(
       `event: ready\ndata: ${JSON.stringify({ threadStatus: thread.status })}\n\n`,
     );
-    const unsubscribe = chat.bus.subscribe(id, (frame) =>
-      send(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`),
-    );
-    const keepalive = setInterval(() => send(": keepalive\n\n"), KEEPALIVE_MS);
-    const end: EndStream = () => {
-      clearInterval(keepalive);
-      unsubscribe();
-      open.delete(end);
-      if (writable()) raw.end();
-    };
-    open.add(end);
-    request.raw.on("close", end);
-    raw.on("error", end);
+    chat.bus.replayTo(id, frame);
+    if (!ended)
+      keepalive = setInterval(() => send(": keepalive\n\n"), KEEPALIVE_MS);
   });
 }
 

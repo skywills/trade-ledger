@@ -2,10 +2,10 @@
 
 import type { AgentSession } from "@nathapp/nax-agent";
 import { Decimal } from "decimal.js";
-import { AppError } from "../../shared/errors.js";
 import { UsageMeter } from "../ai/session-host.js";
 import type { Store } from "../storage/database.js";
 import type { TurnAccumulator } from "./accumulator.js";
+import { publicChatError } from "./errors.js";
 import type { ThreadEventBus } from "./frames.js";
 import type { ChatLimits } from "./service.js";
 import {
@@ -52,7 +52,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const { store, bus, session, thread, accumulator: acc } = input;
   const meter = new UsageMeter(input.limits);
   let cancelReason: string | null = null;
-  let failure: string | null = null;
+  let failure: ReturnType<typeof publicChatError> | null = null;
   const emit = (frames: ReturnType<TurnAccumulator["apply"]>) => {
     for (const f of frames) bus.emit(thread.id, f);
   };
@@ -75,12 +75,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
       }
     }
   } catch (error) {
-    failure =
-      error instanceof AppError
-        ? error.code
-        : error instanceof Error
-          ? error.message
-          : String(error);
+    failure = publicChatError(error, "TURN_FAILED");
   }
   await finishTurn(input, meter, cancelReason, failure);
 }
@@ -123,10 +118,10 @@ async function finishTurn(
   input: TurnInput,
   meter: UsageMeter,
   cancelReason: string | null,
-  failure: string | null,
+  failure: ReturnType<typeof publicChatError> | null,
 ): Promise<void> {
   const { store, bus, thread, accumulator: acc } = input;
-  const { status, error } = outcomeOf(acc, cancelReason, failure);
+  const { status, error } = outcomeOf(acc, cancelReason, failure?.code ?? null);
   const turnCost = new Decimal(meter.costUsd).toFixed();
   await updateMessage(store, input.assistantMessageId, {
     content: acc.finalContent(),
@@ -153,7 +148,7 @@ async function finishTurn(
   if (failure !== null)
     bus.emit(thread.id, {
       event: "error",
-      data: { code: "TURN_FAILED", message: failure },
+      data: failure,
     });
   bus.emit(thread.id, {
     event: "message",

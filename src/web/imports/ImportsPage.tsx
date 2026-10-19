@@ -9,6 +9,7 @@ import {
   pollJob,
   requestJson,
   requestMultipart,
+  useJobSignal,
   useJson,
 } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
@@ -22,7 +23,7 @@ function ImportRowDetail({
   rowNumber: number;
 }) {
   const rows = useJson(
-    `/api/imports/${importId}/rows?pageSize=100`,
+    `/api/imports/${encodeURIComponent(importId)}/rows?pageSize=100`,
     ImportRowsEnvelope,
   );
   if (rows.status === "loading") return <Loading label="Loading source row…" />;
@@ -82,6 +83,7 @@ function formatBytes(bytes: number): string {
 
 /** Import screen: preview, commit, auto-rebuild and raw row drilldown. */
 export function ImportsPage() {
+  const jobSignal = useJobSignal();
   const imports = useJson("/api/imports?pageSize=100", ImportsEnvelope);
   const query = useQuery();
   const selectedImport = query.get("import");
@@ -97,6 +99,7 @@ export function ImportsPage() {
 
   async function onConfirm() {
     if (files.length === 0) return;
+    const signal = jobSignal();
     setBusy(true);
     setError(null);
     setResult(null);
@@ -110,14 +113,15 @@ export function ImportsPage() {
         PreviewResponseSchema,
         form,
       );
-      setPreviews(previewResponse.previews);
-
-      setStep("committing");
+      if (!signal.aborted) {
+        setPreviews(previewResponse.previews);
+        setStep("committing");
+      }
       const commits = [];
       for (const entry of previewResponse.previews) {
         commits.push(
           await requestJson(
-            `/api/imports/${entry.id}/commit`,
+            `/api/imports/${encodeURIComponent(entry.id)}/commit`,
             CommitResponseSchema,
             "POST",
           ),
@@ -125,22 +129,26 @@ export function ImportsPage() {
       }
       const duplicates = commits.filter((entry) => entry.duplicate).length;
 
-      setStep("building");
+      if (!signal.aborted) setStep("building");
       const build = await requestJson(
         "/api/builds",
         BuildResponseSchema,
         "POST",
         { mode: "full" },
       );
-      const job = await pollJob(build.jobId);
+      const job = await pollJob(build.jobId, undefined, { signal });
+      signal.throwIfAborted();
       const prefix = duplicates > 0 ? "Already imported (duplicate). " : "";
       setResult(`${prefix}Import complete. Build ${job.status}.`);
       imports.reload();
     } catch (caught) {
+      if (signal.aborted) return;
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setBusy(false);
-      setStep("idle");
+      if (!signal.aborted) {
+        setBusy(false);
+        setStep("idle");
+      }
     }
   }
 
@@ -305,7 +313,9 @@ export function ImportsPage() {
                 <td>{entry.importedAt}</td>
                 <td>{entry.sha256.slice(0, 12)}</td>
                 <td>
-                  <a href={`/imports?import=${entry.id}`}>View rows</a>
+                  <a href={`/imports?import=${encodeURIComponent(entry.id)}`}>
+                    View rows
+                  </a>
                 </td>
               </tr>
             ))}

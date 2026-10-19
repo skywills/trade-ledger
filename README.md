@@ -252,6 +252,6 @@ first. No release tooling is required.
 
 Coverage includes all TypeScript source, including files not imported by unit or
 integration tests. Open `coverage/index.html` for the report; Playwright execution
-is not included. The latest measured line coverage is 70.92% overall (89.15% for
+is not included. The latest measured line coverage is 71.20% overall (89.82% for
 server source), so the 80% whole-source target remains open. CI reports coverage
 without enforcing a lower replacement threshold.

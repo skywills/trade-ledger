@@ -7,6 +7,7 @@ import type {
 import type { Strategy } from "../../shared/domain.js";
 import { normalizeStrategyDescription } from "../../shared/symbols.js";
 import { dailySeries, Money, summarizePerformance } from "./performance.js";
+import { invalid } from "./query.js";
 import {
   type AnalyticsScope,
   bucketLabel,
@@ -100,9 +101,15 @@ export function aggregateAnalytics(
   if (first && last) {
     let y = Number(first.slice(0, 4)),
       m = Number(first.slice(5));
-    while (
-      `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}` <= last
-    ) {
+    const monthCount =
+      (Number(last.slice(0, 4)) - y) * 12 + Number(last.slice(5)) - m + 1;
+    // Check both explicit query endpoints and inferred evidence endpoints before
+    // expanding the calendar. Never silently truncate financial summaries.
+    if (monthCount > 1200)
+      invalid(
+        "Monthly analytics support at most 1,200 months. Select a narrower date range.",
+      );
+    for (let offset = 0; offset < monthCount; offset++) {
       filled.push(
         `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`,
       );

@@ -1,11 +1,11 @@
 import { Decimal } from "decimal.js";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AllocationRef,
   LifecycleMember,
 } from "../../shared/lifecycles.js";
 import { formatMoney } from "../../shared/money.js";
-import { useJson } from "../api.js";
+import { useJobSignal, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link, navigate, useLocation } from "../navigation.js";
 import {
@@ -37,6 +37,7 @@ function sourceCash(
     : null;
 }
 export function LifecycleDetail({ id }: { id: string }) {
+  const jobSignal = useJobSignal(id);
   const { search } = useLocation();
   const expected = new URLSearchParams(search).get("expectedBuildId");
   const path = `/api/lifecycles/${encodeURIComponent(id)}${expected ? `?expectedBuildId=${encodeURIComponent(expected)}` : ""}`;
@@ -64,27 +65,41 @@ export function LifecycleDetail({ id }: { id: string }) {
     setRebuildPending(false);
     refresh();
   }
-  async function run(task: () => Promise<void>) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reset operation state when navigating to another lifecycle.
+  useEffect(() => {
+    inFlight.current = false;
+    setBusy(false);
+    setError(null);
+    setNotice(null);
+    setRebuildPending(false);
+  }, [id]);
+  async function run(task: (signal: AbortSignal) => Promise<void>) {
+    const signal = jobSignal();
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await task();
+      await task(signal);
+      signal.throwIfAborted();
       setNotice("Decision saved and journal rebuilt.");
       refresh();
     } catch (e) {
+      if (signal.aborted) return;
       setError(e instanceof Error ? e.message : String(e));
       remote.reload();
       all.reload();
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      if (!signal.aborted) {
+        inFlight.current = false;
+        setBusy(false);
+      }
     }
   }
-  async function rebuild() {
-    await rebuildLifecycles();
+  async function rebuild(signal: AbortSignal) {
+    await rebuildLifecycles(signal);
+    signal.throwIfAborted();
     setRebuildPending(false);
   }
   const save: SaveDecision = async (kind, payload) => {
@@ -95,7 +110,7 @@ export function LifecycleDetail({ id }: { id: string }) {
     if (pendingRequest.current?.key !== key)
       pendingRequest.current = { key, id: crypto.randomUUID() };
     const clientRequestId = pendingRequest.current.id;
-    await run(async () => {
+    await run(async (signal) => {
       await recordLifecycleDecision(
         data.watermark,
         kind,
@@ -103,10 +118,12 @@ export function LifecycleDetail({ id }: { id: string }) {
         supersedes,
         clientRequestId,
       );
-      pendingRequest.current = null;
-      setSupersedesId("");
-      setRebuildPending(true);
-      await rebuild();
+      if (!signal.aborted) {
+        pendingRequest.current = null;
+        setSupersedesId("");
+        setRebuildPending(true);
+      }
+      await rebuild(signal);
     });
   };
   if (remote.status === "loading")

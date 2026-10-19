@@ -7,10 +7,10 @@ import {
 } from "@nathapp/nax-agent";
 import { ZodError } from "zod";
 import type { Id } from "../../../shared/domain.js";
-import { AppError } from "../../../shared/errors.js";
 import type { BuildScheduler } from "../../builds/service.js";
 import type { JobService } from "../../jobs/service.js";
 import type { Store } from "../../storage/database.js";
+import { publicChatError } from "../errors.js";
 import type { ChatThread } from "../threads.js";
 
 export const UNTRUSTED =
@@ -54,9 +54,8 @@ export async function refuseInvalidInput(
         `Invalid input: ${error.issues.map((i) => `${i.path.join(".") || "input"} ${i.message}`).join("; ")}`,
       );
     }
-    if (error instanceof AppError)
-      return errorResult(`${error.code}: ${error.message}`);
-    return errorResult(error instanceof Error ? error.message : String(error));
+    const safe = publicChatError(error, "TOOL_FAILED");
+    return errorResult(`${safe.code}: ${safe.message}`);
   }
 }
 

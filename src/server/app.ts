@@ -255,7 +255,7 @@ export async function createApp(
     });
 
     registerJournalReset(app, store, jobs, scheduler, chat);
-    await registerImportRoutes(app, store);
+    await registerImportRoutes(app, store, config.uploadLimitBytes);
     await registerJournalRoutes(app, store);
     await registerAnalyticsRoutes(app, store);
     await registerLifecycleRoutes(app, store);

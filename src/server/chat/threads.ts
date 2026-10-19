@@ -239,26 +239,31 @@ export function updateThread(
   id: Id,
   patch: ThreadPatch,
 ): Promise<ChatThread> {
-  return write(store, () => {
-    const current = requireThread(store, id);
-    const pending =
-      patch.pending !== undefined ? patch.pending : current.pending;
-    store.db
-      .prepare(
-        `UPDATE chat_threads SET title = ?, status = ?, pending_json = ?, usage_json = ?, cost = ?, updated_at = ?
+  return write(store, () => updateThreadSync(store, id, patch));
+}
+
+function updateThreadSync(
+  store: Store,
+  id: Id,
+  patch: ThreadPatch,
+): ChatThread {
+  const current = requireThread(store, id);
+  const pending = patch.pending !== undefined ? patch.pending : current.pending;
+  store.db
+    .prepare(
+      `UPDATE chat_threads SET title = ?, status = ?, pending_json = ?, usage_json = ?, cost = ?, updated_at = ?
        WHERE id = ?`,
-      )
-      .run(
-        patch.title ?? current.title,
-        patch.status ?? current.status,
-        pending === null ? null : JSON.stringify(pending),
-        JSON.stringify(patch.usage ?? current.usage),
-        patch.cost ?? current.cost,
-        patch.now.toISOString(),
-        id,
-      );
-    return requireThread(store, id);
-  });
+    )
+    .run(
+      patch.title ?? current.title,
+      patch.status ?? current.status,
+      pending === null ? null : JSON.stringify(pending),
+      JSON.stringify(patch.usage ?? current.usage),
+      patch.cost ?? current.cost,
+      patch.now.toISOString(),
+      id,
+    );
+  return requireThread(store, id);
 }
 
 export function deleteThread(store: Store, id: Id): Promise<void> {
@@ -272,39 +277,65 @@ export function appendMessage(
   threadId: Id,
   draft: NewMessage,
 ): Promise<ChatMessage> {
+  return write(store, () => appendMessageSync(store, threadId, draft));
+}
+
+function appendMessageSync(
+  store: Store,
+  threadId: Id,
+  draft: NewMessage,
+): ChatMessage {
   const id = randomUUID();
-  return write(store, () =>
-    store.db.transaction(() => {
-      const thread = requireThread(store, threadId);
-      store.db
-        .prepare(
-          `INSERT INTO chat_messages (id, thread_id, seq, role, content, attachments_json, tools_json, status,
+  const thread = requireThread(store, threadId);
+  store.db
+    .prepare(
+      `INSERT INTO chat_messages (id, thread_id, seq, role, content, attachments_json, tools_json, status,
            error, usage_json, cost, client_message_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, '[]', ?, NULL, NULL, NULL, ?, ?)`,
-        )
-        .run(
-          id,
-          threadId,
-          thread.nextSeq,
-          draft.role,
-          draft.content,
-          JSON.stringify(draft.attachments),
-          draft.status,
-          draft.clientMessageId,
-          draft.now.toISOString(),
-        );
-      store.db
-        .prepare(
-          "UPDATE chat_threads SET next_seq = next_seq + 1, updated_at = ? WHERE id = ?",
-        )
-        .run(draft.now.toISOString(), threadId);
-      return toMessage(
-        store.db
-          .prepare("SELECT * FROM chat_messages WHERE id = ?")
-          .get(id) as MessageRow,
-      );
-    })(),
+    )
+    .run(
+      id,
+      threadId,
+      thread.nextSeq,
+      draft.role,
+      draft.content,
+      JSON.stringify(draft.attachments),
+      draft.status,
+      draft.clientMessageId,
+      draft.now.toISOString(),
+    );
+  store.db
+    .prepare(
+      "UPDATE chat_threads SET next_seq = next_seq + 1, updated_at = ? WHERE id = ?",
+    )
+    .run(draft.now.toISOString(), threadId);
+  return toMessage(
+    store.db
+      .prepare("SELECT * FROM chat_messages WHERE id = ?")
+      .get(id) as MessageRow,
   );
+}
+
+/** Accept both messages and the running state in a single queued transaction. */
+export function acceptTurn(
+  store: Store,
+  threadId: Id,
+  user: NewMessage,
+  patch: ThreadPatch,
+) {
+  return write(store, () => {
+    const userMessage = appendMessageSync(store, threadId, user);
+    const assistant = appendMessageSync(store, threadId, {
+      role: "assistant",
+      content: "",
+      attachments: [],
+      status: "streaming",
+      clientMessageId: null,
+      now: user.now,
+    });
+    const running = updateThreadSync(store, threadId, patch);
+    return { userId: userMessage.id, assistantId: assistant.id, running };
+  });
 }
 
 export function findMessageByClientId(

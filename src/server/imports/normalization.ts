@@ -115,7 +115,7 @@ export type TimestampParse =
   | { status: "ok"; date: string; timestamp: string };
 
 const ISO_DATETIME =
-  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|, ?)(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?$/;
 const TWS_DATETIME = /^(\d{4})(\d{2})(\d{2});(\d{2})(\d{2})(\d{2})?$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const COMPACT_DATE = /^(\d{4})(\d{2})(\d{2})$/;
