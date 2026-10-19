@@ -280,3 +280,43 @@ test("renames and deletes a conversation from its header", async ({ page, reques
   await page.goto(threadUrl);
   await expect(page.getByRole("alert")).toContainText("No chat thread exists");
 });
+
+
+test("scrolls to the latest thinking delta while streaming", async ({ page, request, baseURL }) => {
+  let append = () => {};
+  let finish = () => {};
+  const appendGate = new Promise<void>((resolve) => { append = resolve; });
+  const finishGate = new Promise<void>((resolve) => { finish = resolve; });
+  inference = await startInferenceServer({
+    mode: "tool-call",
+    planGateTool: "get_pnl_summary",
+    plan: [{
+      kind: "text",
+      thinkingChunks: [
+        "First thought.\n\n".repeat(50),
+        "More analysis.\n\n".repeat(50) + "Latest thought.",
+      ],
+      thinkingChunkGate: (index) => index === 0 ? appendGate : finishGate,
+      text: "Done.",
+    }],
+  });
+  try {
+    await configureModel(request, baseURL ?? "", inference.url);
+    await page.goto("/");
+    await page.getByTestId("composer-input").fill("Think through the trades");
+    await page.getByTestId("composer-send").click();
+    const thinking = page.locator(".thinking-text");
+    await expect(thinking).toContainText("First thought.");
+    await expect.poll(() => thinking.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    await expect.poll(() => thinking.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1);
+    const previousHeight = await thinking.evaluate((el) => el.scrollHeight);
+    append();
+    await expect(thinking).toContainText("Latest thought.");
+    await expect.poll(() => thinking.evaluate((el) => el.scrollHeight)).toBeGreaterThan(previousHeight);
+    await expect.poll(() => thinking.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1);
+  } finally {
+    append();
+    finish();
+  }
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+});

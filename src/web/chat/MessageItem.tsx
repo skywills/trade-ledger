@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatMessageDto, ToolRecordDto } from "../../shared/chat-api.js";
 import { CheckIcon, ShieldIcon, WrenchIcon, XIcon } from "./icons.js";
 import { Markdown } from "./Markdown.js";
@@ -61,6 +61,13 @@ function ThinkingBlock({
 }) {
   const running = message.status === "streaming";
   const [expanded, setExpanded] = useState(running);
+  const thinkingRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = thinkingRef.current;
+    if (running && expanded && thinking !== "" && element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [running, expanded, thinking]);
   useEffect(() => {
     if (!running) setExpanded(false);
   }, [running]);
@@ -93,7 +100,7 @@ function ThinkingBlock({
       </summary>
       <div className="thinking-content">
         {thinking !== "" ? (
-          <div className="thinking-text">
+          <div className="thinking-text" ref={thinkingRef}>
             <Markdown text={thinking} />
           </div>
         ) : (
