@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { selectDefaultProfile } from "../../src/server/ai/profiles.js";
-import { createApp } from "../../src/server/app.js";
+import {
+  type AppContext,
+  type AppOptions,
+  createApp,
+} from "../../src/server/app.js";
 import { readConfig } from "../../src/server/config.js";
 import { closeStore } from "../../src/server/storage/database.js";
 import { ORIGIN, seedLedger, verifiedProfile } from "../helpers/chat.js";
@@ -25,7 +29,10 @@ afterEach(async () => {
   await Promise.all(stores.splice(0).map((s) => s.dispose()));
 });
 
-async function appWithModel(plan: NonNullable<InferenceServerOptions["plan"]>) {
+async function appWithModel(
+  plan: NonNullable<InferenceServerOptions["plan"]>,
+  options: AppOptions = {},
+) {
   const t = await createTestStore();
   stores.push(t);
   await seedLedger(t.store);
@@ -40,6 +47,7 @@ async function appWithModel(plan: NonNullable<InferenceServerOptions["plan"]>) {
   await closeStore(t.store); // the app opens its own store on the same DATA_DIR
   const app = await createApp(
     readConfig({ DATA_DIR: t.dataDir, ALLOWED_ORIGIN: ORIGIN }),
+    options,
   );
   apps.push(app);
   return app;
@@ -135,6 +143,128 @@ describe("chat HTTP API", () => {
     expect(first).toContain("event: ready");
     await app.close();
   }, 4000);
+
+  it("drains a large replay and stays subscribed for new frames", async () => {
+    let context: AppContext | undefined;
+    const app = await appWithModel([], {
+      onReady: (value) => {
+        context = value;
+      },
+    });
+    const id = await createChatThread(app);
+    if (context === undefined) throw new Error("missing app context");
+    for (let i = 0; i < 100; i++)
+      context.chat.bus.emit(id, {
+        event: "delta",
+        data: { messageId: "m", text: `${i}:${"x".repeat(2000)}` },
+      });
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const response = await fetch(`${base}/api/chat/threads/${id}/events`);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("missing SSE reader");
+    streams.push(reader);
+    let text = "";
+    const readThrough = async (marker: string) => {
+      while (!text.includes(marker)) {
+        const chunk = await reader.read();
+        expect(chunk.done).toBe(false);
+        text += new TextDecoder().decode(chunk.value);
+      }
+    };
+    await readThrough('"text":"99:');
+    context.chat.bus.emit(id, {
+      event: "message",
+      data: { messageId: "still-subscribed" },
+    });
+    await readThrough("still-subscribed");
+    expect((text.match(/event: delta/g) ?? []).length).toBe(100);
+  }, 4000);
+
+  it("disconnects an overflowing stream and releases its subscription", async () => {
+    let context: AppContext | undefined;
+    const app = await appWithModel([], {
+      onReady: (value) => {
+        context = value;
+      },
+    });
+    const id = await createChatThread(app);
+    if (context === undefined) throw new Error("missing app context");
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const response = await fetch(`${base}/api/chat/threads/${id}/events`);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("missing SSE reader");
+    streams.push(reader);
+    await reader.read();
+    // Burst synchronously so the network cannot drain between emissions.
+    for (let i = 0; i < 1000; i++)
+      context.chat.bus.emit(id, {
+        event: "delta",
+        data: { messageId: "m", text: "x".repeat(2000) },
+      });
+    let bytes = 0;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.length;
+    }
+    expect(bytes).toBeLessThan(200000);
+    const releases = Array.from({ length: 8 }, () =>
+      context?.chat.bus.subscribe(id, () => {}),
+    );
+    for (const release of releases) release?.();
+  }, 4000);
+
+  it("closes a live stream when its thread is deleted", async () => {
+    const app = await appWithModel([]);
+    const id = await createChatThread(app);
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const response = await fetch(`${base}/api/chat/threads/${id}/events`);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("missing SSE reader");
+    streams.push(reader);
+    await reader.read();
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/chat/threads/${id}`,
+      headers: { origin: ORIGIN },
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(await reader.read()).toMatchObject({ done: true });
+  }, 4000);
+
+  it("rejects excess streams before SSE headers and releases disconnected slots", async () => {
+    const app = await appWithModel([]);
+    const id = await createChatThread(app);
+    const base = await app.listen({ port: 0, host: "127.0.0.1" });
+    const url = `${base}/api/chat/threads/${id}/events`;
+    const readers = [];
+    for (let i = 0; i < 8; i++) {
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      const reader = response.body?.getReader();
+      if (reader === undefined) throw new Error("missing SSE reader");
+      streams.push(reader);
+      readers.push(reader);
+      await reader.read();
+    }
+    const rejected = await fetch(url);
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("content-type")).toContain("application/json");
+    await readers[0]?.cancel();
+    await expect
+      .poll(async () => {
+        const response = await fetch(url);
+        if (response.status === 200) {
+          const reader = response.body?.getReader();
+          if (reader !== undefined) {
+            streams.push(reader);
+            await reader.read();
+          }
+        }
+        return response.status;
+      })
+      .toBe(200);
+  });
 
   it("validates input and rejects cross-origin mutations", async () => {
     const app = await appWithModel([]);

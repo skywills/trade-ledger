@@ -541,3 +541,152 @@ describe("chat cancellation reaches inference", () => {
     15_000,
   );
 });
+
+describe("chat admission recovery", () => {
+  it.each(["assistant", "running"])(
+    "rolls back failed %s persistence and admits exactly one retry",
+    async (stage) => {
+      const h = await harness([{ kind: "text", text: "recovered" }]);
+      const thread = await h.chat.createThread({ profileId: h.profile.id });
+      h.store.db.exec(
+        stage === "assistant"
+          ? "CREATE TRIGGER reject_accept BEFORE INSERT ON chat_messages WHEN NEW.role = 'assistant' BEGIN SELECT RAISE(ABORT, 'disk failure /private/journal'); END"
+          : "CREATE TRIGGER reject_accept BEFORE UPDATE OF status ON chat_threads WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'disk failure /private/journal'); END",
+      );
+      const input = { clientMessageId: "retry", text: "hello" };
+      await expect(h.chat.sendMessage(thread.id, input)).rejects.toThrow(
+        "disk failure",
+      );
+      expect(listMessages(h.store, thread.id)).toEqual([]);
+      expect(readThread(h.store, thread.id)).toMatchObject({
+        status: "idle",
+        nextSeq: 0,
+      });
+      h.store.db.exec("DROP TRIGGER reject_accept");
+      const attempts = await Promise.allSettled([
+        h.chat.sendMessage(thread.id, input),
+        h.chat.sendMessage(thread.id, input),
+      ]);
+      const accepted = attempts.find((r) => r.status === "fulfilled");
+      expect(accepted?.status).toBe("fulfilled");
+      await waitIdle(h.store, thread.id);
+      expect(listMessages(h.store, thread.id).map((m) => m.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      if (accepted?.status === "fulfilled")
+        expect(await h.chat.sendMessage(thread.id, input)).toEqual(
+          accepted.value,
+        );
+    },
+  );
+
+  it("clears replay and closes subscribers when a thread is deleted", async () => {
+    const h = await harness([]);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    h.chat.bus.emit(thread.id, {
+      event: "delta",
+      data: { messageId: "m", text: "private" },
+    });
+    await h.chat.deleteThread(thread.id);
+    const replay: ChatFrame[] = [];
+    h.chat.bus.subscribe(thread.id, (frame) => replay.push(frame));
+    expect(replay).toEqual([]);
+  });
+});
+
+describe("public chat failures", () => {
+  it("hides internal filesystem paths when opening a session fails", async () => {
+    const h = await harness([]);
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await mkdir(join(h.store.dataDir, "transcripts"), { recursive: true });
+    await writeFile(join(h.store.dataDir, "transcripts", "chat"), "blocked");
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    const frames: ChatFrame[] = [];
+    h.chat.bus.subscribe(thread.id, (f) => frames.push(f));
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "fail",
+      text: "hi",
+    });
+    await waitIdle(h.store, thread.id);
+    expect(frames.filter((f) => f.event === "error")).toEqual([
+      {
+        event: "error",
+        data: {
+          code: "SESSION_FAILED",
+          message: "The chat session could not be opened. Please try again.",
+        },
+      },
+    ]);
+    expect(JSON.stringify(frames)).not.toContain(h.store.dataDir);
+  });
+
+  it("hides storage error text in failed turns and persisted message errors", async () => {
+    const h = await harness([
+      { kind: "tool-call", toolName: "create_backup", arguments: {} },
+    ]);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    h.store.db.exec(
+      "CREATE TRIGGER reject_wait BEFORE UPDATE OF status ON chat_threads WHEN NEW.status = 'waiting' BEGIN SELECT RAISE(ABORT, 'storage /private/journal.sqlite unavailable'); END",
+    );
+    const frames: ChatFrame[] = [];
+    h.chat.bus.subscribe(thread.id, (f) => frames.push(f));
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "fail",
+      text: "hi",
+    });
+    await waitIdle(h.store, thread.id);
+    expect(frames.filter((f) => f.event === "error")).toEqual([
+      {
+        event: "error",
+        data: {
+          code: "TURN_FAILED",
+          message: "The reply could not be completed. Please try again.",
+        },
+      },
+    ]);
+    expect(JSON.stringify(listMessages(h.store, thread.id))).not.toContain(
+      "/private",
+    );
+  });
+});
+
+describe("public chat tool failures", () => {
+  it("hides unexpected tool errors from inference, SSE, and persisted tools", async () => {
+    const h = await harness([
+      { kind: "tool-call", toolName: "create_backup", arguments: {} },
+      { kind: "text", text: "Could not create backup." },
+    ]);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    h.store.db.exec(
+      "CREATE TRIGGER reject_backup BEFORE INSERT ON jobs WHEN NEW.kind = 'backup' BEGIN SELECT RAISE(ABORT, 'storage /private/journal.sqlite unavailable'); END",
+    );
+    const frames: ChatFrame[] = [];
+    h.chat.bus.subscribe(thread.id, (frame) => {
+      frames.push(frame);
+      if (frame.event === "approval")
+        h.chat.answer(thread.id, frame.data.requestId, { decision: "allow" });
+    });
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "tool-fail",
+      text: "Create a backup",
+    });
+    await waitIdle(h.store, thread.id);
+    const toolError = frames.find((f) => f.event === "tool" && f.data.isError);
+    expect(toolError).toMatchObject({
+      data: {
+        error: "TOOL_FAILED: The tool could not complete. Please try again.",
+      },
+    });
+    const requests = JSON.stringify(h.inference.receivedRequests());
+    expect(requests).toContain(
+      "TOOL_FAILED: The tool could not complete. Please try again.",
+    );
+    expect(requests).not.toContain("/private");
+    expect(JSON.stringify(frames)).not.toContain("/private");
+    expect(JSON.stringify(listMessages(h.store, thread.id))).not.toContain(
+      "/private",
+    );
+  });
+});

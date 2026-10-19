@@ -18,11 +18,12 @@ import type { BuildScheduler } from "../builds/service.js";
 import type { JobService } from "../jobs/service.js";
 import type { Store } from "../storage/database.js";
 import { TurnAccumulator } from "./accumulator.js";
+import { publicChatError } from "./errors.js";
 import { ThreadEventBus } from "./frames.js";
 import { buildInstructions } from "./instructions.js";
 import {
   type Attachment,
-  appendMessage,
+  acceptTurn,
   type ChatThread,
   createThread,
   findMessageByClientId,
@@ -224,36 +225,32 @@ export class ChatService {
   }> {
     const { store } = this.deps;
     const attachments = input.attachments ?? [];
-    const user = await appendMessage(store, thread.id, {
-      role: "user",
-      content: input.text,
-      attachments,
-      status: "complete",
-      clientMessageId: input.clientMessageId,
-      now: this.now(),
-    });
-    const assistant = await appendMessage(store, thread.id, {
-      role: "assistant",
-      content: "",
-      attachments: [],
-      status: "streaming",
-      clientMessageId: null,
-      now: this.now(),
-    });
     const title = thread.nextSeq === 0 ? input.text.slice(0, 60) : undefined;
-    const running = await updateThread(store, thread.id, {
-      status: "running",
-      ...(title === undefined ? {} : { title }),
-      now: this.now(),
-    });
+    const { userId, assistantId, running } = await acceptTurn(
+      store,
+      thread.id,
+      {
+        role: "user",
+        content: input.text,
+        attachments,
+        status: "complete",
+        clientMessageId: input.clientMessageId,
+        now: this.now(),
+      },
+      {
+        status: "running",
+        ...(title === undefined ? {} : { title }),
+        now: this.now(),
+      },
+    );
     this.bus.resetReplay(thread.id);
     this.bus.emit(thread.id, {
       event: "thread",
       data: { status: "running", usage: running.usage, cost: running.cost },
     });
     return {
-      userId: user.id,
-      assistantId: assistant.id,
+      userId,
+      assistantId,
       running,
       prompt: this.prompt(input.text, attachments),
     };
@@ -302,6 +299,7 @@ export class ChatService {
       );
     await this.closeLive(threadId);
     await removeThread(this.deps.store, threadId);
+    this.bus.clear(threadId);
     await this.removeTranscripts(thread.sessionId);
   }
 
@@ -489,14 +487,7 @@ export class ChatService {
     assistantMessageId: Id,
     error: unknown,
   ): Promise<void> {
-    const code = (error as { code?: unknown } | null)?.code;
-    const message = error instanceof Error ? error.message : String(error);
-    const reason =
-      code === "AGENT_SESSION_MODEL_MISMATCH"
-        ? "THREAD_MODEL_CHANGED"
-        : typeof code === "string"
-          ? code
-          : "SESSION_FAILED";
+    const { code: reason, message } = publicChatError(error, "SESSION_FAILED");
     await updateMessage(this.deps.store, assistantMessageId, {
       status: "failed",
       error: reason,
