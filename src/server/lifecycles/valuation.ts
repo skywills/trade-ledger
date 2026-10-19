@@ -1,30 +1,15 @@
 import { Decimal } from "decimal.js";
-import type { Execution, LedgerSnapshot } from "../../shared/domain.js";
+import type { LedgerSnapshot } from "../../shared/domain.js";
 import type {
   LifecycleProjection,
   LifecycleValuation,
   ValuationSnapshot,
 } from "../../shared/lifecycles.js";
-import { normalizeTimestamp } from "../imports/normalization.js";
+import { latestExecutionBound } from "../ledger/chronology.js";
 import { brokerRealized } from "./accounting.js";
 
-/** Latest possible instant without interpreting an unzoned timestamp in the host zone. */
-export function latestExecutionBound(execution: Execution): number {
-  const raw = execution.rawDateTime.trim();
-  if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(raw))
-    return Date.parse(raw.replace(" ", "T"));
-  const wall = normalizeTimestamp(raw);
-  if (wall.status !== "ok") return Number.NaN;
-  const utc = ["UTC", "Etc/UTC", "GMT"].includes(execution.timezone ?? "");
-  const local = Date.parse(
-    wall.timestamp.includes("T")
-      ? `${wall.timestamp}Z`
-      : `${wall.date}T23:59:59.999Z`,
-  );
-  // Legal source zones fit within +/-14 hours. For any other/unknown zone,
-  // the retained wall clock must be older than even its latest possible UTC instant.
-  return local + (utc ? 0 : 14 * 60 * 60 * 1000);
-}
+export { latestExecutionBound } from "../ledger/chronology.js";
+
 export function valueLifecycles(
   ledger: LedgerSnapshot,
   p: LifecycleProjection,
