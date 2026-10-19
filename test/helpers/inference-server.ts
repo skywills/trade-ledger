@@ -29,6 +29,8 @@ export interface InferencePlanStep {
   readonly text?: string;
   /** Provider-visible thinking, delivered before the answer. */
   readonly thinking?: string;
+  readonly thinkingChunks?: readonly string[];
+  readonly thinkingChunkGate?: (index: number) => Promise<void>;
   /** Separate chunks to test rendering before turn completion. */
   readonly textChunks?: readonly string[];
   /** Pause a scripted reply until the test is ready to observe it. */
@@ -231,8 +233,11 @@ export async function startInferenceServer(
 
       if (planStep !== undefined) {
         await planStep.beforeReply?.();
-        if (planStep.thinking !== undefined) {
-          sendChunk({ reasoning_content: planStep.thinking });
+        let thinkingIndex = 0;
+        for (const thinking of planStep.thinkingChunks ??
+          (planStep.thinking === undefined ? [] : [planStep.thinking])) {
+          sendChunk({ reasoning_content: thinking });
+          await planStep.thinkingChunkGate?.(thinkingIndex++);
         }
         if (planStep.kind === "tool-call") {
           sendChunk({
