@@ -118,6 +118,8 @@ test("proposal actions work after the evidence watermark has advanced", async ({
     expect(readRun(store, runId)?.evidence.watermark).toBe(0);
     expect(readRun(store, runId)?.acceptedDecisionIds).toHaveLength(3);
   } finally {
+    // Stop new proxy requests and finish active handlers before closing their origin.
+    await page.unrouteAll({ behavior: "wait" });
     await app.close();
     await fixture.dispose();
   }
