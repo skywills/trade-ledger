@@ -267,9 +267,69 @@ Run on the final branch head:
 ### Still open
 
 - **R14–R24:** low findings, unchanged. R13 is resolved by the build-job lifecycle follow-up below.
-- **Tests and CI:** coverage reporting, `test:build-smoke` in CI, `WriterQueue` tests, and the flaky-wait cleanup are not yet done.
+- **Tests and CI:** coverage reporting, compiled-server smoke in CI, direct `WriterQueue` tests, the identified chat/browser fixed-wait cleanup, and isolation between browser spec files are implemented in the reliability follow-up. The 80% whole-source coverage target and the other module-specific test gaps remain open.
 - **R09 import UI:** showing endpoints before a model-configuration import is confirmed is not yet done (frontend).
-- **R04 and R05:** still worth confirming against a real IBKR Flex export.
+- **R04:** validated with controlled overlapping copies of the retained export; confirmation with two independently generated overlapping exports, including `TradeID`, remains open. **R05:** confirmed against the retained export. See [Real-data validation](#real-data-validation--2026-10-19).
+
+
+## Real-data validation — 2026-10-19
+
+Validated the locally retained `2023.csv` source from the sibling runtime data directory against the current production import, normalization, identity, grouping and strategy-accounting code. The source contains 31 executions (4 stock, 27 option), with 19 opens and 12 closes. No account identifiers, broker identifiers, symbols or monetary amounts are reproduced here. All imports and ledger generations used disposable temporary databases, which were removed afterward; the live journal was not changed.
+
+### R05 — confirmed for this export
+
+- All 31 executions have a nonzero `CostBasis`, including all 12 ordinary closing trades. Normalization classifies all 31 as `trade`, rather than assignment, exercise or unsupported events.
+- The import has no quarantined rows, identity conflicts or ledger issues. Grouping produces 8 complete closed strategies and 7 open strategies.
+- All 8 complete closed strategies have reconstructed P&L equal to their allocated net cashflow. Accounting and projection validation report no issues.
+- As a control, repeating the import with `CostBasis` removed from every row produces identical strategy status, completeness, opening amount, cashflow, broker P&L and reconstructed P&L.
+
+This confirms that populated cost basis does not itself indicate a basis transfer, and that the R05 fix preserves reconstructed P&L for this export. The source has no assignment or exercise examples, so those cases remain covered by the existing synthetic regression tests.
+
+### R04 — controlled overlap checks passed; independent exports still needed
+
+Only one retained source export was available. Derived copies were used to exercise three changes independently: upload timezone (`America/New_York` versus unspecified), decimal formatting, and omitted `CostBasis`/`FifoPnlRealized`/`Proceeds`. Each pair was imported in both orders into fresh temporary storage. The CSV bytes differed, ensuring file-hash deduplication did not bypass execution identity resolution.
+
+All six runs retained exactly 31 executions, with zero identity conflicts, two source references per execution, and the original financial values preserved, including broker amounts available in only one copy.
+
+The export has `IBExecID` on every row and no `TradeID` column. These results validate the execution-ID identity path using actual source rows and controlled transformations; they do not establish which fields IBKR changes between independently generated exports or validate a real `TradeID` overlap. Full R04 real-data validation still requires two independently generated, overlapping Flex exports, preferably with `TradeID` included.
+
+### Verification
+
+- Disposable real-data harness: baseline, six overlap scenarios, and the cost-basis removal control passed.
+- `npx vitest run test/integration/identity-fingerprint.test.ts test/unit/accounting.test.ts`: 28 tests passed across 2 files.
+- No production code or private source data was added to the repository.
+
+
+## Reliability follow-up — 2026-10-19
+
+Implemented after the real-data validation above; included with the R13 follow-up PR.
+
+### Test infrastructure
+
+- Added six direct `WriterQueue` tests for serialized ordering, continuation after thrown/rejected work, drain semantics and close behavior. No queue production changes were needed.
+- Added pinned V8 coverage tooling, a `test:coverage` script and whole-source HTML/LCOV/JSON summary reports, including unimported source. CI publishes coverage artifacts and runs the compiled-server migration smoke before browser acceptance.
+- Browser specs use separate app processes, temporary journals and dynamic loopback ports, with two workers. The journal spec retains its explicit within-file serial scenario; other files no longer depend on its state or alphabetical ordering. The normal browser command builds first; CI reuses its verified build through `E2E_SKIP_BUILD=1`.
+- Chat tests observe persisted approval state and delayed inference-handler completion instead of arbitrary settle sleeps. The SSE shutdown test awaits actual shutdown with bounded test timeout and failure-safe stream cleanup.
+- Browser loading and stale-response checks use request gates. The stale-response test explicitly lets the earlier request complete after changing scope, so it exercises rejection of late results.
+- The existing 1,500-row conservation correctness test has an explicit 20-second budget for instrumentation overhead; its fixture and assertions are unchanged. Biome ignores preexisting local `.claude` worktrees when scanning nested configurations.
+
+### Verification and remaining coverage
+
+| Check | Result |
+|---|---|
+| Lint and typecheck | Passed; existing 4 warnings and 26 infos unchanged |
+| Unit/integration suite | 678 / 678 passed across 62 files |
+| Coverage suite | 678 / 678 passed |
+| Build and compiled-server smoke | Passed |
+| Docker smoke | Passed: non-root UID, readiness, import, model profile and restart persistence |
+| Playwright | 72 / 72 passed with 2 workers |
+| Whole-source line coverage | 70.92% |
+| Server line coverage | 89.15% |
+| Web line coverage | 14.89% |
+| WriterQueue coverage | 100% lines, statements, branches and functions |
+
+The 80% whole-source target is still open. Browser execution is not included in the V8 unit/integration coverage report; no lower replacement threshold was introduced. Other module-specific test gaps listed in the original review remain follow-up work. Docker packaging was unchanged; its smoke check was rerun locally and passed for this follow-up.
+
 
 ## Chronology and grouping refactor — 2026-10-19
 

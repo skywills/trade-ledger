@@ -365,11 +365,12 @@ describe("write tools need the user's approval", () => {
     );
     await chat.sendMessage(thread.id, { clientMessageId: "c", text: "backup" });
     const requestId = await seen;
-    await new Promise((r) => setTimeout(r, 50));
-    expect(readThread(t.store, thread.id)).toMatchObject({
-      status: "waiting",
-      pending: { kind: "approval", requestId, text: "Create a backup" },
-    });
+    await expect
+      .poll(() => readThread(t.store, thread.id))
+      .toMatchObject({
+        status: "waiting",
+        pending: { kind: "approval", requestId, text: "Create a backup" },
+      });
     chat.answer(thread.id, requestId, { decision: "deny" });
     await waitIdle(t.store, thread.id);
   });
@@ -532,8 +533,9 @@ describe("chat cancellation reaches inference", () => {
       await expect
         .poll(() => h.inference.interruptedRequests(), { timeout: 1000 })
         .toBe(1);
-      // Let the original response delay expire: no tool round may follow it.
-      await new Promise((resolve) => setTimeout(resolve, 2700));
+      // The delayed handler must finish, even after disconnect, before checking
+      // that its tool call cannot start another round.
+      await h.inference.waitForIdle();
       expect(h.inference.receivedRequests()).toHaveLength(baseline + 1);
     },
     15_000,

@@ -76,6 +76,8 @@ export interface InferenceServer {
   readonly url: string;
   receivedRequests(): readonly RecordedInferenceRequest[];
   interruptedRequests(): number;
+  /** Wait for all current handlers, including delayed disconnected responses. */
+  waitForIdle(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -111,12 +113,13 @@ export async function startInferenceServer(
   const toolName = options.toolName ?? "journal_probe";
   let planIndex = 0;
   let interrupted = 0;
+  const handlers = new Set<Promise<void>>();
 
   const server = createServer((request, response) => {
     response.once("close", () => {
       if (!response.writableFinished) interrupted += 1;
     });
-    void (async () => {
+    const handler = (async () => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -300,6 +303,8 @@ export async function startInferenceServer(
       if (!response.headersSent) response.writeHead(500);
       response.end();
     });
+    handlers.add(handler);
+    void handler.finally(() => handlers.delete(handler));
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -318,6 +323,9 @@ export async function startInferenceServer(
     url: `${origin}/v1`,
     receivedRequests: () => requests,
     interruptedRequests: () => interrupted,
+    waitForIdle: async () => {
+      while (handlers.size > 0) await Promise.all(handlers);
+    },
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

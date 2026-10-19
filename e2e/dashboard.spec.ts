@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "playwright/test";
+import { expect, test, type Page } from "./fixtures.js";
+import { createGate } from "./gate.js";
 import { aggregateAnalytics } from "../src/server/analytics/aggregate.js";
 import { performanceFixture } from "../test/fixtures/analytics.js";
 const data = aggregateAnalytics(performanceFixture(), {
@@ -84,6 +85,26 @@ test("retries failures and ignores late results from an earlier scope", async ({
   page,
 }) => {
   let failed = true;
+  const brokerRequested = createGate();
+  const releaseBroker = createGate();
+  // Model an earlier response that cannot be cancelled once it is in flight.
+  // The stale-result guard must still protect the newly selected scope.
+  await page.addInitScript(() => {
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = new URL(
+        input instanceof Request ? input.url : String(input),
+        window.location.href,
+      );
+      if (
+        url.pathname === "/api/analytics" &&
+        url.searchParams.get("basis") === "broker"
+      ) {
+        return fetch(input, { ...init, signal: null });
+      }
+      return fetch(input, init);
+    };
+  });
   await page.route("**/api/analytics*", async (route) => {
     const url = new URL(route.request().url());
     if (failed) {
@@ -94,7 +115,8 @@ test("retries failures and ignores late results from an earlier scope", async ({
       return;
     }
     if (url.searchParams.get("basis") === "broker") {
-      await new Promise((r) => setTimeout(r, 350));
+      brokerRequested.open();
+      await releaseBroker.wait;
       await route.fulfill({ json: data });
     } else {
       await route.fulfill({
@@ -111,19 +133,35 @@ test("retries failures and ignores late results from an earlier scope", async ({
     page.getByText("Analytics temporarily unavailable"),
   ).toBeVisible();
   failed = false;
-  await page.getByRole("button", { name: /Retry/i }).click();
-  await page.getByLabel("P&L basis").selectOption("reconstructed");
-  await expect(
-    page.getByText("1 / 679 closed strategy components with reconstructed P&L", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await page.waitForTimeout(450);
-  await expect(
-    page.getByText("1 / 679 closed strategy components with reconstructed P&L", {
-      exact: false,
-    }),
-  ).toBeVisible();
+  try {
+    await page.getByRole("button", { name: /Retry/i }).click();
+    await brokerRequested.wait;
+    await page.getByLabel("P&L basis").selectOption("reconstructed");
+    const currentResult = page.getByText(
+      "1 / 679 closed strategy components with reconstructed P&L",
+      { exact: false },
+    );
+    await expect(currentResult).toBeVisible();
+    const staleResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === "/api/analytics" &&
+        url.searchParams.get("basis") === "broker"
+      );
+    });
+    releaseBroker.open();
+    expect(await (await staleResponse).finished()).toBeNull();
+    // Let the completed response's JSON continuation and React commit run
+    // before checking that the earlier scope did not overwrite the current one.
+    await page.evaluate(
+      () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+    );
+    await expect(currentResult).toBeVisible();
+  } finally {
+    releaseBroker.open();
+  }
 });
 test("Overview shows metrics, exact chart tables and strategy links", async ({
   page,
@@ -355,88 +393,79 @@ test("CSV download uses the current scope and exposes failures", async ({
   );
 });
 test("real imports feed full-dataset analytics and repeated imports stay idempotent", async ({
-  browser,
+  page,
 }) => {
-  const { startDashboardServer } = await import("./dashboard-server.js");
-  const server = await startDashboardServer();
-  const context = await browser.newContext({ baseURL: server.origin });
-  const page = await context.newPage();
-  try {
-    const { buildExecutionTable, executionRow } = await import(
-      "../test/fixtures/scenarios.js"
+  const { buildExecutionTable, executionRow } = await import(
+    "../test/fixtures/scenarios.js"
+  );
+  const rows = Array.from({ length: 150 }, (_, i) =>
+    [false, true].map((close) =>
+      executionRow({
+        ClientAccountID: `DASH-E2E-${i}`,
+        AssetClass: "STK",
+        Symbol: "DASH-E2E",
+        UnderlyingSymbol: "DASH-E2E",
+        Conid: "990000",
+        CurrencyPrimary: "USD",
+        TradeDate: close ? "2026-09-20" : "2026-09-01",
+        DateTime: close ? "2026-09-20 12:00:00" : "2026-09-01 12:00:00",
+        Quantity: close ? "-1" : "1",
+        TradePrice: close ? "11" : "10",
+        NetCash: close ? "11" : "-10",
+        FifoPnlRealized: close ? "1" : "0",
+        IBCommission: "0",
+        "Notes/Codes": close ? "C" : "O",
+        TradeID: `DASH-${i}-${close}`,
+        IBExecID: `DASH-EXEC-${i}-${close}`,
+        IBOrderID: `DASH-ORDER-${i}-${close}`,
+        Multiplier: "1",
+      }),
+    ),
+  ).flat();
+  const file = {
+    name: "dashboard-synthetic.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(buildExecutionTable(rows)),
+  };
+  async function upload() {
+    await page.goto("/imports");
+    await page.getByLabel("CSV files").setInputFiles(file);
+    await page.getByRole("button", { name: "Confirm import" }).click();
+    await expect(page.getByTestId("import-result")).toContainText(
+      /complete|duplicate/i,
+      { timeout: 30000 },
     );
-    const rows = Array.from({ length: 150 }, (_, i) =>
-      [false, true].map((close) =>
-        executionRow({
-          ClientAccountID: `DASH-E2E-${i}`,
-          AssetClass: "STK",
-          Symbol: "DASH-E2E",
-          UnderlyingSymbol: "DASH-E2E",
-          Conid: "990000",
-          CurrencyPrimary: "USD",
-          TradeDate: close ? "2026-09-20" : "2026-09-01",
-          DateTime: close ? "2026-09-20 12:00:00" : "2026-09-01 12:00:00",
-          Quantity: close ? "-1" : "1",
-          TradePrice: close ? "11" : "10",
-          NetCash: close ? "11" : "-10",
-          FifoPnlRealized: close ? "1" : "0",
-          IBCommission: "0",
-          "Notes/Codes": close ? "C" : "O",
-          TradeID: `DASH-${i}-${close}`,
-          IBExecID: `DASH-EXEC-${i}-${close}`,
-          IBOrderID: `DASH-ORDER-${i}-${close}`,
-          Multiplier: "1",
-        }),
-      ),
-    ).flat();
-    const file = {
-      name: "dashboard-synthetic.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from(buildExecutionTable(rows)),
-    };
-    async function upload() {
-      await page.goto("/imports");
-      await page.getByLabel("CSV files").setInputFiles(file);
-      await page.getByRole("button", { name: "Confirm import" }).click();
-      await expect(page.getByTestId("import-result")).toContainText(
-        /complete|duplicate/i,
-        { timeout: 30000 },
-      );
-    }
-    await upload();
-    await page.goto(
-      "/dashboard/analysis?currency=USD&preset=all&symbol=DASH-E2E",
-    );
-    await expect(page.getByTestId("metric-pnl")).toContainText("150.00");
-    await expect(page.getByTestId("metric-closed")).toContainText("150");
-    await page.getByTestId("metric-closed").click();
-    await expect(page.getByText("Page 1 of 6", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Next page", exact: true }).click();
-    await expect(page.getByText("Page 2 of 6", { exact: true })).toBeVisible();
-    const res = await page.request.get(
-      "/api/analytics?currency=USD&symbol=DASH-E2E",
-    );
-    expect((await res.json()).transactions.executions).toBe(300);
-    await upload();
-    const after = await page.request.get(
-      "/api/analytics?currency=USD&symbol=DASH-E2E",
-    );
-    expect((await after.json()).transactions.executions).toBe(300);
-    await page.goto(
-      "/dashboard/analysis?currency=USD&symbol=DASH-E2E&section=transactions",
-    );
-    await expect(
-      page.getByRole("table", { name: "Transaction details" }),
-    ).toContainText("DASH-E2E");
-    await page
-      .getByRole("link", { name: "View source", exact: true })
-      .first()
-      .click();
-    await expect(page).toHaveURL(/\/imports\?import=.*&row=/);
-  } finally {
-    await context.close();
-    await server.close();
   }
+  await upload();
+  await page.goto(
+    "/dashboard/analysis?currency=USD&preset=all&symbol=DASH-E2E",
+  );
+  await expect(page.getByTestId("metric-pnl")).toContainText("150.00");
+  await expect(page.getByTestId("metric-closed")).toContainText("150");
+  await page.getByTestId("metric-closed").click();
+  await expect(page.getByText("Page 1 of 6", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  await expect(page.getByText("Page 2 of 6", { exact: true })).toBeVisible();
+  const res = await page.request.get(
+    "/api/analytics?currency=USD&symbol=DASH-E2E",
+  );
+  expect((await res.json()).transactions.executions).toBe(300);
+  await upload();
+  const after = await page.request.get(
+    "/api/analytics?currency=USD&symbol=DASH-E2E",
+  );
+  expect((await after.json()).transactions.executions).toBe(300);
+  await page.goto(
+    "/dashboard/analysis?currency=USD&symbol=DASH-E2E&section=transactions",
+  );
+  await expect(
+    page.getByRole("table", { name: "Transaction details" }),
+  ).toContainText("DASH-E2E");
+  await page
+    .getByRole("link", { name: "View source", exact: true })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/imports\?import=.*&row=/);
 });
 test("themes, keyboard controls and responsive layouts remain readable", async ({
   page,
