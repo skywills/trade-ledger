@@ -31,6 +31,7 @@ FROM node:22.19.0-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     DATA_DIR=/data \
+    HOST=0.0.0.0 \
     PORT=3000 \
     ALLOWED_ORIGIN=http://localhost:3000 \
     UPLOAD_LIMIT_BYTES=20971520

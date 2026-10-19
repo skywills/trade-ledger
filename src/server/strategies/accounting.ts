@@ -97,11 +97,14 @@ function executionsOf(
   return result;
 }
 
-/** A basis transfer or unmodeled corporate action makes cashflow an estimate. */
+/**
+ * A basis transfer (assignment or exercise) or an unmodeled corporate action
+ * makes cashflow an estimate. A reported CostBasis alone is not one: IBKR
+ * fills it on ordinary opening and closing trades as well.
+ */
 function hasBasisTransfer(executions: readonly Execution[]): boolean {
   return executions.some(
     (execution) =>
-      execution.basis !== null ||
       execution.event === "assignment" ||
       execution.event === "exercise" ||
       execution.event === "unsupported",

@@ -28,7 +28,7 @@ it("keeps an older applicable snapshot when newer marks concern an unrelated hol
   });
 });
 
-it("does not combine incomplete applicable snapshots across timestamps", () => {
+it("values from the newest snapshot that marks every open position", () => {
   const f = assigned();
   const p = accountLifecycles(
     f.ledger,
@@ -52,10 +52,34 @@ it("does not combine incomplete applicable snapshots across timestamps", () => {
     asOf: "2026-10-04T12:00:00Z",
     marks: [{ instrumentKey: "stock", price: "96" }],
   };
+  // Marks are never combined across timestamps: the newer partial snapshot's
+  // stock price is not used with the older snapshot's put price.
   expect(valueLifecycles(f.ledger, p, [complete, partial])[0]).toMatchObject({
+    asOf: complete.asOf,
+    totalPnl: "-200",
+    reasons: [],
+  });
+  expect(valueLifecycles(f.ledger, p, [partial])[0]).toMatchObject({
     asOf: partial.asOf,
     totalPnl: null,
     reasons: ["VALUATION_MARKS_INCOMPLETE"],
+  });
+});
+
+it("reports a closed lifecycle's unrealized P&L as the spec residual to broker-realized", () => {
+  const f = assigned(true);
+  const p = accountLifecycles(
+    f.ledger,
+    f.projection,
+    projectLifecycles(f.ledger, f.projection, []),
+  );
+  const cycle = p.lifecycles[0];
+  expect(cycle?.status).toBe("closed");
+  expect(cycle?.reconstructedPnl).toBe("-150");
+  expect(valueLifecycles(f.ledger, p, [])[0]).toMatchObject({
+    totalPnl: "-150",
+    realizedBrokerPnl: "0",
+    unrealizedPnl: "-150",
   });
 });
 

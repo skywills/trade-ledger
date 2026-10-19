@@ -40,7 +40,8 @@ try {
   }
 
   try {
-    await app.listen({ host: "0.0.0.0", port: config.port });
+    // Loopback unless HOST widens it; the container image sets HOST=0.0.0.0.
+    await app.listen({ host: config.host, port: config.port });
   } catch (error) {
     app.log.error(error);
     await graceful();

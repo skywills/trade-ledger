@@ -39,6 +39,7 @@ import {
   activateIfCurrent,
   failInterruptedBuilds,
   insertCandidate,
+  isRestorable,
   loadProjection,
   markBuildStatus,
   persistProjection,
@@ -301,7 +302,51 @@ export async function rebuild(
     now: now().toISOString(),
   });
 
-  const projection = await computeProjection(store, ledger, snapshot.watermark);
+  try {
+    return await completeCandidate(store, buildId, ledger, snapshot.watermark, {
+      input,
+      options,
+      now,
+    });
+  } catch (error) {
+    // A candidate must never stay "running" after its build gave up: record
+    // why it failed so it is retained as diagnostics and never restorable.
+    // The original error is always the one surfaced; if this write fails too,
+    // startup recovery still fails the candidate.
+    await markBuildStatus(
+      store,
+      buildId,
+      "failed",
+      [buildFailureIssue(error)],
+      now().toISOString(),
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+function buildFailureIssue(error: unknown): Issue {
+  const code = error instanceof AppError ? error.code : "BUILD_FAILED";
+  return { key: `build:${code}`, code, sources: [], severity: "error" };
+}
+
+interface CandidateContext {
+  input: RebuildInput;
+  options: BuildServiceOptions;
+  now: () => Date;
+}
+
+/**
+ * Computes, persists, validates and (when valid and current) activates an
+ * inserted candidate. Every return leaves the candidate in a terminal status.
+ */
+async function completeCandidate(
+  store: Store,
+  buildId: Id,
+  ledger: LedgerSnapshot,
+  watermark: number,
+  { input, options, now }: CandidateContext,
+): Promise<BuildResult> {
+  const projection = await computeProjection(store, ledger, watermark);
   await persistProjection(
     store,
     buildId,
@@ -401,9 +446,10 @@ export function activeLedgerSnapshot(store: Store): LedgerSnapshot | null {
 }
 
 /**
- * Switches the active pointer to a retained successful generation. Failed or
- * cancelled candidates cannot be restored. A generation whose inputs no longer
- * match is marked stale; raw imports, decisions, and identities are untouched.
+ * Switches the active pointer to a retained successful generation. Only an
+ * active or stale build can be restored; running, failed and cancelled
+ * candidates cannot. A generation whose inputs no longer match is marked
+ * stale; raw imports, decisions, and identities are untouched.
  */
 export async function rollbackBuild(store: Store, buildId: Id): Promise<void> {
   const build = readBuild(store.db, buildId);
@@ -414,7 +460,7 @@ export async function rollbackBuild(store: Store, buildId: Id): Promise<void> {
       404,
     );
   }
-  if (build.status === "failed" || build.status === "cancelled") {
+  if (!isRestorable(build.status)) {
     throw new AppError(
       "BUILD_NOT_ROLLBACKABLE",
       `Build ${buildId} is ${build.status} and cannot be restored.`,

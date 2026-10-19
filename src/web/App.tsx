@@ -21,6 +21,10 @@ function NotFound() {
   );
 }
 
+/**
+ * Detail routes are keyed by their id so navigating from one entity to another
+ * remounts the view instead of carrying over its local form state.
+ */
 function renderRoute(pathname: string) {
   const segments = pathname.split("/").filter((segment) => segment !== "");
   const first = segments[0];
@@ -38,9 +42,17 @@ function renderRoute(pathname: string) {
         <NotFound />
       );
     case "lifecycles":
-      return second ? <LifecycleDetail id={second} /> : <LifecyclesPage />;
+      return second ? (
+        <LifecycleDetail key={second} id={second} />
+      ) : (
+        <LifecyclesPage />
+      );
     case "campaigns":
-      return second ? <CampaignDetail id={second} /> : <NotFound />;
+      return second ? (
+        <CampaignDetail key={second} id={second} />
+      ) : (
+        <NotFound />
+      );
     case "journal":
       return <JournalPage />;
     case "imports":
@@ -57,7 +69,7 @@ function renderRoute(pathname: string) {
       return second === undefined ? (
         <NotFound />
       ) : (
-        <StrategyDetail id={second} />
+        <StrategyDetail key={second} id={second} />
       );
     default:
       return <NotFound />;

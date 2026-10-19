@@ -12,6 +12,9 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       DATA_DIR: /data
+      # Bind every container interface so the loopback-only port mapping above
+      # can reach the app; the host side still listens on 127.0.0.1 only.
+      HOST: 0.0.0.0
       PORT: "3000"
       ALLOWED_ORIGIN: http://localhost:3000
       UPLOAD_LIMIT_BYTES: "20971520"

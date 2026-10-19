@@ -8,7 +8,11 @@ import {
   LOCAL_PLACEHOLDER_API_KEY,
   type SecretResolver,
 } from "./credentials.js";
-import type { LlmProfileSnapshot, ProfileMode } from "./profiles.js";
+import {
+  type LlmProfileSnapshot,
+  type ProfileMode,
+  requireSecureCloudEndpoint,
+} from "./profiles.js";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -320,6 +324,9 @@ export async function openModelConnection(
   profile: LlmProfileSnapshot,
   secrets: SecretResolver,
 ): Promise<ModelConnection> {
+  // Re-checked here, not only on save: a cloud profile stored before the https
+  // rule must never send its bearer credential in cleartext.
+  if (profile.mode === "cloud") requireSecureCloudEndpoint(profile.endpoint);
   const gateway = await startGateway({
     upstream: profile.endpoint,
     protocol: profile.protocol,

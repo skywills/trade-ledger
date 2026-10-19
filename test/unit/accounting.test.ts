@@ -277,6 +277,7 @@ describe("accountProjection", () => {
       quantity: "-1",
       netCash: "1000",
       action: "close",
+      event: "assignment",
       basis: "500",
     });
     const accounted = accountProjection(
@@ -304,6 +305,50 @@ describe("accountProjection", () => {
 
     expect(accounted.strategies[0]?.cashflow).toBe("0");
     expect(accounted.strategies[0]?.reconstructedPnl).toBeNull();
+  });
+
+  it("reconstructs P/L for ordinary trades that report a cost basis", () => {
+    // IBKR Flex fills CostBasis on ordinary opening and closing trades too.
+    const open = execution({
+      key: "exec:imp:1",
+      quantity: "+1",
+      netCash: "-1000",
+      basis: "1000",
+    });
+    const close = execution({
+      key: "exec:imp:2",
+      quantity: "-1",
+      netCash: "1010",
+      action: "close",
+      basis: "-1000",
+      brokerPnl: "10",
+    });
+    const accounted = accountProjection(
+      ledger([open, close]),
+      projection(
+        [strategy({ id: "s1", status: "closed", complete: true })],
+        [
+          allocation({
+            strategyId: "s1",
+            executionKey: open.key,
+            quantity: "1",
+            netCash: "-1000",
+            role: "open",
+          }),
+          allocation({
+            strategyId: "s1",
+            executionKey: close.key,
+            quantity: "-1",
+            netCash: "1010",
+            brokerPnl: "10",
+            role: "close",
+          }),
+        ],
+      ),
+    );
+
+    expect(accounted.strategies[0]?.reconstructedPnl).toBe("10");
+    expect(accounted.strategies[0]?.brokerPnl).toBe("10");
   });
 
   it("suppresses reconstructed P/L when ledger evidence is quarantined", () => {

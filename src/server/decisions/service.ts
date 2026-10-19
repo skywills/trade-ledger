@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Id, SourceRef } from "../../shared/domain.js";
+import { Decimal } from "decimal.js";
+import type { Id, LedgerSnapshot, SourceRef } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { loadProjection, readActiveBuild } from "../builds/repository.js";
 import { retainedNormalizationInputsChanged } from "../builds/snapshot.js";
@@ -8,6 +9,7 @@ import { readLifecycleAnchors } from "../lifecycles/repository.js";
 import { validateLifecycleDecision } from "../lifecycles/validate-decision.js";
 import { type Store, write } from "../storage/database.js";
 import { loadLedgerSnapshot } from "../storage/ledger.js";
+import { validateProjection } from "../strategies/accounting.js";
 import { groupStrategies } from "../strategies/grouping.js";
 import { findStrategyId, strategyAnchorKey } from "./registry.js";
 import {
@@ -298,6 +300,96 @@ function validateAllocationsAgainstExistingDecisions(
   return { ok: true };
 }
 
+/** Build-time conservation codes, most specific first. */
+const CONSERVATION_CODES = [
+  "ALLOCATION_OVERFLOW",
+  "ALLOCATION_SIGN_MISMATCH",
+  "ALLOCATION_CASH_MISMATCH",
+];
+
+function conservationIssueKeys(
+  ledger: LedgerSnapshot,
+  decisions: readonly Decision[],
+  resolveId: (account: string, openingKeys: string[]) => Id,
+): Map<string, string> {
+  const issues = validateProjection(
+    ledger,
+    groupStrategies(ledger, decisions, resolveId),
+  );
+  return new Map(
+    issues
+      .filter((issue) => CONSERVATION_CODES.includes(issue.code))
+      .map((issue) => [issue.key, issue.code]),
+  );
+}
+
+/**
+ * Rejects a manual allocation the next build would fail on. Every row must
+ * name an execution in the active ledger with a non-zero quantity. The
+ * decision is then grouped together with the effective retained decisions and
+ * checked with the same conservation rules build validation applies, so a
+ * decision accepted here cannot turn every later rebuild into a failure.
+ * Conservation errors that already exist without this decision are not
+ * attributed to it.
+ */
+function assertConservingAllocations(
+  store: Store,
+  input: Extract<DecisionInput, { kind: "manual_allocation" }>,
+  watermark: number,
+): void {
+  const ledgerBuildId = resolveLedgerBuildId(store.db);
+  if (ledgerBuildId === null) return;
+  const ledger = loadLedgerSnapshot(store.db, ledgerBuildId);
+  const executionKeys = new Set(ledger.executions.map((e) => e.key));
+  for (const row of input.payload.allocations) {
+    if (!executionKeys.has(row.executionKey)) {
+      throw new AppError(
+        "UNKNOWN_EXECUTION",
+        `Execution ${row.executionKey} is not in the current ledger.`,
+        400,
+      );
+    }
+    if (new Decimal(row.quantity).isZero()) {
+      throw new AppError(
+        "ALLOCATION_SIGN_MISMATCH",
+        `Allocation for execution ${row.executionKey} must have a non-zero quantity.`,
+        400,
+      );
+    }
+  }
+  const prior = effectiveDecisions(readDecisions(store, watermark)).filter(
+    (d) => d.id !== input.supersedesId,
+  );
+  const candidate: Decision = {
+    id: "__validate__",
+    sequence: watermark + 1,
+    kind: input.kind,
+    sources: input.sources,
+    strategyIds: input.strategyIds,
+    payload: input.payload,
+    supersedesId: input.supersedesId,
+    clientRequestId: input.clientRequestId,
+    author: input.author,
+    createdAt: new Date(0).toISOString(),
+  };
+  const resolveId = (account: string, openingKeys: string[]): Id =>
+    findStrategyId(store, { account, openingKeys }) ??
+    strategyAnchorKey({ account, openingKeys });
+  const before = conservationIssueKeys(ledger, prior, resolveId);
+  const after = conservationIssueKeys(ledger, [...prior, candidate], resolveId);
+  const introduced = new Set(
+    [...after].filter(([key]) => !before.has(key)).map(([, code]) => code),
+  );
+  const code = CONSERVATION_CODES.find((entry) => introduced.has(entry));
+  if (code !== undefined) {
+    throw new AppError(
+      code,
+      `Manual allocation does not conserve the execution quantity, sign or net cash (${code}).`,
+      400,
+    );
+  }
+}
+
 interface StrategyDimension {
   account: string;
   currency: string;
@@ -416,7 +508,7 @@ function assertValidSource(
 }
 
 function validateDecisionInput(
-  store: { db: import("better-sqlite3").Database },
+  store: Store,
   input: DecisionInput,
   watermark: number,
 ): void {
@@ -495,6 +587,7 @@ function validateDecisionInput(
           );
         }
       }
+      assertConservingAllocations(store, input, watermark);
       break;
     case "group_explicit":
       assertValidSource(store.db, input.payload.source);

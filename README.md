@@ -60,8 +60,10 @@ image, never on `/data`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATA_DIR` | `/data` (image) | Writable root for SQLite, imports, transcripts, backups. |
-| `PORT` | `3000` | HTTP port; the container binds `0.0.0.0`. |
+| `HOST` | `127.0.0.1` (Node), `0.0.0.0` (image) | Listener bind address. The app has no authentication, so keep it on loopback outside a container. |
+| `PORT` | `3000` | HTTP port. |
 | `ALLOWED_ORIGIN` | required in production | Exact browser origin allowed for mutations (e.g. `http://localhost:3000`). |
+| `ALLOWED_HOSTS` | unset | Extra comma-separated `host[:port]` values accepted in the `Host` header. The `ALLOWED_ORIGIN` host and `localhost`/`127.0.0.1`/`[::1]` are always accepted; any other Host gets `421 HOST_NOT_ALLOWED` (DNS-rebinding defence). |
 | `UPLOAD_LIMIT_BYTES` | `20971520` (20 MiB) | Per-upload byte limit. |
 | `STATIC_DIR` | `dist/web` in production | Optional override of the compiled frontend directory. |
 | `JOURNAL_SECRETS_DIR` | unset | Optional allowlisted directory for mounted secret files (`file:` credential refs). |
@@ -84,7 +86,10 @@ in `.env` in the image; pass them at run time.
 Pass credentials through the environment or mounted secret files, never
 through the image, a backup or a log. In a model profile:
 
-- `env:NAME` reads the process environment variable `NAME`.
+- `env:NAME_API_KEY` reads the process environment variable `NAME_API_KEY`.
+  Only uppercase names ending in `_API_KEY` (e.g. `OPENAI_API_KEY`) are
+  allowed, so a profile can never read other process secrets.
+- A `cloud` profile endpoint must use `https://` unless it is on loopback.
 - `file:/secrets/key` reads an allowlisted file under `JOURNAL_SECRETS_DIR`.
   Mount that directory read-only, for example `./secrets:/secrets:ro`.
 

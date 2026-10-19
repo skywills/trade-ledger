@@ -103,14 +103,20 @@ export async function rebuildLifecycles() {
         "The rebuild did not complete. Please retry from Maintenance.",
     );
 }
-export async function saveLifecycleDecision(
+/**
+ * Appends one lifecycle decision. It does not rebuild: the caller rebuilds
+ * separately, so a retry after a failed rebuild repeats only the rebuild. The
+ * caller passes the same clientRequestId when it retries the same decision.
+ */
+export async function recordLifecycleDecision(
   watermark: number,
   kind: string,
   payload: unknown,
-  supersedesId: string | null = null,
+  supersedesId: string | null,
+  clientRequestId: string,
 ) {
   await requestJson("/api/decisions", DecisionResponseSchema, "POST", {
-    clientRequestId: crypto.randomUUID(),
+    clientRequestId,
     author: "user",
     sources: [],
     strategyIds: [],
@@ -119,5 +125,4 @@ export async function saveLifecycleDecision(
     kind,
     payload,
   });
-  await rebuildLifecycles();
 }
