@@ -1,3 +1,5 @@
+import { analyticsTools } from "./analytics.js";
+import { importEvidenceTools } from "./imports.js";
 import { journalTools } from "./journal.js";
 import { lifecycleTools } from "./lifecycles.js";
 import { pnlTools } from "./pnl.js";
@@ -16,6 +18,7 @@ export function createChatTools(ctx: ChatToolContext): ChatTool[] {
   const reads = [
     ...analyticsTools(ctx),
     ...lifecycleTools(ctx),
+    ...importEvidenceTools(ctx),
     ...pnlTools(ctx),
     ...journalTools(ctx),
     ...statusTools(ctx),
@@ -27,5 +30,3 @@ export function createChatTools(ctx: ChatToolContext): ChatTool[] {
     ...proposalTools(ctx),
   ];
 }
-
-import { analyticsTools } from "./analytics.js";

@@ -31,13 +31,14 @@ export function pageSelectedResult(
   total: number,
   offset: number,
   limit: number,
+  itemsKey: "items" | "issues" = "items",
 ): EmbedderToolResult {
   const available = Math.min(limit, rows.length);
   let count = available;
   while (true) {
     const result = jsonResult({
       ...meta,
-      items: rows.slice(0, count),
+      [itemsKey]: rows.slice(0, count),
       total,
       nextOffset: count > 0 && offset + count < total ? offset + count : null,
       ...(count < available
