@@ -6,6 +6,7 @@ import {
 } from "../../shared/api.js";
 import { ApiError, requestJson } from "../api.js";
 import { ErrorPanel } from "../components.js";
+import { proposalSummary } from "./proposalSummary.js";
 
 async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
   // Evidence is immutable; let the server use the current decision watermark.
@@ -69,6 +70,15 @@ export function ProposalList({
               {entry.proposal.rationale ? (
                 <p>{entry.proposal.rationale}</p>
               ) : null}
+              <ul
+                aria-label="Proposed changes"
+                style={{ overflowWrap: "anywhere" }}
+              >
+                {proposalSummary(entry.proposal).map((line, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: immutable proposal lines
+                  <li key={index}>{line}</li>
+                ))}
+              </ul>
             </div>
             {entry.accepted ? null : (
               <button

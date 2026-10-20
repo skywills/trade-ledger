@@ -54,7 +54,7 @@
 - Export `selectDecisionHistory(store: Store, watermark: number, query: DecisionHistoryQuery): {items: Array<Decision & {effective: boolean; supersededBy: string | null}>; total: number}`. Use the persisted Decision type from decisions/service.ts, which includes author/time metadata.
 - Export `decisionHistoryTools(ctx: ChatToolContext): ChatTool[]` registering get_decision_history. Tool adds optional expectedBuildId and expectedWatermark; capture current watermark with the snapshot. Match references using typed kind-specific payload fields and top-level sources/strategyIds, never substring search over JSON. Filters intersect; newest sequence first.
 
-- [ ] **Step 1: Write failing tests.** Add `history_matches_exact_payload_references`, `superseded_status_survives_page_and_filter_boundaries`, `filters_do_not_match_substrings`, `rejects_changed_watermark`, and `returns_empty_history_without_build`. Assert full captured effectiveness before paging and proper nextOffset after byte shortening.
+- [x] **Step 1: Write failing tests.** Add `history_matches_exact_payload_references`, `superseded_status_survives_page_and_filter_boundaries`, `filters_do_not_match_substrings`, `rejects_changed_watermark`, and `returns_empty_history_without_build`. Assert full captured effectiveness before paging and proper nextOffset after byte shortening.
 
 ```ts
 expect(prior).toMatchObject({ effective: false, supersededBy: replacement.id });
@@ -62,10 +62,10 @@ expect(current).toMatchObject({ effective: true, supersededBy: null });
 expect(substringOnlyMatch.items).toEqual([]);
 expect(emptyHistory).toMatchObject({ items: [], total: 0, nextOffset: null });
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-decision-history.test.ts`; expect missing selector/factory.
-- [ ] **Step 3: Implement history and adapter.** Capture decision history and metadata in one synchronous transaction. Compute effective IDs using existing semantics on all captured decisions; apply scope filters afterward. Register through the read guard. Include UNTRUSTED in the tool description because notes/rationales are user data.
-- [ ] **Step 4: Verify.** Run `npx vitest run test/integration/chat-decision-history.test.ts test/integration/analysis.test.ts`; expect exact reference matching and existing accept/reject behavior preserved.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: expose scoped decision history to the agent"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-decision-history.test.ts`; expect missing selector/factory.
+- [x] **Step 3: Implement history and adapter.** Capture decision history and metadata in one synchronous transaction. Compute effective IDs using existing semantics on all captured decisions; apply scope filters afterward. Register through the read guard. Include UNTRUSTED in the tool description because notes/rationales are user data.
+- [x] **Step 4: Verify.** Run `npx vitest run test/integration/chat-decision-history.test.ts test/integration/analysis.test.ts`; expect exact reference matching and existing accept/reject behavior preserved.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: expose scoped decision history to the agent"`.
 
 ### Task 2: Isolated preview for existing proposal kinds
 
@@ -77,7 +77,7 @@ expect(emptyHistory).toMatchObject({ items: [], total: 0, nextOffset: null });
 - Export `previewProposal(store: Store, proposal: Proposal, expected: {buildId: string; watermark: number}, options?: {signal?: AbortSignal; now?: () => Date}): Promise<ProposalPreview>`.
 - Export `proposalPreviewTools(ctx: ChatToolContext): ChatTool[]` registering preview_proposal with strict input `{proposal, expectedBuildId, expectedWatermark}`. Tool factory uses a 30-second AbortController timer, cleared in finally, and existing model output limits.
 
-- [ ] **Step 1: Write failing tests.** Add `preview_valid_notes_changes_no_live_tables`, `over_allocation_is_invalid_without_impact`, `full_rebuild_impacts_match_separate_test_store`, `stale_or_missing_build_requires_rebuild`, `concurrent_import_decision_or_activation_discards_result`, `cleanup_after_failure_or_abort`, and `unknown_pnl_stays_null_per_currency`. Compare all live rows in decisions, strategy/lifecycle identity tables, builds, jobs, ai_runs and active pointers before/after; do not compare database-file bytes under WAL.
+- [x] **Step 1: Write failing tests.** Add `preview_valid_notes_changes_no_live_tables`, `over_allocation_is_invalid_without_impact`, `full_rebuild_impacts_match_separate_test_store`, `stale_or_missing_build_requires_rebuild`, `concurrent_import_decision_or_activation_discards_result`, `cleanup_after_failure_or_abort`, and `unknown_pnl_stays_null_per_currency`. Compare all live rows in decisions, strategy/lifecycle identity tables, builds, jobs, ai_runs and active pointers before/after; do not compare database-file bytes under WAL.
 
 ```ts
 expect(validPreview.valid).toBe(true);
@@ -86,10 +86,10 @@ expect(overAllocated).toMatchObject({ valid: false, impact: null });
 expect(overAllocated.issues).toContainEqual({ code: "OVER_ALLOCATION", severity: "error" });
 expect(temporaryDirectoriesAfter).toEqual(temporaryDirectoriesBefore);
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/proposal-preview.test.ts`; expect missing service/schema.
-- [ ] **Step 3: Implement the isolated coordinator.** Reject missing/stale live builds and mismatched watermark with explicit errors. Create a private temporary directory, copy the database using `store.db.backup`, open with openStore, then compare cloned build/watermark to the captured live state. No open SQLite transaction crosses await. Capture before totals from the clone; call validateProposal and appendDecision on the clone using proposalDecisionInput, followed by full rebuild with current parser/algorithm versions. Rebuild uses retained parsed database rows; do not copy or expose original CSV files. Convert domain validation errors into valid:false; propagate operational/timeout errors as tool errors. Treat a non-active/failed rebuild as invalid, never successful. Capture after totals and recheck live build/watermark/stale state before returning. Always closeStore and recursively remove only the created temporary directory in finally.
-- [ ] **Step 4: Verify.** Run `npx vitest run test/integration/proposal-preview.test.ts test/integration/chat-tools.test.ts`; expect side-effect, concurrency, cleanup and decimal tests passing. Confirm abort checks before backup, before append/rebuild and before returning; existing synchronous work is not claimed to be preemptible.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: preview agent corrections in an isolated store"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/proposal-preview.test.ts`; expect missing service/schema.
+- [x] **Step 3: Implement the isolated coordinator.** Reject missing/stale live builds and mismatched watermark with explicit errors. Create a private temporary directory, copy the database using `store.db.backup`, open with openStore, then compare cloned build/watermark to the captured live state. No open SQLite transaction crosses await. Capture before totals from the clone; call validateProposal and appendDecision on the clone using proposalDecisionInput, followed by full rebuild with current parser/algorithm versions. Rebuild uses retained parsed database rows; do not copy or expose original CSV files. Convert domain validation errors into valid:false; propagate operational/timeout errors as tool errors. Treat a non-active/failed rebuild as invalid, never successful. Capture after totals and recheck live build/watermark/stale state before returning. Always closeStore and recursively remove only the created temporary directory in finally.
+- [x] **Step 4: Verify.** Run `npx vitest run test/integration/proposal-preview.test.ts test/integration/chat-tools.test.ts`; expect side-effect, concurrency, cleanup and decimal tests passing. Confirm abort checks before backup, before append/rebuild and before returning; existing synchronous work is not claimed to be preemptible.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: preview agent corrections in an isolated store"`.
 
 ### Task 3: Selected proposal kinds and supersession
 
@@ -102,7 +102,7 @@ expect(temporaryDirectoriesAfter).toEqual(temporaryDirectoriesBefore);
 - `proposalDecisionInput(proposal: Proposal): DecisionInput` maps every supported kind and supersedesId; application-owned author and idempotency behavior stay as today. Generic rejection, lifecycle_valuation and multiplier fixes remain unsupported.
 - ProposalList renders typed payload summaries: target group/member IDs and quantities, import action, campaign name/membership and supersession target. Render values as React text; no raw JSON-only acceptance cards.
 
-- [ ] **Step 1: Write failing tests.** Parameterize `each_added_kind_parses_previews_and_accepts` over all nine kinds using valid matching fixtures. Add `cross_account_or_currency_membership_is_invalid`, `partial_contract_and_overlapping_coverage_are_rejected`, `import_exclusion_changes_full_rebuild`, `supersession_replaces_prior_effect`, and `legacy_six_variants_keep_defaults`. Assert one decision after explicit acceptance and none after preview/submission alone.
+- [x] **Step 1: Write failing tests.** Parameterize `each_added_kind_parses_previews_and_accepts` over all nine kinds using valid matching fixtures. Add `cross_account_or_currency_membership_is_invalid`, `partial_contract_and_overlapping_coverage_are_rejected`, `import_exclusion_changes_full_rebuild`, `supersession_replaces_prior_effect`, and `legacy_six_variants_keep_defaults`. Assert one decision after explicit acceptance and none after preview/submission alone.
 
 ```ts
 expect(parsed.kind).toBe(kind);
@@ -112,10 +112,10 @@ expect(decisionsAfterPreview).toHaveLength(0);
 expect(decisionsAfterAccept).toHaveLength(1);
 expect(parsedLegacy.supersedesId).toBeNull();
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/expanded-proposals.test.ts`; expect unknown kinds/supersedesId behavior failures.
-- [ ] **Step 3: Extend schema, mapping and rendering.** Extend ledger validation by kind without replacing appendDecision's deeper checks. Preview through Task 2 to exercise normalization/grouping/lifecycle constraints. Ensure conversion of saved legacy runs does not require new fields. Keep import inclusion/exclusion behind proposal acceptance, never a direct write tool.
-- [ ] **Step 4: Verify.** Run `npx vitest run test/integration/expanded-proposals.test.ts test/integration/proposal-preview.test.ts test/integration/analysis.test.ts test/integration/lifecycle-decisions.test.ts`; expect all new kinds and legacy validation passing. Run `npm run typecheck` to catch exhaustive UI/DTO union assumptions.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: expand agent proposals for retained correction operations"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/expanded-proposals.test.ts`; expect unknown kinds/supersedesId behavior failures.
+- [x] **Step 3: Extend schema, mapping and rendering.** Extend ledger validation by kind without replacing appendDecision's deeper checks. Preview through Task 2 to exercise normalization/grouping/lifecycle constraints. Ensure conversion of saved legacy runs does not require new fields. Keep import inclusion/exclusion behind proposal acceptance, never a direct write tool.
+- [x] **Step 4: Verify.** Run `npx vitest run test/integration/expanded-proposals.test.ts test/integration/proposal-preview.test.ts test/integration/analysis.test.ts test/integration/lifecycle-decisions.test.ts`; expect all new kinds and legacy validation passing. Run `npm run typecheck` to catch exhaustive UI/DTO union assumptions.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: expand agent proposals for retained correction operations"`.
 
 ### Task 4: Validate submission and exercise acceptance end to end
 
@@ -127,7 +127,7 @@ expect(parsedLegacy.supersedesId).toBeNull();
 - acceptProposal continues to validate current ledger and decision watermark and use appendDecision; never reuse the clone's decision IDs. Existing accepted flags and rejection semantics remain unchanged.
 - Cap remains MAX_PROPOSALS_PER_RUN=20; check it before starting an expensive preview and again before persistence. Failed validation does not consume the cap.
 
-- [ ] **Step 1: Write failing tests.** Add `invalid_submit_creates_no_run_or_card`, `valid_submit_creates_pending_card_without_decision`, `acceptance_revalidates_after_live_change`, and `twentieth_proposal_allowed_twenty_first_refused_without_preview`. Extend fake-inference integration to preview then submit a lifecycle attachment. In browser tests, assert a new kind shows payload details, Accept creates exactly one decision, Reject leaves the proposed correction unapplied, and a legacy notes card still works.
+- [x] **Step 1: Write failing tests.** Add `invalid_submit_creates_no_run_or_card`, `valid_submit_creates_pending_card_without_decision`, `acceptance_revalidates_after_live_change`, and `twentieth_proposal_allowed_twenty_first_refused_without_preview`. Extend fake-inference integration to preview then submit a lifecycle attachment. In browser tests, assert a new kind shows payload details, Accept creates exactly one decision, Reject leaves the proposed correction unapplied, and a legacy notes card still works.
 
 ```ts
 expect(invalidResult.isError).toBe(true);
@@ -139,10 +139,10 @@ expect(previewCallCountAfterLimit).toBe(previewCallCountBeforeLimit);
 ```
 
 Add `live_change_before_atomic_record_creates_no_empty_run`: arrange a retained import/decision after preview and before recordValidatedProposal, then assert the call fails and both proposal/run counts remain unchanged.
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-tools.test.ts test/integration/chat.test.ts`; expect invalid submission accepted by old behavior.
-- [ ] **Step 3: Integrate and document.** Explain preview versus pending proposal versus accepted decision, stale-build recovery, unsupported valuations/multipliers and expected full-rebuild cost. Keep all new tools under existing read guards; preview creates temporary data only. Preserve reset-after-live-write behavior.
-- [ ] **Step 4: Verify release.** Run `npm run check:all`, `npm test`, `npm run test:e2e -- e2e/proposals.spec.ts e2e/chat.spec.ts`, and `npm run test:build-smoke`; expect exit 0 for each. Record simulation elapsed time for existing lifecycle fixtures without imposing a machine-dependent timing assertion.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: validate chat proposals before presenting acceptance cards"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-tools.test.ts test/integration/chat.test.ts`; expect invalid submission accepted by old behavior.
+- [x] **Step 3: Integrate and document.** Explain preview versus pending proposal versus accepted decision, stale-build recovery, unsupported valuations/multipliers and expected full-rebuild cost. Keep all new tools under existing read guards; preview creates temporary data only. Preserve reset-after-live-write behavior.
+- [x] **Step 4: Verify release.** Run `npm run check:all`, `npm test`, `npm run test:e2e -- e2e/proposals.spec.ts e2e/chat.spec.ts`, and `npm run test:build-smoke`; expect exit 0 for each. Record simulation elapsed time for existing lifecycle fixtures without imposing a machine-dependent timing assertion.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: validate chat proposals before presenting acceptance cards"`.
 
 ## Handoff and self-review
 
@@ -151,3 +151,44 @@ and nine additional operations. Manual valuation and generic rejection remain
 explicitly deferred in the design; they are not implementation omissions. Every
 Review Focus item has a corresponding named regression. Read and approve the
 design/plan before execution; isolate implementation using the worktree workflow.
+
+
+## Execution record (2026-10-20)
+
+Implemented on `feat/agent-proposal-tools` from merged release 1 (`b3e8725`).
+All four tasks completed. Release 3 is outside this branch.
+
+- Ruling: added `ai/proposal-state.ts` so preview and atomic submission share
+  the same synchronous build/watermark/staleness check. Cost if wrong: localized
+  helper refactor.
+- Ruling: deferred `group_split` after confirming the grouping engine emits
+  `SPLIT_NOT_APPLIED` because its payload lacks allocation mappings. Eight added
+  kinds (14 total) are available; capabilities and instructions disclose this
+  limit. Cost if wrong: splitting needs a separate deterministic engine design.
+- Submission saves evidence and a pending card atomically, checks cancellation
+  after waiting for the writer, and creates a fresh run when immutable evidence
+  changes. Rejected validation never consumes a card slot or creates an empty run.
+- Verification: 850 unit/integration tests across 79 files; 9 targeted browser
+  tests; `npm run check:all` and built-server smoke passed. Lint reports existing
+  warnings/information without errors.
+- Synthetic four-strategy lifecycle attachment preview: 47 ms on this machine.
+  This is a small-fixture observation, not a performance guarantee.
+
+### Final independent review
+
+One whole-branch review found no Critical issue and one Important issue: reused
+payloads stripped unknown keys. Fixed strict validation throughout proposal,
+payload, source and nested allocation/target objects while reusing retained
+scalar/array constraints. Eight regressions failed first, then passed; defaults
+for valid legacy cards remain compatible. The full suite (850 tests), targeted
+browser tests (9), lint/typecheck and built-server smoke passed after the fix.
+
+Deferred minor: `full_rebuild_impacts_match_separate_test_store` currently checks
+known unchanged notes totals rather than an independent store. Changed counts
+are covered, but changed per-currency P&L/issues still need an independent
+accept-and-rebuild comparison. This remains a test coverage limitation.
+
+Review rulings uphold the split deferral above. Manual valuation, generic
+rejection proposals, multiplier corrections and release 3 remain separate work;
+cost if this scope decision is wrong: those capabilities remain unavailable
+until implemented separately.

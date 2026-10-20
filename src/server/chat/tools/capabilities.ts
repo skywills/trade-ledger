@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { AnalyticsQuerySchema } from "../../../shared/analytics.js";
-import { PROPOSAL_KINDS } from "../../ai/proposals.js";
+import {
+  PROPOSAL_KINDS,
+  UNSUPPORTED_PROPOSAL_KINDS,
+} from "../../ai/proposal-kinds.js";
 import {
   MAX_PROPOSALS_PER_RUN,
   PROFILE_NONE_BUILTIN_TOOLS,
@@ -35,6 +38,7 @@ export function capabilitiesTool(
             .sort((a, b) => a.name.localeCompare(b.name)),
           runtimeTools: PROFILE_NONE_BUILTIN_TOOLS,
           proposalKinds: PROPOSAL_KINDS,
+          unsupportedProposalKinds: UNSUPPORTED_PROPOSAL_KINDS,
           decisionAcceptanceRequired: true,
           limits: {
             maxListRows: MAX_LIST_ROWS,

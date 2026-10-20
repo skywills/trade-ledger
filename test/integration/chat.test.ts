@@ -23,6 +23,7 @@ import {
   type InferenceServer,
   startInferenceServer,
 } from "../helpers/inference-server.js";
+import { proposalFixture } from "../helpers/proposal-fixture.js";
 import { createTestStore, type TestStore } from "../helpers/store.js";
 
 const stores: TestStore[] = [];
@@ -439,6 +440,68 @@ describe("write tools need the user's approval", () => {
 });
 
 describe("proposals from chat", () => {
+  it("previews then submits a lifecycle attachment without writing a decision", async () => {
+    const fixture = await proposalFixture();
+    stores.push(fixture);
+    const proposal = {
+      kind: "lifecycle_attachment",
+      payload: {
+        opening: fixture.suggestion.callOpening,
+        targets: [{ lifecycleId: fixture.target.id, quantity: "-1" }],
+      },
+    };
+    const inference = await startInferenceServer({
+      mode: "tool-call",
+      planGateTool: "get_pnl_summary",
+      plan: [
+        {
+          kind: "tool-call",
+          toolName: "preview_proposal",
+          arguments: {
+            proposal,
+            expectedBuildId: fixture.expected.buildId,
+            expectedWatermark: 0,
+          },
+        },
+        { kind: "tool-call", toolName: "submit_proposal", arguments: proposal },
+        { kind: "text", text: "The attachment is pending your acceptance." },
+      ],
+    });
+    servers.push(inference);
+    const profile = await verifiedProfile(fixture.store, inference);
+    const jobs = new JobService(fixture.store);
+    const chat = new ChatService({
+      store: fixture.store,
+      secrets: createDefaultSecretResolver(),
+      jobs,
+      scheduler: new BuildScheduler(fixture.store, {}, jobs),
+    });
+    services.push(chat);
+    const thread = await chat.createThread({ profileId: profile.id });
+    const sent = await chat.sendMessage(thread.id, {
+      clientMessageId: "lifecycle",
+      text: "Preview and propose the covered call attachment",
+    });
+    await waitIdle(fixture.store, thread.id);
+    const message = listMessages(fixture.store, thread.id).find(
+      (m) => m.id === sent.assistantMessageId,
+    );
+    expect(message?.tools.map((t) => t.name)).toEqual([
+      "preview_proposal",
+      "submit_proposal",
+    ]);
+    expect(message?.tools.every((t) => !t.isError)).toBe(true);
+    expect(
+      listRunsForThread(fixture.store, thread.id)[0]?.proposals[0],
+    ).toMatchObject({
+      accepted: false,
+      proposal: { kind: "lifecycle_attachment" },
+    });
+    expect(
+      fixture.store.db.prepare("SELECT count(*) AS n FROM decisions").get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("records proposals on a thread run and keeps a mid-turn acceptance", async () => {
     const t = await createTestStore();
     stores.push(t);
