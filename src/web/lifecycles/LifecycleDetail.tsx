@@ -187,32 +187,34 @@ export function LifecycleDetail({ id }: { id: string }) {
       {projection &&
         d.buildId &&
         connectionGroups(
-          d.suggestions,
+          projection.suggestions,
           projection.members,
           all.data?.connectionExecutions.length
             ? all.data.connectionExecutions
             : d.executions,
-        ).map((group) => (
-          <ConnectionReview
-            key={`${group.key}:${d.buildId}`}
-            disabled={disabled}
-            context={{
-              group,
-              lifecycles: projection.lifecycles,
-              members: projection.members,
-              executions: all.data?.connectionExecutions.length
-                ? all.data.connectionExecutions
-                : d.executions,
-              buildId: d.buildId ?? "",
-              watermark: d.watermark,
-            }}
-            onChanged={(destination) => {
-              if (destination && destination !== id)
-                navigate(`/lifecycles/${encodeURIComponent(destination)}`);
-              else refresh();
-            }}
-          />
-        ))}
+        )
+          .filter((group) => group.affectedIds.includes(id))
+          .map((group) => (
+            <ConnectionReview
+              key={`${group.key}:${d.buildId}`}
+              disabled={disabled}
+              context={{
+                group,
+                lifecycles: projection.lifecycles,
+                members: projection.members,
+                executions: all.data?.connectionExecutions.length
+                  ? all.data.connectionExecutions
+                  : d.executions,
+                buildId: d.buildId ?? "",
+                watermark: d.watermark,
+              }}
+              onChanged={(destination) => {
+                if (destination && destination !== id)
+                  navigate(`/lifecycles/${encodeURIComponent(destination)}`);
+                else refresh();
+              }}
+            />
+          ))}
       <div className="card-grid">
         <section className="card">
           <h3>Lifecycle holdings</h3>

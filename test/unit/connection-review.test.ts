@@ -3,6 +3,7 @@ import { projectLifecycles } from "../../src/server/lifecycles/project.js";
 import {
   connectionGroups,
   connectionProposal,
+  connectionTimeline,
   tradeActionLabel,
 } from "../../src/web/lifecycles/connections.js";
 import {
@@ -68,6 +69,38 @@ it("keeps different call contracts separate even inside one presentation compone
   const groups = connectionGroups(p.suggestions, p.members, ledger.executions);
   expect(groups).toHaveLength(2);
   expect(groups.map((g) => g.contracts)).toEqual(["1", "1"]);
+});
+
+it("preserves provable ordering even when an uncertain trade separates comparable rows", () => {
+  const { p } = reviewFixture();
+  const executions = [
+    {
+      ...execution("late", call, "-1", "70", 2, "open"),
+      rawDateTime: "2026-10-02T11:00:00Z",
+    },
+    {
+      ...execution("unknown", call, "-1", "70", 2, "open"),
+      rawDateTime: "2026-10-02",
+      timezone: null,
+    },
+    {
+      ...execution("early", stock, "100", "-10000", 2, "open"),
+      rawDateTime: "2026-10-02T12:00:00+02:00",
+    },
+  ];
+  const members = p.members.slice(0, 3).map((m, i) => ({
+    ...m,
+    allocation: { ...m.allocation, executionKey: executions[i]?.key ?? "" },
+  }));
+  const timeline = connectionTimeline(members, executions);
+  expect(timeline.uncertain).toBe(true);
+  expect(timeline.rows.map((m) => m.allocation.executionKey)).toEqual([
+    "unknown",
+    "early",
+    "late",
+  ]);
+  expect(connectionTimeline(members, []).rows).toEqual(members);
+  expect(connectionTimeline(members, []).uncertain).toBe(true);
 });
 
 it("distinguishes assignment from buying an option back in the review timeline", () => {

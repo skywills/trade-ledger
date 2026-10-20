@@ -1,10 +1,63 @@
 import { Decimal } from "decimal.js";
+import { compareExecutionTime } from "../../shared/execution-chronology.js";
 import type {
   AttachmentSuggestion,
   Lifecycle,
   LifecycleMember,
 } from "../../shared/lifecycles.js";
 import type { Execution } from "../api.js";
+
+/** Stable topological order: unknown comparisons must not hide known ones. */
+export function connectionTimeline(
+  members: LifecycleMember[],
+  executions: Execution[],
+): { rows: LifecycleMember[]; uncertain: boolean } {
+  const exec = new Map(executions.map((e) => [e.key, e]));
+  interface Node {
+    member: LifecycleMember;
+    execution: Execution | undefined;
+    after: Node[];
+    incoming: number;
+  }
+  const nodes: Node[] = members.map((member) => ({
+    member,
+    execution: exec.get(member.allocation.executionKey),
+    after: [],
+    incoming: 0,
+  }));
+  let uncertain = nodes.some((n) => !n.execution);
+  for (const [i, a] of nodes.entries()) {
+    for (const b of nodes.slice(i + 1)) {
+      if (a.execution && a.execution.key === b.execution?.key) continue;
+      const order =
+        a.execution && b.execution
+          ? compareExecutionTime(a.execution, b.execution)
+          : null;
+      if (order === null) uncertain = true;
+      else if (order !== 0) {
+        const before = order < 0 ? a : b;
+        const after = order < 0 ? b : a;
+        before.after.push(after);
+        after.incoming++;
+      }
+    }
+  }
+  const remaining = new Set(nodes);
+  const rows: LifecycleMember[] = [];
+  while (remaining.size) {
+    const next = [...remaining].find((n) => n.incoming === 0);
+    // Contradictory provenance cannot establish a sequence either.
+    if (next === undefined) {
+      uncertain = true;
+      rows.push(...[...remaining].map((n) => n.member));
+      break;
+    }
+    remaining.delete(next);
+    rows.push(next.member);
+    for (const after of next.after) after.incoming--;
+  }
+  return { rows, uncertain };
+}
 
 export interface ConnectionGroup {
   key: string;

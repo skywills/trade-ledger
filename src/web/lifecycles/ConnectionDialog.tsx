@@ -18,6 +18,7 @@ import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
 import {
   type ConnectionGroup,
   connectionProposal,
+  connectionTimeline,
   lifecycleLabel,
   tradeActionLabel,
 } from "./connections.js";
@@ -126,14 +127,7 @@ export function ConnectionDialog({
   const evidence = members.filter(
     (m) => related.has(m.lifecycleId) || group.members.includes(m),
   );
-  const timeline = [...evidence].sort((a, b) => {
-    const x = exec.get(a.allocation.executionKey),
-      y = exec.get(b.allocation.executionKey);
-    return (
-      (x?.date ?? "").localeCompare(y?.date ?? "") ||
-      (x?.rawDateTime ?? "").localeCompare(y?.rawDateTime ?? "")
-    );
-  });
+  const timeline = connectionTimeline(evidence, executions);
   function dismiss() {
     if (busy) return;
     dialog.current?.close();
@@ -403,8 +397,14 @@ export function ConnectionDialog({
               </section>
             )}
             <h3>Trade sequence</h3>
+            {timeline.uncertain && (
+              <p className="muted">
+                Exact trade order is uncertain for some trades. Known ordering
+                is preserved; other trades retain source order where possible.
+              </p>
+            )}
             <ol className="connection-timeline">
-              {timeline.map((m) => {
+              {timeline.rows.map((m) => {
                 const e = exec.get(m.allocation.executionKey);
                 return (
                   <li
