@@ -21,6 +21,7 @@ export interface LegRecord {
   multiplier: string | null;
   netCash: string;
   brokerPnl: string | null;
+  pnlEstimated?: boolean;
   sources: SourceRef[];
   /** In-build provenance for basis-supported closes spanning opening fills. */
   basisLots?: Array<{ executionKey: string; quantity: string }>;
@@ -88,6 +89,7 @@ export interface LegOverrides {
   quantity?: string;
   netCash?: string;
   brokerPnl?: string | null;
+  pnlEstimated?: boolean;
   basisLots?: Array<{ executionKey: string; quantity: string }>;
 }
 
@@ -109,6 +111,7 @@ export function legOf(
       overrides.brokerPnl !== undefined
         ? overrides.brokerPnl
         : execution.brokerPnl,
+    pnlEstimated: overrides.pnlEstimated ?? false,
     sources: execution.sources,
     ...(overrides.basisLots === undefined
       ? {}
@@ -131,7 +134,7 @@ export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
     quantity: leg.quantity,
     netCash: leg.netCash,
     brokerPnl: leg.brokerPnl,
-    pnlEstimated: false,
+    pnlEstimated: leg.pnlEstimated ?? false,
     role: leg.role,
   });
   if (leg.multiplier === null && isDerivative(leg.instrument)) {
