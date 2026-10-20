@@ -1,6 +1,12 @@
 import { afterEach, expect, it } from "vitest";
 import type { AnalyticsSnapshot } from "../../src/server/analytics/snapshot.js";
+import {
+  ALGORITHM_VERSION,
+  activeProjection,
+  rebuild,
+} from "../../src/server/builds/service.js";
 import { createChatTools } from "../../src/server/chat/tools/index.js";
+import { appendDecision } from "../../src/server/decisions/service.js";
 import type {
   Execution,
   Instrument,
@@ -350,3 +356,110 @@ it("large_contributors_page_without_truncation and strict build pinning", async 
     }),
   ).toMatchObject({ isError: true });
 });
+
+it.each(["xyz", "value:XYZ", "value:xyz"])(
+  "underlying filter accepts established journal form %s",
+  async (underlying) => {
+    expect(
+      (await select(snapshot([{ id: "s", quantity: "1" }]), { underlying }))
+        .items,
+    ).toHaveLength(1);
+  },
+);
+it.each(["brk-b", "value:BRK B"])(
+  "underlying filter retains symbol aliases for %s",
+  async (underlying) => {
+    const s = snapshot([
+      { id: "s", quantity: "1", instrument: { ...stock, underlying: "BRK.B" } },
+    ]);
+    expect((await select(s, { underlying })).items).toHaveLength(1);
+  },
+);
+it("one merged contributor with 1000 lifecycles has independently pageable links", async () => {
+  const t = await createTestStore();
+  stores.push(t);
+  await seedLedger(
+    t.store,
+    buildExecutionTable(
+      Array.from({ length: 1000 }, (_, i) =>
+        executionRow({
+          ClientAccountID: "A",
+          CurrencyPrimary: "USD",
+          TradeDate: "2026-10-01",
+          DateTime: "2026-10-01 12:00:00",
+          AssetClass: "STK",
+          Symbol: "XYZ",
+          UnderlyingSymbol: "XYZ",
+          Conid: "1",
+          Multiplier: "1",
+          Quantity: "1",
+          NetCash: "-100",
+          TradePrice: "100",
+          IBExecID: `e${i}`,
+          TradeID: `t${i}`,
+          IBOrderID: `o${i}`,
+          "Notes/Codes": "O",
+        }),
+      ),
+    ),
+  );
+  const before = required(activeProjection(t.store).projection ?? undefined);
+  const chosen = required(before.strategies[0]).id;
+  await appendDecision(
+    t.store,
+    {
+      kind: "group_merge",
+      clientRequestId: "large-merge",
+      author: "user",
+      payload: {
+        chosenStrategyId: chosen,
+        mergedStrategyIds: before.strategies.slice(1).map((s) => s.id),
+      },
+    },
+    0,
+  );
+  await rebuild(t.store, {
+    mode: "full",
+    parserVersion: "flex-v1",
+    algorithmVersion: ALGORITHM_VERSION,
+    signal: new AbortController().signal,
+  });
+  const current = activeProjection(t.store);
+  expect(current.projection?.strategies).toHaveLength(1);
+  const expectedIds =
+    current.projection?.lifecycles?.lifecycles.map((l) => l.id) ?? [];
+  expect(expectedIds).toHaveLength(1000);
+  const tools = createChatTools(toolContext(t.store));
+  const contributors = await toolJson(tools, "get_open_positions_summary", {
+    section: "contributors",
+    limit: 1,
+    expectedBuildId: current.buildId,
+  });
+  expect(contributors.total).toBe(1);
+  expect(contributors.items[0]).toMatchObject({
+    strategyId: chosen,
+    quantity: "1000",
+    lifecycleCount: 1000,
+  });
+  expect(contributors.items[0]).not.toHaveProperty("lifecycleIds");
+  expect(contributors.nextOffset).toBeNull();
+  const ids: string[] = [];
+  let offset: number | null = 0;
+  while (offset !== null) {
+    const page = await toolJson(tools, "get_open_positions_summary", {
+      section: "lifecycle_links",
+      offset,
+      expectedBuildId: current.buildId,
+    });
+    expect(page.total).toBe(1000);
+    expect(page.items.length).toBeLessThanOrEqual(50);
+    for (const item of page.items) {
+      expect(item.strategyId).toBe(chosen);
+      expect(item).not.toHaveProperty("quantity");
+      ids.push(item.lifecycleId);
+    }
+    offset = page.nextOffset;
+  }
+  expect(ids).toHaveLength(1000);
+  expect(new Set(ids)).toEqual(new Set(expectedIds));
+}, 20000);

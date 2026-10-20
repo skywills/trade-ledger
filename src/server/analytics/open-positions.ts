@@ -133,7 +133,9 @@ export function selectOpenPositions(
           : true,
         query.underlying
           ? instrument
-            ? normalizeSymbol(query.underlying) === underlyingSymbol(instrument)
+            ? normalizeSymbol(
+                query.underlying.replace(/^value:/, ""),
+              ).toUpperCase() === underlyingSymbol(instrument).toUpperCase()
             : undefined
           : true,
       ];

@@ -137,9 +137,29 @@ All three tasks are complete. No new dependencies, migrations or export storage.
   existing CSV route. Download bodies never enter model context or new storage.
 - Chat links allow only the exact relative analytics export route with a build
   ID. Other markdown links stay literal and labels render as React text.
-- Verification: 882 unit/integration tests across 82 files; 9 targeted browser
+- Verification: 888 unit/integration tests across 82 files; 9 targeted browser
   tests; `npm run check:all` and built-server smoke passed. Existing lint
   warnings/information and Playwright color-environment warnings remain.
 - Browser regression verifies a real CSV download, then a canceled download on
   a stale link and HTTP409 from the same endpoint. Chromium exposes these
   downloads through download events rather than ordinary response interception.
+
+### Final independent review
+
+The review found two Important issues, both reproduced before the single fix
+pass: lowercase/value-prefixed underlying filters returned false empty results,
+and a contributor containing many lifecycle IDs could exceed the output budget.
+Filters now use the existing journal normalization, including aliases. A real
+1,000-lifecycle merge regression verifies the contributor quantity is returned
+once and every linked lifecycle is retrievable through the guarded tool.
+
+Ruling: add `section=lifecycle_links`, `totalLifecycleLinks`, and contributor
+`lifecycleCount` instead of embedding an unbounded ID array in each tool row.
+This preserves numeric coverage and provides independent continuation for IDs.
+Cost if wrong: additive tool section and contributor response revision before
+release. Internal selector contributions retain the complete ID arrays.
+
+Five regressions failed before the fixes; all 14 position tests then passed.
+Final verification passed: 888 tests in 82 files, 9 browser tests, lint/typecheck
+and built-server smoke. No Critical or Minor findings; nothing was declined for
+judgment and no review findings remain deferred.
