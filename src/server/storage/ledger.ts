@@ -92,9 +92,9 @@ export function manifestHash(
   imports: ReadonlyArray<LedgerImportRef>,
 ): string {
   const manifest = {
-    // Invalidate retained normalization from before contract evidence/expiry
-    // resolution, while preserving the public Flex parser API version.
-    normalizationRevision: "contract-lifecycle-v2",
+    // Re-normalize originals after correcting broker event code definitions,
+    // while preserving the public Flex parser API version.
+    normalizationRevision: "contract-lifecycle-v4",
     parserVersion,
     decisionWatermark,
     imports: [...imports]

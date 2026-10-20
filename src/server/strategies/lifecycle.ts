@@ -15,8 +15,9 @@ export function isClosingEvent(event: Execution["event"]): boolean {
 }
 
 /**
- * A booked option event carrying a zero price and zero cash flow but no
- * lifecycle code or action id. These are unresolved until linked; they must
+ * A booked derivative event carrying a zero price and zero cash flow but no
+ * explicit lifecycle code. An action ID still needs a validated counterpart.
+ * These are unresolved until linked; they must
  * never be silently classified as an ordinary trade or assigned a price.
  */
 export function looksLikeBookedEvent(execution: Execution): boolean {

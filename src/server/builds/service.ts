@@ -54,7 +54,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "lifecycles-v3";
+export const ALGORITHM_VERSION = "lifecycles-v5";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these

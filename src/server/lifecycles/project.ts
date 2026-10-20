@@ -16,6 +16,10 @@ import {
   LifecycleMembershipPayloadSchema,
 } from "../../shared/lifecycles.js";
 import { underlyingSymbol } from "../../shared/symbols.js";
+import {
+  redirectLifecycleDecisions,
+  resolveLifecycleAlias,
+} from "./aliases.js";
 import { compareLifecycleTime } from "./chronology.js";
 import { applyMembershipChanges } from "./decisions.js";
 import { partition, refKey, sum } from "./membership.js";
@@ -86,6 +90,7 @@ export function projectLifecycles(
     valuations: [],
   };
   const roots = new Map<string, string>();
+  const aliases = new Map<string, string>();
   for (const s of projection.strategies) {
     const rows = projection.allocations.filter((a) => a.strategyId === s.id);
     const opening = [...rows].sort((a, b) => {
@@ -149,6 +154,8 @@ export function projectLifecycles(
   // Retained event links move only the evidenced opening, preserving other lots
   // in the same stock component. Later closes follow a unique compatible owner.
   const changedStockStrategies = new Set<string>();
+  const ownedStockCloses = new Set<string>();
+  const acquiredOptionEvents = new Set<string>();
   const explicitCloseRefs = new Set(
     decisions
       .filter((d) => d.kind === "lifecycle_membership")
@@ -218,10 +225,37 @@ export function projectLifecycles(
         );
       });
     for (const m of candidates) m.lifecycleId = from;
-    if (candidates.length) changedStockStrategies.add(link.to);
+    if (
+      link.type !== "roll" &&
+      candidates.some((m) => {
+        const e = exec.get(m.allocation.executionKey);
+        return e && new Decimal(m.quantity).eq(e.quantity);
+      })
+    ) {
+      for (const option of optionEvents) {
+        if (
+          link.sources.some((s) =>
+            option.sources.some(
+              (t) => s.importId === t.importId && s.rowNumber === t.rowNumber,
+            ),
+          ) &&
+          projection.allocations.some(
+            (a) =>
+              a.strategyId === link.from &&
+              a.role === "close" &&
+              a.executionKey === option.key &&
+              new Decimal(a.quantity).eq(option.quantity),
+          )
+        )
+          acquiredOptionEvents.add(option.key);
+      }
+    }
+    if (candidates.length || link.type !== "roll")
+      changedStockStrategies.add(link.to);
     if (link.type === "roll" && candidates.length) {
       for (const m of draft.members)
         if (m.lifecycleId === to) m.lifecycleId = from;
+      aliases.set(to, from);
       for (const [k, v] of roots) if (v === to) roots.set(k, from);
     }
   }
@@ -232,9 +266,9 @@ export function projectLifecycles(
         const x = exec.get(a.executionKey),
           y = exec.get(b.executionKey);
         return (
-          (x && y
-            ? (compareLifecycleTime(x, y) ?? x.key.localeCompare(y.key))
-            : 0) || (a.role === "open" ? -1 : 1)
+          (x && y ? (compareLifecycleTime(x, y) ?? 0) : 0) ||
+          (a.role === "open" ? 0 : 1) - (b.role === "open" ? 0 : 1) ||
+          a.executionKey.localeCompare(b.executionKey)
         );
       });
     const inventory = new Map<string, Map<string, Decimal>>();
@@ -255,6 +289,7 @@ export function projectLifecycles(
             q.abs().gte(new Decimal(a.quantity).abs()),
         );
         if (owners.length === 1) {
+          ownedStockCloses.add(refKey(a));
           pieces = partition(
             a,
             [{ lifecycleId: owners[0]?.[0] ?? "", quantity: a.quantity }],
@@ -278,8 +313,180 @@ export function projectLifecycles(
         );
     }
   }
+  const pendingMerges = new Map<
+    string,
+    Array<{ to: string; optionKeys: string[] }>
+  >();
+  // An exercised option can dispose of stock already owned by another option
+  // lifecycle. Join the closed option cycle to that proven stock owner; moving
+  // only the stock disposal would separate it from the acquisition it closes.
+  for (const link of projection.links.filter((l) =>
+    ["assignment", "exercise"].includes(l.type),
+  )) {
+    const from = roots.get(link.from);
+    if (!from) continue;
+    const referenced = (e: Execution) =>
+      link.sources.some((s) =>
+        e.sources.some(
+          (t) => s.importId === t.importId && s.rowNumber === t.rowNumber,
+        ),
+      );
+    const stockCloses = projection.allocations.filter((a) => {
+      const e = exec.get(a.executionKey);
+      return (
+        a.strategyId === link.to &&
+        a.role === "close" &&
+        e?.instrument.assetClass === "STK" &&
+        referenced(e)
+      );
+    });
+    if (stockCloses.length !== 1) continue;
+    const close = stockCloses[0];
+    if (!close || !ownedStockCloses.has(refKey(close))) continue;
+    const owners = draft.members.filter(
+      (m) => refKey(m.allocation) === refKey(close),
+    );
+    const ownerIds = new Set(owners.map((m) => m.lifecycleId));
+    if (
+      ownerIds.size !== 1 ||
+      !new Decimal(sum(owners.map((m) => m.quantity))).eq(close.quantity)
+    )
+      continue;
+    const to = owners[0]?.lifecycleId;
+    if (!to || from === to) continue;
+    const source = draft.lifecycles.find((l) => l.id === from);
+    const target = draft.lifecycles.find((l) => l.id === to);
+    if (
+      !source ||
+      !target ||
+      source.account !== target.account ||
+      source.currency !== target.currency ||
+      source.underlyingKey !== target.underlyingKey
+    )
+      continue;
+    const members = draft.members.filter((m) => m.lifecycleId === from);
+    const balances = new Map<string, Decimal>();
+    for (const m of members) {
+      const e = exec.get(m.allocation.executionKey);
+      if (e)
+        balances.set(
+          e.instrument.key,
+          (balances.get(e.instrument.key) ?? new Decimal(0)).plus(m.quantity),
+        );
+    }
+    if (!members.length || [...balances.values()].some((q) => !q.isZero()))
+      continue;
+    const optionCloses = members.filter((m) => {
+      const e = exec.get(m.allocation.executionKey);
+      return (
+        m.allocation.strategyId === link.from &&
+        m.allocation.role === "close" &&
+        e?.instrument.assetClass === "OPT" &&
+        referenced(e)
+      );
+    });
+    if (
+      !optionCloses.length ||
+      optionCloses.some((m) => {
+        const e = exec.get(m.allocation.executionKey);
+        const slices = draft.members.filter(
+          (s) =>
+            s.allocation.executionKey === m.allocation.executionKey &&
+            s.allocation.role === "close",
+        );
+        return (
+          !e ||
+          slices.some((s) => s.lifecycleId !== from) ||
+          !new Decimal(sum(slices.map((s) => s.quantity))).eq(e.quantity)
+        );
+      })
+    )
+      continue;
+    const merges = pendingMerges.get(from) ?? [];
+    merges.push({
+      to,
+      optionKeys: optionCloses.map((m) => m.allocation.executionKey),
+    });
+    pendingMerges.set(from, merges);
+  }
+  // Validate all exercise destinations before moving any whole lifecycle.
+  // A shared option opening may serve independent stock owners; that needs
+  // explicit quantity membership instead of merging those owners together.
+  const approvedMerges: Array<{ from: string; to: string }> = [];
+  for (const [originalFrom, merges] of pendingMerges) {
+    const from = resolveLifecycleAlias(originalFrom, aliases);
+    const members = draft.members.filter((m) => m.lifecycleId === from);
+    const destinations = new Set(
+      merges.map((m) => resolveLifecycleAlias(m.to, aliases)),
+    );
+    const covered = new Set(merges.flatMap((m) => m.optionKeys));
+    const missingEvent = members.some((m) => {
+      const e = exec.get(m.allocation.executionKey);
+      return (
+        m.allocation.role === "close" &&
+        e?.instrument.assetClass === "OPT" &&
+        ["assignment", "exercise"].includes(e.event) &&
+        !covered.has(e.key) &&
+        !acquiredOptionEvents.has(e.key)
+      );
+    });
+    const source = draft.lifecycles.find((l) => l.id === from);
+    if (destinations.size !== 1 || missingEvent) {
+      // Explicit source partitions are applied below; let their resulting
+      // exposure validation decide eligibility when all closes are corrected.
+      const corrected = members
+        .filter((m) => m.allocation.role === "close")
+        .every((m) => explicitCloseRefs.has(refKey(m.allocation)));
+      if (!corrected && source) {
+        source.reasons.push("LIFECYCLE_OPTION_CLOSE_AMBIGUOUS");
+        draft.issues.push({
+          key: `lifecycle:option-close:${from}`,
+          code: "LIFECYCLE_OPTION_CLOSE_AMBIGUOUS",
+          sources: members.flatMap((m) => m.sources),
+          severity: "warning",
+        });
+      }
+      continue;
+    }
+    const to = [...destinations][0];
+    if (!to || from === to) continue;
+    approvedMerges.push({ from, to });
+  }
+  // Coverage was checked against the original sources, before upstream joins
+  // add their already validated events to a downstream source.
+  for (const merge of approvedMerges) {
+    const from = resolveLifecycleAlias(merge.from, aliases);
+    const to = resolveLifecycleAlias(merge.to, aliases);
+    if (from === to) continue;
+    const source = draft.lifecycles.find((l) => l.id === from);
+    const target = draft.lifecycles.find((l) => l.id === to);
+    if (!source || !target) continue;
+    for (const m of draft.members)
+      if (m.lifecycleId === from) m.lifecycleId = to;
+    target.reasons = [...new Set([...target.reasons, ...source.reasons])];
+    aliases.set(from, to);
+    for (const [key, id] of roots) if (id === from) roots.set(key, to);
+  }
+  const redirected = redirectLifecycleDecisions(decisions, aliases);
+  decisions = redirected.decisions;
+  for (const conflict of redirected.conflicts) {
+    const lifecycle = draft.lifecycles.find(
+      (l) => l.id === conflict.lifecycleId,
+    );
+    lifecycle?.reasons.push("LIFECYCLE_CAMPAIGN_CONFLICT");
+    draft.issues.push({
+      key: `lifecycle:campaign-conflict:${conflict.lifecycleId}`,
+      code: "LIFECYCLE_CAMPAIGN_CONFLICT",
+      sources: conflict.sources,
+      severity: "warning",
+    });
+  }
   applyMembershipChanges(ledger, projection, draft, decisions);
   recomputeLifecycles(ledger, projection, draft, explicitCloseRefs);
+  for (const c of draft.campaigns)
+    c.lifecycleIds = draft.lifecycles
+      .filter((l) => l.campaignId === c.id)
+      .map((l) => l.id);
   const confirmedOpenings = new Set(
     decisions.flatMap((d) => {
       if (
@@ -514,8 +721,14 @@ export function recomputeLifecycles(
         return (
           order === -1 ||
           (order === 0 &&
-            m.allocation.role === "open" &&
-            event.event !== "trade")
+            ((m.allocation.role === "open" &&
+              (event.event !== "trade" ||
+                (other.action === "open" && event.action === "close"))) ||
+              // Tied closes consume capacity in the same stable order as grouping.
+              (m.allocation.role === "close" &&
+                (other.key < event.key ||
+                  (other.key === event.key &&
+                    refKey(m.allocation) < refKey(close.allocation))))))
         );
       });
       const exposure = new Decimal(sum(prior.map((m) => m.quantity)));
