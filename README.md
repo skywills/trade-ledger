@@ -121,6 +121,24 @@ wheel campaigns have their own evidence tools.
 - Imports, rebuilds and backups ask for your explicit **Allow** before they run.
 - Decisions are never written by the agent directly; they are only created from
   proposals you accept.
+- Decision history supports exact strategy, lifecycle, campaign and import
+  references, with effective/superseded status computed before pagination.
+- `preview_proposal` runs a hypothetical correction in an isolated temporary
+  database with a full rebuild. It never changes the live journal. It can take
+  roughly as long as a rebuild and has a 30-second cooperative timeout. A changed
+  build or decision watermark discards the result; refresh evidence and rebuild
+  stale data before retrying.
+- `submit_proposal` repeats this validation before saving a pending card, with at
+  most 20 cards per turn. Invalid proposals create no run or card. Each card
+  shows the proposed changes; **Accept** revalidates the current journal before
+  writing a decision. Preview totals do not guarantee later acceptance results.
+- Supported proposals include allocations, identity bindings, explicit grouping,
+  lifecycle events, notes, stop losses, group merges, import inclusion/exclusion,
+  lifecycle attachments/membership/attachment rejection, wheel campaigns and
+  campaign membership. `supersedesId` can replace a retained decision. Group
+  splits (which lack allocation mappings), manual valuations, generic rejection
+  proposals and multiplier corrections remain unsupported. Existing saved cards
+  continue to work without a database migration.
 - CSV files can be attached to a message for an import preview.
 - Replies stream as the model generates them. Expand **Thinking** to see live
   thinking text when the provider supplies it, plus tool activity. Thinking is

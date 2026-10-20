@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors.js";
 import { type Store, write } from "../storage/database.js";
 import type { EvidenceSnapshot } from "./evidence.js";
 import type { LlmProfileSnapshot } from "./profiles.js";
+import { assertProposalState, type ProposalState } from "./proposal-state.js";
 import type { Proposal } from "./proposals.js";
 
 /**
@@ -13,7 +14,7 @@ import type { Proposal } from "./proposals.js";
  * accepted. Nothing here writes a decision: the run only records proposals.
  */
 export const ANALYSIS_PROMPT_VERSION = "reconcile-v1";
-export const PROPOSAL_SCHEMA_VERSION = "proposal-v1";
+export const PROPOSAL_SCHEMA_VERSION = "proposal-v2";
 
 export type AnalysisStatus =
   | "running"
@@ -286,6 +287,72 @@ export function appendRunProposal(
       .run(
         JSON.stringify({ proposals: [...current.proposals, proposal] }),
         runId,
+      );
+  });
+}
+
+/** Validate the live generation and create/append the card in one writer turn. */
+export function recordValidatedProposal(
+  store: Store,
+  input: {
+    runId: string;
+    draft: RunDraft | null;
+    submitted: SubmittedProposal;
+    expected: ProposalState;
+    maxProposals: number;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  return write(store, () => {
+    if (input.signal?.aborted)
+      throw new AppError(
+        "PROPOSAL_SUBMISSION_CANCELLED",
+        "Proposal submission was cancelled.",
+        408,
+      );
+    assertProposalState(store, input.expected);
+    if (input.draft) {
+      if (
+        input.draft.id !== input.runId ||
+        input.draft.evidence.buildId !== input.expected.buildId ||
+        input.draft.evidence.watermark !== input.expected.watermark
+      )
+        throw new AppError(
+          "STALE_INPUT",
+          "Proposal evidence no longer matches the validated journal.",
+          409,
+        );
+      insertRow(store, input.draft, "proposal_ready");
+    }
+    const current = readRun(store, input.runId);
+    if (!current)
+      throw new AppError(
+        "RUN_NOT_FOUND",
+        "The proposal run is unavailable.",
+        404,
+      );
+    if (
+      current.evidence.buildId !== input.expected.buildId ||
+      current.evidence.watermark !== input.expected.watermark
+    )
+      throw new AppError(
+        "STALE_INPUT",
+        "Refresh proposal evidence before recording another correction.",
+        409,
+      );
+    if (current.proposals.length >= input.maxProposals)
+      throw new AppError(
+        "PROPOSAL_LIMIT",
+        "This proposal run has reached its proposal limit.",
+        409,
+      );
+    store.db
+      .prepare(
+        "UPDATE ai_runs SET proposal_json = ?, status = 'proposal_ready' WHERE id = ?",
+      )
+      .run(
+        JSON.stringify({ proposals: [...current.proposals, input.submitted] }),
+        input.runId,
       );
   });
 }

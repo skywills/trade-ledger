@@ -14,6 +14,11 @@ import {
   appendDecision,
   decisionWatermark,
 } from "../../src/server/decisions/service.js";
+import {
+  commitImport,
+  previewImport,
+} from "../../src/server/imports/service.js";
+import { buildExecutionTable, executionRow } from "../fixtures/scenarios.js";
 import { localProfile } from "../helpers/chat.js";
 import { proposalFixture } from "../helpers/proposal-fixture.js";
 import type { TestStore } from "../helpers/store.js";
@@ -138,7 +143,7 @@ it.each(kinds)(
   },
 );
 
-it("cross_account_or_currency_membership_is_invalid and partial contracts are rejected", async () => {
+it("cross_account_membership_is_invalid and partial contracts are rejected", async () => {
   const t = await proposalFixture();
   stores.push(t);
   for (const target of [
@@ -197,4 +202,54 @@ it("supersession_replaces_prior_effect while legacy proposal JSON keeps defaults
       },
     }).ok,
   ).toBe(false);
+});
+
+it("same-account cross-currency attachment is invalid", async () => {
+  const t = await proposalFixture();
+  stores.push(t);
+  const imported = await previewImport(t.store, {
+    filename: "eur.csv",
+    timezone: "UTC",
+    bytes: buildExecutionTable([
+      executionRow({
+        ClientAccountID: "A",
+        CurrencyPrimary: "EUR",
+        AssetClass: "STK",
+        Symbol: "XYZ",
+        UnderlyingSymbol: "XYZ",
+        Conid: "1",
+        Quantity: "100",
+        TradeDate: "2026-10-01",
+        DateTime: "2026-10-01 12:00:00",
+        TradePrice: "100",
+        NetCash: "-10000",
+        Multiplier: "1",
+        "Notes/Codes": "O",
+        IBExecID: "eur",
+        TradeID: "eur",
+        IBOrderID: "eur",
+      }),
+    ]),
+  });
+  await commitImport(t.store, imported.id);
+  await t.rebuild();
+  const current = activeProjection(t.store);
+  const eur = current.projection?.lifecycles?.lifecycles.find(
+    (l) => l.account === "A" && l.currency === "EUR",
+  );
+  if (!eur || !current.buildId) throw new Error("No EUR lifecycle");
+  const proposal = parseProposal({
+    kind: "lifecycle_attachment",
+    payload: {
+      opening: t.suggestion.callOpening,
+      targets: [{ lifecycleId: eur.id, quantity: "-1" }],
+    },
+  });
+  const result = await previewProposal(t.store, proposal, {
+    buildId: current.buildId,
+    watermark: 0,
+  });
+  expect(result.valid).toBe(false);
+  expect(result.impact).toBeNull();
+  expect(decisionWatermark(t.store)).toBe(0);
 });

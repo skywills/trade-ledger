@@ -13,6 +13,7 @@ import {
   decisionWatermark,
 } from "../src/server/decisions/service.js";
 import { registerAnalysisRoutes } from "../src/server/http/routes-analysis.js";
+import { listImports } from "../src/server/imports/service.js";
 import { localProfile, seedLedger } from "../test/helpers/chat.js";
 import { createTestStore } from "../test/helpers/store.js";
 
@@ -38,6 +39,8 @@ test("proposal actions work after the evidence watermark has advanced", async ({
       },
       "proposal_ready",
     );
+    const importId = listImports(store)[0]?.id;
+    if (!importId) throw new Error("No seeded import");
     for (const text of ["First note", "Second note", "Rejected note"]) {
       await appendRunProposal(store, runId, {
         id: randomUUID(),
@@ -47,6 +50,14 @@ test("proposal actions work after the evidence watermark has advanced", async ({
           sources: [],
           payload: { strategyId, text },
         },
+        submittedAt: new Date().toISOString(),
+        accepted: false,
+      });
+    }
+    for (const kind of ["import_exclusion", "import_inclusion"] as const) {
+      await appendRunProposal(store, runId, {
+        id: randomUUID(),
+        proposal: { kind, payload: { importId }, strategyIds: [], sources: [] },
         submittedAt: new Date().toISOString(),
         accepted: false,
       });
@@ -105,6 +116,13 @@ test("proposal actions work after the evidence watermark has advanced", async ({
     await expect(
       proposals.getByText("(accepted)", { exact: true }),
     ).toHaveCount(2);
+    const changes = proposals.getByRole("list", { name: "Proposed changes" });
+    const exclusion = changes.filter({ hasText: `Exclude import ${importId}` });
+    await expect(exclusion).toHaveText(`Exclude import ${importId} from the next rebuild.`);
+    // The card exposes the retained import before its individual Accept action.
+    await exclusion.locator("../..").getByRole("button", { name: "Accept", exact: true }).click();
+    await expect(proposals.getByText("(accepted)", { exact: true })).toHaveCount(3);
+    expect(decisionWatermark(store)).toBe(4);
     const rejection = page.waitForResponse((response) =>
       response.url().endsWith(`/api/analysis/${runId}/reject`),
     );
@@ -112,11 +130,15 @@ test("proposal actions work after the evidence watermark has advanced", async ({
     const response = await rejection;
     expect(response.status()).toBe(200);
     expect(await response.json()).toMatchObject({
-      decision: { kind: "rejection", sequence: 4 },
+      decision: { kind: "rejection", sequence: 5 },
     });
-    expect(decisionWatermark(store)).toBe(4);
+    expect(decisionWatermark(store)).toBe(5);
+    expect(store.db.prepare("SELECT kind FROM decisions ORDER BY sequence").all()).toEqual([
+      { kind: "notes" }, { kind: "notes" }, { kind: "notes" },
+      { kind: "import_exclusion" }, { kind: "rejection" },
+    ]);
     expect(readRun(store, runId)?.evidence.watermark).toBe(0);
-    expect(readRun(store, runId)?.acceptedDecisionIds).toHaveLength(3);
+    expect(readRun(store, runId)?.acceptedDecisionIds).toHaveLength(4);
   } finally {
     // Stop new proxy requests and finish active handlers before closing their origin.
     await page.unrouteAll({ behavior: "wait" });
