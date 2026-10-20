@@ -131,11 +131,17 @@ it("adds put, stock, call and call-away cash to one completed wheel cycle", () =
         "stock",
         execution("so", stock, "100", "-10000", 2, "open", "assignment"),
       ],
-      ["stock", execution("sc", stock, "-100", "10500", 8, "close")],
+      [
+        "stock",
+        execution("sc", stock, "-100", "10500", 8, "close", "assignment"),
+      ],
       ["calls", execution("co", call, "-1", "100", 3, "open")],
       ["calls", execution("cc", call, "1", "0", 8, "close", "assignment")],
     ],
-    [{ from: "put-origin", to: "stock", type: "assignment", sources: [] }],
+    [
+      { from: "put-origin", to: "stock", type: "assignment", sources: [] },
+      { from: "calls", to: "stock", type: "assignment", sources: [] },
+    ],
   );
   const draft = projectLifecycles(f.ledger, f.projection, []);
   const id = draft.lifecycles.find(

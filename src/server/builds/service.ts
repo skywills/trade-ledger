@@ -54,7 +54,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "lifecycles-v7";
+export const ALGORITHM_VERSION = "lifecycles-v9";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
@@ -160,19 +160,21 @@ export async function computeProjection(
   for (const [key, anchor] of anchors) {
     remap.set(key, await strategyId(store, anchor));
   }
+  // Presentation merges may remove self-links; retain original event evidence.
+  const originProjection = remapStrategyIds(origins, remap);
   const projection = accountProjection(
     ledger,
     remapStrategyIds(provisional, remap),
   );
   const lifecycles = accountLifecycles(
     ledger,
-    projection,
+    originProjection,
     projectLifecycles(
       ledger,
       projection,
       decisions,
       undefined,
-      remapStrategyIds(origins, remap),
+      originProjection,
       readLifecycleAnchors(store.db),
     ),
   );
