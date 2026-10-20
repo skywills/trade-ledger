@@ -28,7 +28,7 @@ const ExpectedBuild = { expectedBuildId: z.string().min(1).optional() };
 const ExpectedBuildFields = {
   expectedBuildId: { type: "string", minLength: 1 },
 };
-const dateOrder = (q: { from?: string; to?: string }) =>
+const dateOrder = (q: { from?: string | undefined; to?: string | undefined }) =>
   !q.from || !q.to || q.from <= q.to;
 
 const Paging = {

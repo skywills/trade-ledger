@@ -13,6 +13,7 @@ import { writeTools } from "./writes.js";
  */
 export function createChatTools(ctx: ChatToolContext): ChatTool[] {
   const reads = [
+    ...analyticsTools(ctx),
     ...pnlTools(ctx),
     ...journalTools(ctx),
     ...statusTools(ctx),
@@ -24,3 +25,5 @@ export function createChatTools(ctx: ChatToolContext): ChatTool[] {
     ...proposalTools(ctx),
   ];
 }
+
+import { analyticsTools } from "./analytics.js";
