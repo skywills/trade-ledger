@@ -94,11 +94,7 @@ const IMPORT_ROW_COLUMN: Record<ImportRowQuery["orderBy"], string> = {
   kind: "row_kind",
 };
 
-export function listImportRows(
-  store: Store,
-  importId: Id,
-  query: ImportRowQuery,
-): { items: ImportRowView[]; total: number } {
+function assertImportExists(store: Store, importId: Id): void {
   const exists = store.db
     .prepare("SELECT 1 FROM imports WHERE id = ?")
     .get(importId);
@@ -109,6 +105,44 @@ export function listImportRows(
       404,
     );
   }
+}
+
+function importRowView(row: ImportRowRecord): ImportRowView {
+  return {
+    id: row.id,
+    rowNumber: row.row_number,
+    section: row.section,
+    fields: JSON.parse(row.raw_fields_json) as Record<string, string>,
+    kind: row.row_kind,
+    issues: JSON.parse(row.parse_errors_json) as Issue[],
+  };
+}
+
+export function readImportRow(
+  store: Store,
+  importId: string,
+  rowNumber: number,
+): ImportRowView {
+  assertImportExists(store, importId);
+  const row = store.db
+    .prepare(`SELECT id, row_number, section, raw_fields_json, row_kind, parse_errors_json
+    FROM import_rows WHERE import_id = ? AND row_number = ?`)
+    .get(importId, rowNumber) as ImportRowRecord | undefined;
+  if (!row)
+    throw new AppError(
+      "IMPORT_ROW_NOT_FOUND",
+      "No retained row exists at this import row number.",
+      404,
+    );
+  return importRowView(row);
+}
+
+export function listImportRows(
+  store: Store,
+  importId: Id,
+  query: ImportRowQuery,
+): { items: ImportRowView[]; total: number } {
+  assertImportExists(store, importId);
   const total = (
     store.db
       .prepare("SELECT COUNT(*) AS count FROM import_rows WHERE import_id = ?")
@@ -124,14 +158,7 @@ export function listImportRows(
        LIMIT ? OFFSET ?`,
     )
     .all(importId, query.limit, query.offset) as ImportRowRecord[];
-  const items = rows.map((row) => ({
-    id: row.id,
-    rowNumber: row.row_number,
-    section: row.section,
-    fields: JSON.parse(row.raw_fields_json) as Record<string, string>,
-    kind: row.row_kind,
-    issues: JSON.parse(row.parse_errors_json) as Issue[],
-  }));
+  const items = rows.map(importRowView);
   return { items, total };
 }
 

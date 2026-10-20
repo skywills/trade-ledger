@@ -1,4 +1,8 @@
+import { analyticsTools } from "./analytics.js";
+import { capabilitiesTool } from "./capabilities.js";
+import { importEvidenceTools } from "./imports.js";
 import { journalTools } from "./journal.js";
+import { lifecycleTools } from "./lifecycles.js";
 import { pnlTools } from "./pnl.js";
 import { proposalTools } from "./proposals.js";
 import { guardReads, resetAfterWrite } from "./repeatGuard.js";
@@ -13,14 +17,24 @@ import { writeTools } from "./writes.js";
  */
 export function createChatTools(ctx: ChatToolContext): ChatTool[] {
   const reads = [
+    ...analyticsTools(ctx),
+    ...lifecycleTools(ctx),
+    ...importEvidenceTools(ctx),
     ...pnlTools(ctx),
     ...journalTools(ctx),
     ...statusTools(ctx),
     ...reviewTools(ctx),
   ];
+  const writes = writeTools(ctx);
+  const proposals = proposalTools(ctx);
+  const capabilities = capabilitiesTool(ctx, [
+    ...reads,
+    ...writes,
+    ...proposals,
+  ]);
   return [
-    ...reads.map((tool) => guardReads(ctx, tool)),
-    ...writeTools(ctx).map((tool) => resetAfterWrite(ctx, tool)),
-    ...proposalTools(ctx),
+    ...[...reads, capabilities].map((tool) => guardReads(ctx, tool)),
+    ...writes.map((tool) => resetAfterWrite(ctx, tool)),
+    ...proposals,
   ];
 }

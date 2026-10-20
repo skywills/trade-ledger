@@ -10,6 +10,7 @@ import type { ChatFrame } from "../../src/server/chat/frames.js";
 import { type ChatLimits, ChatService } from "../../src/server/chat/service.js";
 import { listMessages, readThread } from "../../src/server/chat/threads.js";
 import {
+  commitImport,
   listImports,
   previewImport,
 } from "../../src/server/imports/service.js";
@@ -36,17 +37,18 @@ afterEach(async () => {
 async function harness(
   plan: InferencePlanStep[],
   limits: Partial<ChatLimits> = {},
-  server: { delayMs?: number; planDelayMs?: number } = {},
+  server: { delayMs?: number; planDelayMs?: number; empty?: boolean } = {},
   profileMaxTokens?: number,
 ) {
   const t = await createTestStore();
   stores.push(t);
-  await seedLedger(t.store);
+  if (!server.empty) await seedLedger(t.store);
+  const { empty: _empty, ...inferenceOptions } = server;
   const inference = await startInferenceServer({
     mode: "tool-call",
     plan,
     planGateTool: "get_pnl_summary",
-    ...server,
+    ...inferenceOptions,
   });
   servers.push(inference);
   const profile =
@@ -97,6 +99,66 @@ async function waitIdle(store: Store, threadId: string, timeoutMs = 30_000) {
 }
 
 describe("ChatService read-only turns", () => {
+  it.each(["normal", "empty", "stale"])(
+    "offers and executes analytics and lifecycle tools on a %s build",
+    async (state) => {
+      const h = await harness(
+        [
+          {
+            kind: "tool-call",
+            toolName: "get_analytics_summary",
+            arguments: {},
+          },
+          { kind: "tool-call", toolName: "list_lifecycles", arguments: {} },
+          {
+            kind: "text",
+            text: "The completed lifecycle result is available.",
+          },
+        ],
+        {},
+        { empty: state === "empty" },
+      );
+      if (state === "stale") {
+        const preview = await previewImport(h.store, {
+          filename: "later.csv",
+          bytes: fixtures.partialFills,
+          timezone: "UTC",
+        });
+        await commitImport(h.store, preview.id);
+      }
+      const thread = await h.chat.createThread({ profileId: h.profile.id });
+      const { assistantMessageId } = await h.chat.sendMessage(thread.id, {
+        clientMessageId: "analytics",
+        text: "Explain my performance and lifecycles",
+      });
+      await waitIdle(h.store, thread.id);
+      const assistant = listMessages(h.store, thread.id).find(
+        (m) => m.id === assistantMessageId,
+      );
+      expect(assistant?.status).toBe("complete");
+      expect(assistant?.tools.map((t) => t.name)).toEqual([
+        "get_analytics_summary",
+        "list_lifecycles",
+      ]);
+      expect(assistant?.tools.every((t) => !t.isError)).toBe(true);
+      const toolContents = h.inference
+        .receivedRequests()
+        .flatMap(
+          (r) =>
+            (
+              r.json as {
+                messages?: { role?: string; content?: unknown }[];
+              } | null
+            )?.messages ?? [],
+        )
+        .filter((m) => m.role === "tool")
+        .map((m) => m.content)
+        .join("\n");
+      expect(toolContents).toContain(`"stale":${state === "stale"}`);
+      if (state === "empty") expect(toolContents).toContain('"buildId":null');
+    },
+  );
+
   it("runs a tool-using turn and persists the final answer", async () => {
     const h = await harness([
       { kind: "tool-call", toolName: "get_pnl_summary", arguments: {} },

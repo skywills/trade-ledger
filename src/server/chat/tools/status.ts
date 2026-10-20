@@ -12,13 +12,16 @@ import {
   refuseInvalidInput,
   UNTRUSTED,
 } from "./shared.js";
+import { pageSelectedResult } from "./snapshot.js";
 
 const Paging = {
   offset: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(MAX_LIST_ROWS).optional(),
 };
 const ListImports = z.object({ ...Paging }).strict();
-const PreviewId = z.object({ previewId: z.string().min(1) }).strict();
+const PreviewId = z
+  .object({ previewId: z.string().min(1), ...Paging })
+  .strict();
 const JobId = z.object({ jobId: z.string().min(1) }).strict();
 
 function listImportsTool(ctx: ChatToolContext): ChatTool {
@@ -53,24 +56,34 @@ function getImportPreviewTool(ctx: ChatToolContext): ChatTool {
     description: `Read a staged (not yet committed) CSV import preview: counts, issues and whether it can be committed. Call this before commit_import and report the counts to the user. ${UNTRUSTED}`,
     inputSchema: {
       type: "object",
-      properties: { previewId: { type: "string" } },
+      properties: { previewId: { type: "string" }, ...PagingSchemaFields },
       required: ["previewId"],
       additionalProperties: false,
     },
     approval: "never",
     run: (input) =>
       refuseInvalidInput(() => {
-        const { previewId } = PreviewId.parse(input ?? {});
+        const {
+          previewId,
+          offset = 0,
+          limit = MAX_LIST_ROWS,
+        } = PreviewId.parse(input ?? {});
         const summary = readPreviewSummary(ctx.store, previewId, ctx.now());
-        return jsonResult({
-          id: summary.id,
-          filename: summary.filename,
-          status: summary.status,
-          expiresAt: summary.expiresAt,
-          counts: summary.preview.counts,
-          issues: summary.preview.issues.slice(0, MAX_LIST_ROWS),
-          committable: summary.preview.committable,
-        });
+        return pageSelectedResult(
+          {
+            id: summary.id,
+            filename: summary.filename,
+            status: summary.status,
+            expiresAt: summary.expiresAt,
+            counts: summary.preview.counts,
+            committable: summary.preview.committable,
+          },
+          summary.preview.issues.slice(offset, offset + limit),
+          summary.preview.issues.length,
+          offset,
+          limit,
+          "issues",
+        );
       }),
   };
 }
