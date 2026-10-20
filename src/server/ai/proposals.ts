@@ -10,7 +10,7 @@ import type {
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { minorUnit } from "../../shared/money.js";
-import { activeLedgerSnapshot } from "../builds/service.js";
+import { activeLedgerSnapshot, activeProjection } from "../builds/service.js";
 import {
   type DecisionInput,
   DecisionInputSchema,
@@ -42,6 +42,7 @@ const SourceRefSchema = z.object({
 });
 
 const CommonFields = {
+  supersedesId: IdSchema.nullable().default(null),
   rationale: z.string().optional(),
   sources: z.array(SourceRefSchema).default([]),
   strategyIds: z.array(IdSchema).default([]),
@@ -53,6 +54,32 @@ const AllocationRowSchema = z.object({
   netCash: DecimalText,
   brokerPnl: DecimalText.nullable().default(null),
 });
+
+function retainedVariant<
+  K extends
+    | "group_merge"
+    | "import_exclusion"
+    | "import_inclusion"
+    | "lifecycle_attachment"
+    | "lifecycle_membership"
+    | "lifecycle_attachment_rejection"
+    | "wheel_campaign"
+    | "wheel_campaign_membership",
+>(kind: K) {
+  const payload = DecisionInputSchema.options.find(
+    (option) => option.shape.kind.value === kind,
+  )?.shape.payload;
+  if (!payload) throw new Error(`Missing retained payload for ${kind}`);
+  return z
+    .object({
+      kind: z.literal(kind),
+      ...CommonFields,
+      payload: payload as unknown as z.ZodType<
+        Extract<DecisionInput, { kind: K }>["payload"]
+      >,
+    })
+    .strict();
+}
 
 export const ProposalSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -97,19 +124,23 @@ export const ProposalSchema = z.discriminatedUnion("kind", [
     ...CommonFields,
     payload: z.object({ strategyId: IdSchema, price: DecimalText }),
   }),
+  retainedVariant("group_merge"),
+  retainedVariant("import_exclusion"),
+  retainedVariant("import_inclusion"),
+  retainedVariant("lifecycle_attachment"),
+  retainedVariant("lifecycle_membership"),
+  retainedVariant("lifecycle_attachment_rejection"),
+  retainedVariant("wheel_campaign"),
+  retainedVariant("wheel_campaign_membership"),
 ]);
 
-export type Proposal = z.infer<typeof ProposalSchema>;
+type LegacyCompatible<T> = T extends unknown
+  ? Omit<T, "supersedesId"> & { supersedesId?: string | null | undefined }
+  : never;
+export type Proposal = LegacyCompatible<z.infer<typeof ProposalSchema>>;
 export type ProposalKind = Proposal["kind"];
 
-export const PROPOSAL_KINDS = [
-  "manual_allocation",
-  "identity_binding",
-  "group_explicit",
-  "lifecycle",
-  "notes",
-  "stop_loss",
-] as const satisfies readonly ProposalKind[];
+export { PROPOSAL_KINDS } from "./proposal-kinds.js";
 
 /** Parse a model-supplied proposal; throws an AppError on a schema violation. */
 export function parseProposal(raw: unknown): Proposal {
@@ -304,6 +335,63 @@ export function validateProposal(
   );
 }
 
+/** References not expressible by the active ledger (notably excluded imports). */
+export function validateProposalReferences(
+  store: Store,
+  proposal: Proposal,
+): Issue[] {
+  const issues: Issue[] = [];
+  const add = (code: string, scope: string) =>
+    issues.push(makeIssue(code, [], "error", scope));
+  if (
+    proposal.kind === "import_exclusion" ||
+    proposal.kind === "import_inclusion"
+  ) {
+    if (
+      !store.db
+        .prepare("SELECT 1 FROM imports WHERE id = ?")
+        .get(proposal.payload.importId)
+    )
+      add("UNKNOWN_IMPORT", proposal.payload.importId);
+  }
+  if (proposal.kind === "group_merge") {
+    const ids = [
+      proposal.payload.chosenStrategyId,
+      ...proposal.payload.mergedStrategyIds,
+    ];
+    if (new Set(ids).size !== ids.length)
+      add("INVALID_GROUP_MERGE", proposal.payload.chosenStrategyId);
+    for (const id of ids)
+      if (
+        !store.db
+          .prepare("SELECT 1 FROM strategy_identities WHERE id = ?")
+          .get(id)
+      )
+        add("UNKNOWN_STRATEGY", id);
+  }
+  const data = activeProjection(store).projection?.lifecycles;
+  const cycle = (id: string) => {
+    if (!data?.lifecycles.some((l) => l.id === id))
+      add("UNKNOWN_LIFECYCLE", id);
+  };
+  if (proposal.kind === "lifecycle_attachment")
+    for (const target of proposal.payload.targets) cycle(target.lifecycleId);
+  if (proposal.kind === "lifecycle_membership")
+    for (const assignment of proposal.payload.assignments)
+      cycle(assignment.lifecycleId);
+  if (proposal.kind === "lifecycle_attachment_rejection")
+    for (const id of proposal.payload.candidateLifecycleIds) cycle(id);
+  if (proposal.kind === "wheel_campaign_membership") {
+    cycle(proposal.payload.lifecycleId);
+    if (
+      proposal.payload.campaignId !== null &&
+      !data?.campaigns.some((c) => c.id === proposal.payload.campaignId)
+    )
+      add("UNKNOWN_CAMPAIGN", proposal.payload.campaignId);
+  }
+  return issues;
+}
+
 /** Converts an accepted proposal into a Task 6 decision input. */
 export function proposalDecisionInput(
   proposal: Proposal,
@@ -314,7 +402,7 @@ export function proposalDecisionInput(
     sources: proposal.sources,
     strategyIds: proposal.strategyIds,
     payload: proposal.payload,
-    supersedesId: null,
+    supersedesId: proposal.supersedesId ?? null,
     clientRequestId,
     author: "ai-accepted",
   });
@@ -371,9 +459,10 @@ export async function acceptProposal(
       409,
     );
   }
-  const errors = validateProposal(ledger, submitted.proposal).filter(
-    (issue) => issue.severity === "error",
-  );
+  const errors = [
+    ...validateProposal(ledger, submitted.proposal),
+    ...validateProposalReferences(store, submitted.proposal),
+  ].filter((issue) => issue.severity === "error");
   if (errors.length > 0) {
     throw new AppError(
       "PROPOSAL_INVALID",

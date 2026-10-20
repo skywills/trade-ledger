@@ -22,6 +22,7 @@ import {
   parseProposal,
   proposalDecisionInput,
   validateProposal,
+  validateProposalReferences,
 } from "./proposals.js";
 
 function totals(projection: Projection): PreviewTotals {
@@ -91,9 +92,10 @@ export async function previewProposal(
     const before = assertProposalState(clone, expected);
     let result: ProposalPreview;
     try {
-      const issues = validateProposal(before.ledger, parsed).map(
-        ({ code, severity }) => ({ code, severity }),
-      );
+      const issues = [
+        ...validateProposal(before.ledger, parsed),
+        ...validateProposalReferences(clone, parsed),
+      ].map(({ code, severity }) => ({ code, severity }));
       if (issues.some((i) => i.severity === "error"))
         result = { ...base, valid: false, issues, impact: null };
       else {

@@ -2,7 +2,11 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildEvidenceSnapshot } from "../../ai/evidence.js";
-import { ProposalSchema, tryParseProposal } from "../../ai/proposals.js";
+import {
+  PROPOSAL_KINDS,
+  ProposalSchema,
+  tryParseProposal,
+} from "../../ai/proposals.js";
 import {
   appendRunProposal,
   insertRun,
@@ -25,16 +29,10 @@ const SUBMIT_SCHEMA = {
   properties: {
     kind: {
       type: "string",
-      enum: [
-        "manual_allocation",
-        "identity_binding",
-        "group_explicit",
-        "lifecycle",
-        "notes",
-        "stop_loss",
-      ],
+      enum: [...PROPOSAL_KINDS],
     },
     rationale: { type: "string" },
+    supersedesId: { anyOf: [{ type: "string" }, { type: "null" }] },
     sources: {
       type: "array",
       items: {
@@ -99,7 +97,7 @@ export function proposalTools(ctx: ChatToolContext): ChatTool[] {
     {
       name: "submit_proposal",
       description:
-        "Record a reconciliation proposal for the user to accept or reject. This does not write a decision. Match payload to kind using the schema; never probe with empty payloads. identity_binding binds a source row to a canonical identity and expected quantity. No supported kind changes contract multipliers or fixes MISSING_MULTIPLIER; explain that limitation instead of submitting a proposal. Allocations must conserve each execution's signed quantity and net cash.",
+        "Record a reconciliation proposal for the user to accept or reject. This does not write a decision. Match payload to kind using the schema; never probe with empty payloads. identity_binding binds a source row to a canonical identity and expected quantity. group_split is unsupported because retained splits lack allocation mappings. No supported kind changes contract multipliers or fixes MISSING_MULTIPLIER; explain that limitation instead of submitting a proposal. Allocations must conserve each execution's signed quantity and net cash.",
       inputSchema: SUBMIT_SCHEMA,
       approval: "never",
       run: (input) =>

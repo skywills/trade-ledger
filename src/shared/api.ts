@@ -210,6 +210,7 @@ export const RunSummarySchema = z.object({
 export type RunSummaryDto = z.infer<typeof RunSummarySchema>;
 
 export const ProposalDraftSchema = z.object({
+  supersedesId: z.string().nullable().optional(),
   kind: z.string(),
   rationale: z.string().optional(),
   sources: z
