@@ -1,4 +1,5 @@
 import { journalTools } from "./journal.js";
+import { lifecycleTools } from "./lifecycles.js";
 import { pnlTools } from "./pnl.js";
 import { proposalTools } from "./proposals.js";
 import { guardReads, resetAfterWrite } from "./repeatGuard.js";
@@ -14,6 +15,7 @@ import { writeTools } from "./writes.js";
 export function createChatTools(ctx: ChatToolContext): ChatTool[] {
   const reads = [
     ...analyticsTools(ctx),
+    ...lifecycleTools(ctx),
     ...pnlTools(ctx),
     ...journalTools(ctx),
     ...statusTools(ctx),
