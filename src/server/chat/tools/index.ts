@@ -1,4 +1,5 @@
 import { analyticsTools } from "./analytics.js";
+import { capabilitiesTool } from "./capabilities.js";
 import { importEvidenceTools } from "./imports.js";
 import { journalTools } from "./journal.js";
 import { lifecycleTools } from "./lifecycles.js";
@@ -24,9 +25,16 @@ export function createChatTools(ctx: ChatToolContext): ChatTool[] {
     ...statusTools(ctx),
     ...reviewTools(ctx),
   ];
+  const writes = writeTools(ctx);
+  const proposals = proposalTools(ctx);
+  const capabilities = capabilitiesTool(ctx, [
+    ...reads,
+    ...writes,
+    ...proposals,
+  ]);
   return [
-    ...reads.map((tool) => guardReads(ctx, tool)),
-    ...writeTools(ctx).map((tool) => resetAfterWrite(ctx, tool)),
-    ...proposalTools(ctx),
+    ...[...reads, capabilities].map((tool) => guardReads(ctx, tool)),
+    ...writes.map((tool) => resetAfterWrite(ctx, tool)),
+    ...proposals,
   ];
 }

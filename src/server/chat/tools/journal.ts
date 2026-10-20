@@ -16,7 +16,6 @@ import {
   type ChatToolContext,
   jsonResult,
   MAX_LIST_ROWS,
-  PagingSchemaFields,
   pagedResult,
   refuseInvalidInput,
   UNTRUSTED,
@@ -25,9 +24,6 @@ import {
 import { readToolSnapshot, snapshotMeta } from "./snapshot.js";
 
 const ExpectedBuild = { expectedBuildId: z.string().min(1).optional() };
-const ExpectedBuildFields = {
-  expectedBuildId: { type: "string", minLength: 1 },
-};
 const dateOrder = (q: { from?: string | undefined; to?: string | undefined }) =>
   !q.from || !q.to || q.from <= q.to;
 
@@ -36,6 +32,11 @@ const Paging = {
   limit: z.number().int().min(1).max(MAX_LIST_ROWS).optional(),
 };
 const IsoDate = z.string().refine(validDay, "Use a valid YYYY-MM-DD date.");
+const AttributionFilters = {
+  underlying: z.string().min(1).optional(),
+  assetClass: z.string().min(1).optional(),
+  account: z.string().min(1).optional(),
+};
 const ListStrategies = z
   .object({
     status: z
@@ -43,6 +44,7 @@ const ListStrategies = z
       .optional(),
     symbol: z.string().min(1).optional(),
     type: z.string().min(1).optional(),
+    ...AttributionFilters,
     from: IsoDate.optional(),
     to: IsoDate.optional(),
     ...Paging,
@@ -56,6 +58,9 @@ const GetStrategy = z
 const ListTransactions = z
   .object({
     symbol: z.string().min(1).optional(),
+    ...AttributionFilters,
+    instrumentKey: z.string().min(1).optional(),
+    executionKey: z.string().min(1).optional(),
     from: IsoDate.optional(),
     to: IsoDate.optional(),
     ...Paging,
@@ -72,6 +77,25 @@ const ListIssues = z
   })
   .strict();
 
+type EvidenceQuery = {
+  underlying?: string | undefined;
+  assetClass?: string | undefined;
+  account?: string | undefined;
+  instrumentKey?: string | undefined;
+  executionKey?: string | undefined;
+};
+function matchesEvidence(e: Execution, q: EvidenceQuery): boolean {
+  return (
+    (!q.underlying ||
+      underlyingSymbol(e.instrument).toUpperCase() ===
+        normalizeSymbol(q.underlying.replace(/^value:/, "")).toUpperCase()) &&
+    (!q.assetClass || e.instrument.assetClass === q.assetClass) &&
+    (!q.account || e.account === q.account) &&
+    (!q.instrumentKey || e.instrument.key === q.instrumentKey) &&
+    (!q.executionKey || e.key === q.executionKey)
+  );
+}
+
 function within(date: string | null, from?: string, to?: string): boolean {
   if (from === undefined && to === undefined) return true;
   if (date === null) return false;
@@ -83,24 +107,27 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
   return {
     name: "list_strategies",
     description: `List strategies (journal rows) in the active build, newest opening first. symbol matches the description case-insensitively; from/to filter openingDate. ${UNTRUSTED}`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        status: { type: "string" },
-        symbol: { type: "string" },
-        type: { type: "string" },
-        from: { type: "string" },
-        to: { type: "string" },
-        ...PagingSchemaFields,
-        ...ExpectedBuildFields,
-      },
-      additionalProperties: false,
-    },
+    inputSchema: z.toJSONSchema(ListStrategies, {
+      io: "input",
+      target: "draft-7",
+    }),
     approval: "never",
     run: (input) =>
       refuseInvalidInput(() => {
         const q = ListStrategies.parse(input ?? {});
         const active = readToolSnapshot(ctx, q.expectedBuildId);
+        const executions = new Map(
+          (active.ledger?.executions ?? []).map((e) => [e.key, e]),
+        );
+        const evidence = new Map<string, Execution[]>();
+        for (const allocation of active.projection?.allocations ?? []) {
+          const execution = executions.get(allocation.executionKey);
+          if (execution) {
+            const rows = evidence.get(allocation.strategyId) ?? [];
+            rows.push(execution);
+            evidence.set(allocation.strategyId, rows);
+          }
+        }
         const rows = (active.projection?.strategies ?? [])
           .map((s) => ({
             ...s,
@@ -120,6 +147,11 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
                   normalizeStrategyDescription(q.symbol.trim()).toLowerCase(),
                 ),
           )
+          .filter(
+            (s) =>
+              (!q.underlying && !q.assetClass && !q.account) ||
+              (evidence.get(s.id) ?? []).some((e) => matchesEvidence(e, q)),
+          )
           .filter((s) => within(s.openingDate, q.from, q.to))
           .sort((a, b) =>
             (b.openingDate ?? "").localeCompare(a.openingDate ?? ""),
@@ -133,12 +165,10 @@ function getStrategyTool(ctx: ChatToolContext): ChatTool {
   return {
     name: "get_strategy",
     description: `Read one strategy with its allocations, links and notes/stop-loss metadata. ${UNTRUSTED}`,
-    inputSchema: {
-      type: "object",
-      properties: { strategyId: { type: "string" }, ...ExpectedBuildFields },
-      required: ["strategyId"],
-      additionalProperties: false,
-    },
+    inputSchema: z.toJSONSchema(GetStrategy, {
+      io: "input",
+      target: "draft-7",
+    }),
     approval: "never",
     run: (input) =>
       refuseInvalidInput(() =>
@@ -207,17 +237,10 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
   return {
     name: "list_transactions",
     description: `List ledger executions in the active build, newest first. Money is decimal strings; brokerPnl null means unknown. ${UNTRUSTED}`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: { type: "string" },
-        from: { type: "string" },
-        to: { type: "string" },
-        ...PagingSchemaFields,
-        ...ExpectedBuildFields,
-      },
-      additionalProperties: false,
-    },
+    inputSchema: z.toJSONSchema(ListTransactions, {
+      io: "input",
+      target: "draft-7",
+    }),
     approval: "never",
     run: (input) =>
       refuseInvalidInput(() => {
@@ -230,6 +253,7 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
               normalizeSymbol(e.instrument.symbol).toUpperCase() ===
                 normalizeSymbol(q.symbol).toUpperCase(),
           )
+          .filter((e) => matchesEvidence(e, q))
           .filter((e) => within(e.date, q.from, q.to))
           .sort((a, b) => b.date.localeCompare(a.date));
         return pagedResult(
@@ -246,16 +270,7 @@ function listReviewIssuesTool(ctx: ChatToolContext): ChatTool {
   return {
     name: "list_review_issues",
     description: `List review issues (things needing reconciliation) in the active build. ${UNTRUSTED}`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        severity: { type: "string" },
-        code: { type: "string" },
-        ...PagingSchemaFields,
-        ...ExpectedBuildFields,
-      },
-      additionalProperties: false,
-    },
+    inputSchema: z.toJSONSchema(ListIssues, { io: "input", target: "draft-7" }),
     approval: "never",
     run: (input) =>
       refuseInvalidInput(() => {

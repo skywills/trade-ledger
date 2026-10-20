@@ -101,8 +101,22 @@ per-profile placeholder and never borrows an ambient cloud credential.
 
 The **Agent** page (`/chat`) is an optional conversational assistant over your
 journal. It needs a verified default model profile (see Local inference) and
-can read strategies, P&L, transactions, imports and review data through
-bounded read-only tools.
+can read strategies, transactions, imports and review evidence through bounded
+read-only tools. Performance tools use the dashboard's lifecycle/strategy units,
+P&L basis, filters and exact decimal calculations. Connected trades and explicit
+wheel campaigns have their own evidence tools.
+
+- Analytics default to lifecycle results and broker P&L. Replies identify the
+  selected currency; currencies and P&L bases are never combined or substituted.
+- Drawdown describes cumulative completed-trade P&L, not account equity.
+- Source rows include quarantined evidence. Raw field values are private,
+  immutable data retrieved in Unicode-safe chunks; preview issues are paginated.
+- Reads carry build provenance. A changed build rejects a pinned drill so the
+  assistant can refresh its evidence. List pages have at most 50 rows and may
+  shrink to fit the model; continuation points to the actual next row.
+- Capability discovery lists registered tools, approval modes, proposal kinds
+  and limits. Live prices, Greeks, FX conversion, account equity reconstruction
+  and multiplier corrections are unavailable.
 
 - Imports, rebuilds and backups ask for your explicit **Allow** before they run.
 - Decisions are never written by the agent directly; they are only created from
