@@ -322,6 +322,7 @@ test("attachment split previews exact reserved shares and cash, then survives re
 }) => {
   const state = await setup(page);
   await page.goto("/lifecycles/cycle-one?expectedBuildId=build-1");
+  await page.getByText("Advanced adjustments", { exact: true }).click();
   await page.getByLabel("Contracts 1", { exact: true }).fill("1");
   await page.getByRole("button", { name: "Split contracts" }).click();
   await page.getByLabel("Target lifecycle 2").selectOption("cycle-two");
@@ -362,6 +363,7 @@ test("fractional or incomplete splits cannot be accepted and independent calls r
 }) => {
   const state = await setup(page);
   await page.goto("/lifecycles/cycle-one");
+  await page.getByText("Advanced adjustments", { exact: true }).click();
   await page.getByLabel("Contracts 1", { exact: true }).fill("0.5");
   await page.getByRole("button", { name: "Preview attachment" }).click();
   await expect(page.getByRole("alert")).toContainText("positive whole number");
@@ -570,6 +572,7 @@ test("source membership preview conserves the complete source quantity before sa
 }) => {
   const state = await setup(page);
   await page.goto("/lifecycles/cycle-one");
+  await page.getByText("Advanced adjustments", { exact: true }).click();
   await page.getByText("Correct source membership", { exact: true }).click();
   await page.getByLabel("Quantity 1", { exact: true }).fill("100");
   await page.getByRole("button", { name: "Preview membership" }).click();
@@ -674,6 +677,7 @@ test("a split attachment leaves indivisible closing contracts and their cash for
 }) => {
   await setup(page, "1");
   await page.goto("/lifecycles/cycle-one");
+  await page.getByText("Advanced adjustments", { exact: true }).click();
   await page.getByRole("button", { name: "Preview attachment" }).click();
   await expect(
     page.getByLabel("Call source allocations to move"),

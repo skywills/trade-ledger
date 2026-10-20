@@ -376,6 +376,8 @@ export function markProposalAccepted(
         404,
       );
     }
+    if (current.proposals.find((entry) => entry.id === proposalId)?.accepted)
+      return;
     const proposals = current.proposals.map((entry) =>
       entry.id === proposalId ? { ...entry, accepted: true } : entry,
     );

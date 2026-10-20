@@ -98,6 +98,7 @@ export const LifecycleAttachmentPayloadSchema = z.object({
     .min(1),
 });
 export const LifecycleMembershipPayloadSchema = z.object({
+  requireCallCoverage: z.boolean().optional(),
   assignments: z
     .array(
       z.object({

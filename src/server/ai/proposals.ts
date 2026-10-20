@@ -20,6 +20,7 @@ import {
   appendDecision,
   type Decision,
   decisionWatermark,
+  readDecisions,
 } from "../decisions/service.js";
 import type { Store } from "../storage/database.js";
 import { makeIssue } from "../strategies/projection.js";
@@ -446,6 +447,7 @@ export async function acceptProposal(
   runId: Id,
   proposalId: Id,
   expectedWatermark: number,
+  clientRequestId?: string,
 ): Promise<Decision[]> {
   const run = readRun(store, runId);
   if (run === null) {
@@ -462,6 +464,20 @@ export async function acceptProposal(
       `No proposal exists for id ${proposalId}.`,
       404,
     );
+  }
+  const requestId =
+    clientRequestId === undefined
+      ? undefined
+      : `proposal:${runId}:${proposalId}:${clientRequestId}`;
+  if (requestId !== undefined) {
+    const existing = readDecisions(store, decisionWatermark(store)).find(
+      (d) => d.clientRequestId === requestId,
+    );
+    if (existing) {
+      if (!submitted.accepted)
+        await markProposalAccepted(store, runId, proposalId, existing.id);
+      return [existing];
+    }
   }
   if (submitted.accepted) {
     throw new AppError(
@@ -492,7 +508,7 @@ export async function acceptProposal(
 
   const decision = await appendDecision(
     store,
-    proposalDecisionInput(submitted.proposal),
+    proposalDecisionInput(submitted.proposal, requestId),
     expectedWatermark,
   );
   await markProposalAccepted(store, runId, proposalId, decision.id);

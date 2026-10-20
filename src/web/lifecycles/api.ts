@@ -65,6 +65,7 @@ const Provenance = {
   rebuildRequired: z.boolean(),
 };
 export const LifecycleListSchema = z.object({
+  connectionExecutions: z.array(ExecutionSchema).default([]),
   ...Provenance,
   lifecycles: z
     .object({

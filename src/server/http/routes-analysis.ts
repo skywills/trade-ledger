@@ -74,6 +74,9 @@ export async function registerAnalysisRoutes(
         id,
         proposalId,
         expectedWatermark,
+        body.clientRequestId === undefined
+          ? undefined
+          : readString(body.clientRequestId, "clientRequestId"),
       );
       return { decisions };
     } catch (error) {

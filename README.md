@@ -23,6 +23,21 @@ Choose one currency and either broker-reported or reconstructed P&L. Closed-trad
 
 Filters are preserved in the URL. CSV exports cover the full selected scope rather than the visible page and retain exact decimal values and build/ledger provenance. If the active build changes during a drill-down/export, refresh analytics before continuing. Reports default to the current month unless an explicit period is supplied. Review notes are local to the report view, unsaved, and included in print.
 
+## Reviewing covered-call connections
+
+**Review** and **Lifecycles** group related call fills into one connection review.
+Open **Review connection** to see the share lifecycle, chronological trades,
+contract quantities and coverage required. The preview checks the change in an
+isolated journal before enabling **Confirm connection**. Matching Agent connection
+proposals use the same review panel and still require your confirmation.
+
+Choose **Keep trades separate** when the calls are independent. Confirmation
+saves the decision and updates the journal; **Undo connection** is available in
+the result panel while no later decisions have been saved. Undo retains the
+original decision in history. Interrupted requests can be retried without saving
+the decision twice. Use **Advanced adjustments** to split individual fills,
+correct source quantities, or revise an earlier decision.
+
 ## Requirements
 
 - Node.js `22.19.0` (the app pins `>=22.19.0`). Docker is optional but is how

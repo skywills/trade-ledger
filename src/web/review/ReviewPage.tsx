@@ -1,5 +1,8 @@
 import { ReviewEnvelope, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
+import { LifecycleListSchema } from "../lifecycles/api.js";
+import { ConnectionQueue } from "../lifecycles/ConnectionQueue.js";
+import { connectionGroups, reviewLabel } from "../lifecycles/connections.js";
 import { Link } from "../navigation.js";
 import { AskAgent, PastAnalyses } from "./AgentReview.js";
 import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
@@ -8,6 +11,26 @@ import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
 export function ReviewPage() {
   const remote = useJson("/api/review?pageSize=100", ReviewEnvelope);
   const history = listDecisions();
+  const connections = useJson("/api/lifecycles", LifecycleListSchema);
+  const currentConnections =
+    connections.data?.buildId === remote.data?.buildId
+      ? connections.data
+      : null;
+  const grouped =
+    currentConnections?.lifecycles &&
+    connectionGroups(
+      currentConnections.lifecycles.suggestions,
+      currentConnections.lifecycles.members,
+      currentConnections.connectionExecutions,
+    );
+  const connectionIssueKeys = new Set(
+    (grouped || []).flatMap((g) =>
+      g.suggestions.map((s) => `lifecycle:${s.id}`),
+    ),
+  );
+  const remainingIssues = (remote.data?.items ?? []).filter(
+    (issue) => !connectionIssueKeys.has(issue.key),
+  );
 
   return (
     <section>
@@ -16,6 +39,7 @@ export function ReviewPage() {
         buildId={remote.data?.buildId ?? null}
         stale={remote.data?.stale ?? false}
       />
+      {currentConnections && <ConnectionQueue data={currentConnections} />}
       {remote.status === "loading" ? (
         <Loading label="Loading review items…" />
       ) : remote.status === "error" ? (
@@ -25,46 +49,52 @@ export function ReviewPage() {
         />
       ) : (
         <>
-          <TableScroll label="Review items table">
-            <table aria-label="Review items">
-              <thead>
-                <tr>
-                  <th>Severity</th>
-                  <th>Code</th>
-                  <th>Sources</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(remote.data?.items ?? []).map((issue) => (
-                  <tr key={issue.key}>
-                    <td>
-                      <span
-                        className={`badge ${issue.severity === "error" ? "badge-danger" : "badge-warn"}`}
-                      >
-                        <span aria-hidden="true">
-                          {issue.severity === "error" ? "✕" : "⚠"}
-                        </span>
-                        {issue.severity}
-                      </span>
-                    </td>
-                    <td>{issue.code}</td>
-                    <td>
-                      {issue.sources.length === 0
-                        ? "—"
-                        : issue.sources.map((source) => (
-                            <Link
-                              key={`${source.importId}:${source.rowNumber}`}
-                              to={`/imports?import=${source.importId}&row=${source.rowNumber}`}
-                            >
-                              {source.rowNumber}{" "}
-                            </Link>
-                          ))}
-                    </td>
+          {remainingIssues.length > 0 && (
+            <TableScroll label="Review items table">
+              <table aria-label="Review items">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Code</th>
+                    <th>Sources</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+                </thead>
+                <tbody>
+                  {remainingIssues.map((issue) => (
+                    <tr key={issue.key}>
+                      <td>
+                        <span
+                          className={`badge ${issue.severity === "error" ? "badge-danger" : "badge-warn"}`}
+                        >
+                          <span aria-hidden="true">
+                            {issue.severity === "error" ? "✕" : "⚠"}
+                          </span>
+                          {issue.severity}
+                        </span>
+                      </td>
+                      <td>
+                        {issue.code === "PENDING_CALL_ATTACHMENT"
+                          ? reviewLabel([issue.code])
+                          : issue.code}
+                      </td>
+                      <td>
+                        {issue.sources.length === 0
+                          ? "—"
+                          : issue.sources.map((source) => (
+                              <Link
+                                key={`${source.importId}:${source.rowNumber}`}
+                                to={`/imports?import=${source.importId}&row=${source.rowNumber}`}
+                              >
+                                {source.rowNumber}{" "}
+                              </Link>
+                            ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
+          )}
           {(remote.data?.items.length ?? 0) === 0 ? (
             <p className="empty-state">
               No review issues in the active build. Nothing needs attention.

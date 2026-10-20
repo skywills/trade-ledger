@@ -891,3 +891,45 @@ it.each([false, true])(
     expect(p.issues).toEqual([]);
   },
 );
+
+it("requires enough shares for every simultaneous fill in a covered source partition", () => {
+  const f = fixture([
+    ["shares", execution("stock-open", stock, "100", "-10000", 1, "open")],
+    ["calls", execution("call-one", call, "-1", "70", 3, "open")],
+    ["calls", execution("call-two", call, "-1", "75", 3, "open")],
+  ]);
+  const decisions = [
+    {
+      id: "__validate__",
+      sequence: 1,
+      kind: "lifecycle_membership",
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      payload: {
+        requireCallCoverage: true,
+        assignments: ["call-one", "call-two"].map((executionKey) => ({
+          lifecycleId: "A:stock-open",
+          quantity: "-1",
+          allocation: { strategyId: "calls", executionKey, role: "open" },
+        })),
+      },
+    },
+  ];
+  expect(() =>
+    projectLifecycles(f.ledger, f.projection, decisions, ids),
+  ).toThrow(/overlap|reserved|shares/);
+  const buy = f.ledger.executions[0];
+  const allocation = f.projection.allocations[0];
+  if (buy && allocation) {
+    buy.quantity = "200";
+    allocation.quantity = "200";
+  }
+  const result = projectLifecycles(f.ledger, f.projection, decisions, ids);
+  expect(result.issues).toEqual([]);
+  expect(result.lifecycles).toHaveLength(1);
+  expect(result.lifecycles[0]).toMatchObject({
+    coveredShares: "200",
+    uncoveredShares: "0",
+  });
+});

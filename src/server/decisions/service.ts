@@ -650,13 +650,6 @@ export async function appendDecision(
   const input = parsed.data;
   return write(store, () => {
     const current = decisionWatermark(store);
-    if (current !== expectedWatermark) {
-      throw new AppError(
-        "STALE_INPUT",
-        `Expected watermark ${expectedWatermark} but current watermark is ${current}.`,
-        409,
-      );
-    }
     const existing = store.db
       .prepare(`SELECT id, sequence FROM decisions WHERE client_request_id = ?`)
       .get(input.clientRequestId) as
@@ -671,6 +664,13 @@ export async function appendDecision(
         )
         .get(existing.id) as DecisionRow;
       return readDecisionRow(row);
+    }
+    if (current !== expectedWatermark) {
+      throw new AppError(
+        "STALE_INPUT",
+        `Expected watermark ${expectedWatermark} but current watermark is ${current}.`,
+        409,
+      );
     }
     validateDecisionInput(store, input, current);
     if (
