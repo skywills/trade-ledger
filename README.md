@@ -108,6 +108,16 @@ wheel campaigns have their own evidence tools.
 
 - Analytics default to lifecycle results and broker P&L. Replies identify the
   selected currency; currencies and P&L bases are never combined or substituted.
+- Current-position summaries use remaining strategy quantities, grouped by exact
+  account, currency and instrument. Net and gross long/short quantities preserve
+  offsetting holdings; contributors and unresolved attribution have separate
+  pages. Unscoped unresolved counts disclose evidence that cannot satisfy the
+  requested filters. These are journal quantities, not live values.
+- Analytics exports return a clickable **Download CSV** link for all selected
+  rows through the existing export route. Currency, basis and build are pinned;
+  regenerate the link after a rebuild. Downloads start only on click. No export
+  file is persisted and CSV bodies stay out of model context. Other model-authored
+  links remain text.
 - Drawdown describes cumulative completed-trade P&L, not account equity.
 - Source rows include quarantined evidence. Raw field values are private,
   immutable data retrieved in Unicode-safe chunks; preview issues are paginated.

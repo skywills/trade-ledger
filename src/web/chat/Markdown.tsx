@@ -12,6 +12,12 @@ function InlineText({ text }: { text: string }) {
     <>
       {parseInline(text).map((token, i) => {
         const key = `${i}-${token.kind}`;
+        if (token.kind === "download")
+          return (
+            <a key={key} href={token.href} download>
+              {token.text}
+            </a>
+          );
         if (token.kind === "strong")
           return <strong key={key}>{token.text}</strong>;
         if (token.kind === "em") return <em key={key}>{token.text}</em>;

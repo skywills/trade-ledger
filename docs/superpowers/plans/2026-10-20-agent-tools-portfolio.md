@@ -51,7 +51,7 @@
 - Export `selectOpenPositions(snapshot: AnalyticsSnapshot, query: OpenPositionQuery): OpenPositionSelection`.
 - Export `positionTools(ctx: ChatToolContext): ChatTool[]` with get_open_positions_summary. Input adds expectedBuildId, offset/limit and section:"positions"|"contributors"|"unresolved" (default positions). Output provenance, scope:"current_build", filters, totalPositionGroups, unresolvedCount and exactly one paged section.
 
-- [ ] **Step 1: Write failing tests.** Add `partial_close_uses_remaining_quantity`, `distinct_accounts_and_contracts_stay_separate`, `opposing_contributors_keep_gross_and_zero_net_row`, `missing_or_conflicting_account_is_disclosed`, `expiry_metadata_alone_does_not_zero_position`, and `large_contributors_page_without_truncation`. Use quantities 0.1 and 0.2 and assert netQuantity="0.3". Closing executions must not be counted again on top of Strategy.positions.
+- [x] **Step 1: Write failing tests.** Add `partial_close_uses_remaining_quantity`, `distinct_accounts_and_contracts_stay_separate`, `opposing_contributors_keep_gross_and_zero_net_row`, `missing_or_conflicting_account_is_disclosed`, `expiry_metadata_alone_does_not_zero_position`, and `large_contributors_page_without_truncation`. Use quantities 0.1 and 0.2 and assert netQuantity="0.3". Closing executions must not be counted again on top of Strategy.positions.
 
 ```ts
 expect(decimalRow.netQuantity).toBe("0.3");
@@ -60,10 +60,10 @@ expect(partiallyClosedRow.netQuantity).toBe("40"); // opened 100, closed 60
 expect(selection.unresolved[0].reason).toBe("conflicting_account");
 expect(allContributors).toEqual(expectedContributors);
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-position-tools.test.ts`; expect missing aggregation and tool.
-- [ ] **Step 3: Implement exact aggregation.** Iterate nonzero Strategy.positions once per strategy/instrument. Resolve instrument/account from allocations joined to snapshot ledger executions; currency is strategy.currency and must agree with evidence. Ambiguous/missing evidence goes to unresolved, not an invented bucket. Group by account/currency/instrument.key with the shared high-precision Money type, preserving both gross signs. Derive lifecycle IDs only from matching membership/allocation references; do not add lifecycle quantities to strategy quantities. Keep contributor detail in its own paged section. Filters on unresolved rows require known evidence; disclose separately how many unresolved rows could not be assigned to the requested scope.
-- [ ] **Step 4: Verify.** Run `npx vitest run test/integration/chat-position-tools.test.ts test/integration/lifecycle-acceptance.test.ts`; expect exact signed quantities and unchanged lifecycle accounting.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: add exact current position summaries for chat"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-position-tools.test.ts`; expect missing aggregation and tool.
+- [x] **Step 3: Implement exact aggregation.** Iterate nonzero Strategy.positions once per strategy/instrument. Resolve instrument/account from allocations joined to snapshot ledger executions; currency is strategy.currency and must agree with evidence. Ambiguous/missing evidence goes to unresolved, not an invented bucket. Group by account/currency/instrument.key with the shared high-precision Money type, preserving both gross signs. Derive lifecycle IDs only from matching membership/allocation references; do not add lifecycle quantities to strategy quantities. Keep contributor detail in its own paged section. Filters on unresolved rows require known evidence; disclose separately how many unresolved rows could not be assigned to the requested scope.
+- [x] **Step 4: Verify.** Run `npx vitest run test/integration/chat-position-tools.test.ts test/integration/lifecycle-acceptance.test.ts`; expect exact signed quantities and unchanged lifecycle accounting.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: add exact current position summaries for chat"`.
 
 ### Task 2: Existing-route analytics export descriptor
 
@@ -75,7 +75,7 @@ expect(allContributors).toEqual(expectedContributors);
 - Output provenance, resolved filters, dataset, filename and downloadUrl. Validate with serializeAnalyticsCsv on the captured snapshot and discard the CSV body after obtaining filename; no persistent file/artifact. Build downloadUrl using URLSearchParams from validated fields only, pinned to `/api/analytics/export` and expectedBuildId. Use resolved currency/filter values, not unresolved omitted defaults.
 - Tool description tells the agent to render `[Download CSV](<downloadUrl>)`; the returned URL is relative to the application origin.
 
-- [ ] **Step 1: Write failing tests.** Add `descriptor_download_equals_full_scope_service_export`, `more_than_50_rows_are_exported`, `download_rejects_changed_build`, `currency_and_basis_are_pinned`, and `query_special_characters_are_encoded`. Assert returned model content contains no csv field, no filesystem path, and no external hostname. Prove an empty build does not create a misleading pinned export.
+- [x] **Step 1: Write failing tests.** Add `descriptor_download_equals_full_scope_service_export`, `more_than_50_rows_are_exported`, `download_rejects_changed_build`, `currency_and_basis_are_pinned`, and `query_special_characters_are_encoded`. Assert returned model content contains no csv field, no filesystem path, and no external hostname. Prove an empty build does not create a misleading pinned export.
 
 ```ts
 expect(descriptor.downloadUrl).toMatch(/^\/api\/analytics\/export\?/);
@@ -84,10 +84,10 @@ expect(download.body).toBe(serviceExport.csv);
 expect(download.headers["content-type"]).toContain("text/csv");
 expect(downloadAfterRebuild.statusCode).toBe(409);
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-export-tools.test.ts`; expect missing export tool.
-- [ ] **Step 3: Implement descriptor and registration.** Use existing parser, snapshot and serializer; preserve existing CSV escaping and exact decimals. Validate URL arguments, expose service errors through refuseInvalidInput, and register under read guards. Do not add a route or alter download-side build validation.
-- [ ] **Step 4: Verify.** Run `npx vitest run test/integration/chat-export-tools.test.ts test/integration/analytics-export.test.ts`; expect generated links to download equivalent full-scope CSV and reject old builds.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: expose validated analytics download links to chat"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/integration/chat-export-tools.test.ts`; expect missing export tool.
+- [x] **Step 3: Implement descriptor and registration.** Use existing parser, snapshot and serializer; preserve existing CSV escaping and exact decimals. Validate URL arguments, expose service errors through refuseInvalidInput, and register under read guards. Do not add a route or alter download-side build validation.
+- [x] **Step 4: Verify.** Run `npx vitest run test/integration/chat-export-tools.test.ts test/integration/analytics-export.test.ts`; expect generated links to download equivalent full-scope CSV and reject old builds.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: expose validated analytics download links to chat"`.
 
 ### Task 3: Download link rendering and release integration
 
@@ -98,7 +98,7 @@ expect(downloadAfterRebuild.statusCode).toBe(409);
 - Export `isAnalyticsDownloadHref(value: string): boolean` from markdown.ts. Require a raw relative URL beginning `/api/analytics/export?`, exact pathname, no fragment/backslash/control character, and a nonempty expectedBuildId. Reject absolute/protocol-relative URLs, encoded path separators and path traversal. Query contents are still validated by the export endpoint.
 - Recognize only `[label](href)` with a single-line plain-text label and a validated href; render other markdown links literally. Markdown.tsx renders the download token as a same-origin anchor with download attribute. No raw HTML, target mutation or automatic navigation/fetching.
 
-- [ ] **Step 1: Write failing tests.** Parameterize link parsing over the valid export URL, https:// destinations, //host paths, javascript:, /api/maintenance/reset, traversal, encoded separators, fragments, backslashes, embedded controls and missing build ID. Assert only the validated export yields a download token and hostile labels remain React text. In fake-inference integration, call export_analytics then return its link. In browser tests, click the rendered link, assert CSV download content/filename, and rebuild before a second click to assert stale-build rejection.
+- [x] **Step 1: Write failing tests.** Parameterize link parsing over the valid export URL, https:// destinations, //host paths, javascript:, /api/maintenance/reset, traversal, encoded separators, fragments, backslashes, embedded controls and missing build ID. Assert only the validated export yields a download token and hostile labels remain React text. In fake-inference integration, call export_analytics then return its link. In browser tests, click the rendered link, assert CSV download content/filename, and rebuild before a second click to assert stale-build rejection.
 
 ```ts
 expect(isAnalyticsDownloadHref("/api/analytics/export?dataset=summary&expectedBuildId=build-1")).toBe(true);
@@ -107,10 +107,10 @@ expect(isAnalyticsDownloadHref("/api/maintenance/reset?expectedBuildId=build-1")
 expect(parseInline("[Download CSV](/api/analytics/export?dataset=summary&expectedBuildId=build-1)"))
   .toContainEqual({ kind: "download", text: "Download CSV", href: "/api/analytics/export?dataset=summary&expectedBuildId=build-1" });
 ```
-- [ ] **Step 2: Verify failure.** Run `npx vitest run test/unit/chat-download-links.test.ts test/integration/chat.test.ts`; expect missing download token/renderer behavior.
-- [ ] **Step 3: Implement rendering and instructions.** Prefer position tools for current holdings; explicitly state quantities are not live values. Explain that export links cover all selected rows and must be regenerated after a rebuild. Update capability-discovery tests to include new registered tools automatically; do not claim quotes, Greeks, FX or live valuation support.
-- [ ] **Step 4: Verify release.** Run `npm run check:all`, `npm test`, `npm run test:e2e -- e2e/chat-exports.spec.ts e2e/chat.spec.ts`, and `npm run test:build-smoke`; expect exit 0 for each. Record any existing unrelated warnings separately rather than broadening this change.
-- [ ] **Step 5: Commit.** Stage task files and `git commit -m "feat: render validated analytics downloads in agent replies"`.
+- [x] **Step 2: Verify failure.** Run `npx vitest run test/unit/chat-download-links.test.ts test/integration/chat.test.ts`; expect missing download token/renderer behavior.
+- [x] **Step 3: Implement rendering and instructions.** Prefer position tools for current holdings; explicitly state quantities are not live values. Explain that export links cover all selected rows and must be regenerated after a rebuild. Update capability-discovery tests to include new registered tools automatically; do not claim quotes, Greeks, FX or live valuation support.
+- [x] **Step 4: Verify release.** Run `npm run check:all`, `npm test`, `npm run test:e2e -- e2e/chat-exports.spec.ts e2e/chat.spec.ts`, and `npm run test:build-smoke`; expect exit 0 for each. Record any existing unrelated warnings separately rather than broadening this change.
+- [x] **Step 5: Commit.** Stage task files and `git commit -m "feat: render validated analytics downloads in agent replies"`.
 
 ## Handoff and self-review
 
@@ -118,3 +118,28 @@ Release 3 covers positions, contributors, unresolved attribution and full-scope
 download links. All five Review Focus conditions have named tests. It requires
 only release 1; proposal expansion can be delivered separately. No live market
 integration or new storage subsystem is implied by this plan.
+
+
+## Execution record (2026-10-20)
+
+Implemented on `feat/agent-portfolio-tools` from merged release 2 (`4ba339b`).
+All three tasks are complete. No new dependencies, migrations or export storage.
+
+- Ruling: added a `conflicting_currency` unresolved reason and
+  `unscopedUnresolvedCount` to the selector/tool metadata. Currency disagreement
+  and attribution gaps under requested filters must be disclosed accurately;
+  the original account/instrument-only reason enum could not express both.
+  Cost if wrong: localized additive response-contract revision.
+- Position quantities come only from `Strategy.positions`; exact allocation
+  evidence supplies account/instrument attribution and matching lifecycle links.
+  Contributor, position and unresolved sections have independent paging.
+- Export descriptors pin resolved currency, basis, filters and build to the
+  existing CSV route. Download bodies never enter model context or new storage.
+- Chat links allow only the exact relative analytics export route with a build
+  ID. Other markdown links stay literal and labels render as React text.
+- Verification: 882 unit/integration tests across 82 files; 9 targeted browser
+  tests; `npm run check:all` and built-server smoke passed. Existing lint
+  warnings/information and Playwright color-environment warnings remain.
+- Browser regression verifies a real CSV download, then a canceled download on
+  a stale link and HTTP409 from the same endpoint. Chromium exposes these
+  downloads through download events rather than ordinary response interception.
