@@ -72,6 +72,13 @@ describe("trade lifecycles", () => {
     const p = projectLifecycles(f.ledger, f.projection, [], ids);
     expect(p.suggestions).toHaveLength(1);
     expect(p.suggestions[0]?.candidateLifecycleIds).toEqual(["A:p-open"]);
+    expect(p.issues).toEqual([
+      expect.objectContaining({
+        code: "PENDING_CALL_ATTACHMENT",
+        severity: "warning",
+        sources: [{ importId: "imp", rowNumber: 3 }],
+      }),
+    ]);
   });
   it("leaves independent cycles distinct and conserves a shared close", () => {
     const f = fixture([
@@ -182,6 +189,19 @@ it("resolves a shared stock disposal through explicit quantity partitions", () =
     type: "assignment",
     sources: [],
   });
+  const unresolved = projectLifecycles(
+    f.ledger,
+    structuredClone(f.projection),
+    [],
+    ids,
+  );
+  expect(unresolved.issues).toContainEqual(
+    expect.objectContaining({
+      code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
+      severity: "warning",
+      sources: [{ importId: "imp", rowNumber: 8 }],
+    }),
+  );
   const d = {
     id: "__validate__",
     sequence: 1,
@@ -220,6 +240,9 @@ it("resolves a shared stock disposal through explicit quantity partitions", () =
   expect(p.lifecycles).toHaveLength(2);
   expect(p.lifecycles.map((l) => l.status)).toEqual(["closed", "closed"]);
   expect(p.lifecycles.map((l) => l.reconstructedPnl)).toEqual(["700", "700"]);
+  expect(p.issues).not.toContainEqual(
+    expect.objectContaining({ code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS" }),
+  );
   expect(validateMembership(f.ledger, f.projection, p.members)).toEqual([]);
 });
 it("suggests a multi-contract call that can be covered across two lifecycles", () => {
@@ -669,6 +692,13 @@ it.each(["unknown-role", "different-report", "date-only"])(
       opening.rawDateTime = close.rawDateTime = "2026-10-01";
     const p = projectLifecycles(f.ledger, f.projection, [], ids);
     expect(p.lifecycles[0]?.status).toBe("unresolved");
+    expect(p.issues).toEqual([
+      expect.objectContaining({
+        code: "LIFECYCLE_EXPOSURE_UNRESOLVED",
+        severity: "warning",
+        sources: expect.arrayContaining(close.sources),
+      }),
+    ]);
   },
 );
 

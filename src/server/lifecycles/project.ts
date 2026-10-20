@@ -300,6 +300,12 @@ export function projectLifecycles(
           );
           draft.members.push(...pieces);
         } else if (owners.length !== 1 && !explicitCloseRefs.has(refKey(a))) {
+          draft.issues.push({
+            key: `lifecycle:stock-close:${refKey(a)}`,
+            code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
+            sources: e.sources,
+            severity: "warning",
+          });
           for (const id of book.keys()) {
             const l = draft.lifecycles.find((l) => l.id === id);
             if (l) l.reasons.push("LIFECYCLE_STOCK_CLOSE_AMBIGUOUS");
@@ -584,6 +590,12 @@ export function projectLifecycles(
       sources: e.sources,
       reasons: ["CONFIRM_COVERED_CALL"],
     });
+    draft.issues.push({
+      key: `lifecycle:call:${a.strategyId}:${e.key}`,
+      code: "PENDING_CALL_ATTACHMENT",
+      sources: e.sources,
+      severity: "warning",
+    });
     for (const l of draft.lifecycles.filter(
       (l) => owners.includes(l.id) || candidates.some((c) => c.id === l.id),
     )) {
@@ -736,8 +748,15 @@ export function recomputeLifecycles(
         exposure.isZero() ||
         exposure.isNegative() === new Decimal(close.quantity).isNegative() ||
         exposure.abs().lt(new Decimal(close.quantity).abs())
-      )
+      ) {
         l.reasons.push("LIFECYCLE_EXPOSURE_UNRESOLVED");
+        p.issues.push({
+          key: `lifecycle:exposure:${l.id}:${refKey(close.allocation)}`,
+          code: "LIFECYCLE_EXPOSURE_UNRESOLVED",
+          sources: close.sources,
+          severity: "warning",
+        });
+      }
     }
     let assigned = projection.links.some(
       (link) =>
