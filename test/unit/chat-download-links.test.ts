@@ -2,12 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { Markdown } from "../../src/web/chat/Markdown.js";
-import { parseInline } from "../../src/web/chat/markdown.js";
+import { parseInline } from "../../src/web/chat/markdown-parse.js";
 
 const valid = "/api/analytics/export?dataset=summary&expectedBuildId=build-1";
 it("only the exact internal build-pinned export route becomes a download", async () => {
   const { isAnalyticsDownloadHref } = await import(
-    "../../src/web/chat/markdown.js"
+    "../../src/web/chat/markdown-parse.js"
   );
   expect(isAnalyticsDownloadHref(valid)).toBe(true);
   expect(parseInline(`[Download CSV](${valid})`)).toContainEqual({
@@ -34,7 +34,7 @@ it.each([
   "/api/analytics/export?expectedBuildId=%20",
 ])("rejects unsafe or unpinned destination %j", async (href) => {
   const { isAnalyticsDownloadHref } = await import(
-    "../../src/web/chat/markdown.js"
+    "../../src/web/chat/markdown-parse.js"
   );
   expect(isAnalyticsDownloadHref(href)).toBe(false);
   expect(
