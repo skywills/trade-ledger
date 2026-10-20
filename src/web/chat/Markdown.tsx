@@ -4,7 +4,7 @@ import {
   type Block,
   parseBlocks,
   parseInline,
-} from "./markdown.js";
+} from "./markdown-parse.js";
 
 /** Inline runs as React text nodes only; never HTML. */
 function InlineText({ text }: { text: string }) {

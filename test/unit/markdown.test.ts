@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseBlocks, parseInline } from "../../src/web/chat/markdown.js";
+import { parseBlocks, parseInline } from "../../src/web/chat/markdown-parse.js";
 
 describe("parseBlocks", () => {
   it("parses a pipe table with header, alignment row and body", () => {

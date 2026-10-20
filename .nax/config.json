@@ -1,0 +1,31 @@
+{
+  "name": "trade-ledger",
+  "version": 1,
+  "quality": {
+    "commands": {
+      "test": "npm run test",
+      "testScoped": "npm run test -- {{files}}",
+      "typecheck": "npm run typecheck",
+      "lint": "npm run lint",
+      "lintFix": "npm run lint -- --write",
+      "formatFix": "npm run lint -- --write",
+      "coverage": "npm run test:coverage"
+    },
+    "lintOutput": { "format": "text" },
+    "typecheckOutput": { "format": "tsc" }
+  },
+  "review": {
+    "enabled": true,
+    "checks": ["build", "typecheck", "lint", "semantic", "adversarial"],
+    "commands": {
+      "build": "npm run build",
+      "typecheck": "npm run typecheck",
+      "lint": "npm run lint",
+      "lintFix": "npm run lint -- --write"
+    }
+  },
+  "execution": {
+    "preRun": [{ "command": "npm ci --no-audit --no-fund", "timeoutSeconds": 600 }],
+    "smartTestRunner": { "testFilePatterns": ["test/**/*.test.ts", "test/**/*.test.tsx"] }
+  }
+}
