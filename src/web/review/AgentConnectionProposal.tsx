@@ -26,16 +26,19 @@ function GuidedAgentConnectionProposal({
   entry,
   onChanged,
   onRecoveryNeeded,
+  open,
+  setOpen,
   children,
 }: {
   run: AnalysisRunDto;
   entry: SubmittedProposalDto;
   onChanged: () => void;
   onRecoveryNeeded?: () => void;
+  open: boolean;
+  setOpen: (open: boolean) => void;
   children: ReactNode;
 }) {
   const remote = useJson("/api/lifecycles", LifecycleListSchema);
-  const [open, setOpen] = useState(false);
   const data = remote.data;
   const projection = data?.lifecycles;
   if (remote.status === "loading")
@@ -54,7 +57,7 @@ function GuidedAgentConnectionProposal({
         <BuildAction onBuilt={remote.reload} />
       </div>
     );
-  if (entry.accepted) return children;
+  if (entry.accepted && !open) return children;
   const proposal = entry.proposal;
   const attachment =
     proposal.kind === "lifecycle_attachment"
@@ -192,6 +195,24 @@ function GuidedAgentConnectionProposal({
   );
 }
 
+/**
+ * An open review stays mounted even if a refresh marks the proposal accepted,
+ * so the dialog can still report an uncertain save through onDismiss.
+ */
+export function usesGuidedConnectionView(
+  entry: SubmittedProposalDto,
+  reviewing: boolean,
+): boolean {
+  if (reviewing) return true;
+  const proposal = entry.proposal;
+  return (
+    !entry.accepted &&
+    (proposal.kind === "lifecycle_attachment" ||
+      (proposal.kind === "lifecycle_membership" &&
+        proposal.payload.requireCallCoverage === true))
+  );
+}
+
 export function AgentConnectionProposal(props: {
   run: AnalysisRunDto;
   entry: SubmittedProposalDto;
@@ -199,15 +220,9 @@ export function AgentConnectionProposal(props: {
   onRecoveryNeeded?: () => void;
   children: ReactNode;
 }) {
-  const proposal = props.entry.proposal;
-  if (
-    props.entry.accepted ||
-    (proposal.kind !== "lifecycle_attachment" &&
-      !(
-        proposal.kind === "lifecycle_membership" &&
-        proposal.payload.requireCallCoverage === true
-      ))
-  )
-    return props.children;
-  return <GuidedAgentConnectionProposal {...props} />;
+  const [open, setOpen] = useState(false);
+  if (!usesGuidedConnectionView(props.entry, open)) return props.children;
+  return (
+    <GuidedAgentConnectionProposal {...props} open={open} setOpen={setOpen} />
+  );
 }
