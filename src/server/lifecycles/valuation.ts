@@ -30,6 +30,8 @@ export function valueLifecycles(
       estimated: true,
       reasons: [],
     };
+    if (l.reasons.includes("EVENT_CASH_UNRESOLVED"))
+      return { ...base, reasons: ["EVENT_CASH_UNRESOLVED"] };
     // Per the lifecycle spec, unrealized is the residual to broker-realized
     // P/L; for a closed lifecycle it is the reconciliation gap.
     if (l.status === "closed")
@@ -40,7 +42,8 @@ export function valueLifecycles(
           l.reconstructedPnl !== null && realized.value !== null
             ? new Decimal(l.reconstructedPnl).minus(realized.value).toFixed()
             : null,
-        estimated: false,
+        estimated: l.reconstructedPnl === null || realized.estimated,
+        reasons: l.reconstructedPnl === null ? l.reasons : realized.reasons,
       };
     const positions = l.positions.filter(
       (position) => !new Decimal(position.quantity).isZero(),

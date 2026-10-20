@@ -201,6 +201,38 @@ describe("agent review diagnostics and sanitized reports", () => {
     expect(page.items[0]).toHaveProperty("openingEvidence");
   });
 
+  it("explains unresolved event cash without suggesting an allocation can supply settlement", async () => {
+    const { test, tools, issue, buildId } = await setup();
+    const key = "synthetic-event-cash-review";
+    test.store.db
+      .prepare(
+        "INSERT INTO review_items (build_id, stable_issue_key, reason, source_references_json, candidate_json, severity) VALUES (?, ?, 'EVENT_CASH_UNRESOLVED', ?, '{}', 'warning')",
+      )
+      .run(buildId, key, JSON.stringify(issue.sources));
+    const diagnosis = JSON.parse(
+      (
+        await call(tools, "diagnose_review_issue", {
+          issueKey: key,
+          expectedBuildId: buildId,
+        })
+      ).content,
+    );
+    expect(diagnosis.guidance).toContain("settlement");
+    expect(diagnosis.guidance).not.toContain("submit_proposal");
+    const report = JSON.parse(
+      (
+        await call(tools, "create_issue_report", {
+          issueKey: key,
+          expectedBuildId: buildId,
+        })
+      ).content,
+    );
+    expect(report.report).toContain("EVENT_CASH_UNRESOLVED");
+    expect(report.report).toContain("settlement");
+    expect(report.report).not.toContain("PRIVATE-SYMBOL");
+    expect(report.published).toBe(false);
+  });
+
   it("explicitly reports unavailable source diagnosis for a ledger-level finding", async () => {
     const { test, tools, buildId } = await setup();
     const key = "synthetic-ledger-review";

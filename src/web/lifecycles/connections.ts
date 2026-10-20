@@ -192,7 +192,9 @@ export function reviewLabel(reasons: string[]): string {
     .map((reason) =>
       reason === "PENDING_CALL_ATTACHMENT"
         ? "Confirm whether these calls belong to your shares"
-        : reason.replaceAll("_", " ").toLowerCase(),
+        : reason === "EVENT_CASH_UNRESOLVED"
+          ? "Assignment/exercise settlement or delivery evidence is missing; reconstructed P&L is unavailable"
+          : reason.replaceAll("_", " ").toLowerCase(),
     )
     .join(" · ");
 }

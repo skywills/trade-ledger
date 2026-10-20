@@ -6,6 +6,7 @@ import type {
   LifecycleProjection,
 } from "../../shared/lifecycles.js";
 import { reconcilesWithin } from "../../shared/money.js";
+import { unresolvedEventCash } from "./event-cash.js";
 import { sum } from "./membership.js";
 export function brokerRealized(
   _ledger: LedgerSnapshot,
@@ -23,28 +24,43 @@ export function brokerRealized(
 }
 export function accountLifecycles(
   ledger: LedgerSnapshot,
-  _strategies: Projection,
+  strategies: Projection,
   p: LifecycleProjection,
 ): LifecycleProjection {
   for (const l of p.lifecycles) {
     const members = p.members.filter((m) => m.lifecycleId === l.id);
     const cash = sum(members.map((m) => m.netCash));
     const broker = brokerRealized(ledger, members);
+    const unresolvedEvents = unresolvedEventCash(ledger, strategies, members);
     const quarantined =
       ledger.conflicts > 0 || ledger.issues.some((i) => i.severity === "error");
     if (quarantined) l.complete = false;
     l.cashflow = cash;
     l.brokerPnl = l.status === "closed" ? broker.value : null;
     l.reconstructedPnl =
-      l.status === "closed" && l.complete && !quarantined ? cash : null;
+      l.status === "closed" &&
+      l.complete &&
+      !quarantined &&
+      unresolvedEvents.length === 0
+        ? cash
+        : null;
     l.reasons = [
       ...new Set([
         ...l.reasons,
         ...broker.reasons,
         ...(members.some((m) => m.estimated) ? ["ESTIMATED_PNL"] : []),
         ...(quarantined ? ["QUARANTINED_EVIDENCE"] : []),
+        ...(unresolvedEvents.length ? ["EVENT_CASH_UNRESOLVED"] : []),
       ]),
     ];
+    if (unresolvedEvents.length) {
+      p.issues.push({
+        key: `lifecycle:event-cash:${l.id}`,
+        code: "EVENT_CASH_UNRESOLVED",
+        sources: unresolvedEvents.flatMap((m) => m.sources),
+        severity: "warning",
+      });
+    }
     if (
       l.brokerPnl !== null &&
       l.reconstructedPnl !== null &&

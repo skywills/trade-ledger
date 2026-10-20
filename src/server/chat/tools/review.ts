@@ -188,6 +188,14 @@ const REPORTS: Record<
     reproduction:
       "Use synthetic opening lots A (two contracts, total basis 20) and B (one contract, total basis 30), then close two contracts with absolute basis 40. The unique allocation is one contract from each lot. Test cash conservation, residual capacity, and an alternative fixture with multiple valid solutions.",
   },
+  EVENT_CASH_UNRESOLVED: {
+    observed:
+      "An assignment or exercise closes option quantity, but its settlement or delivery cash treatment is not established by the imported evidence.",
+    expected:
+      "Preserve recorded cashflow and covered broker P&L. Withhold reconstructed P&L until event-specific settlement or delivery evidence is available. Allocation changes cannot create missing settlement cash.",
+    reproduction:
+      "Use synthetic option openings followed by zero-cash assignment and exercise rows. Assert unavailable reconstruction and preserved broker P&L. Add a fully evidenced physical delivery and disposal, then check reconstruction and cash conservation; also cover partial or unrelated delivery evidence.",
+  },
   PNL_RECONCILIATION: {
     observed:
       "Broker-reported and reconstructed realized P&L differ beyond the currency tolerance.",
@@ -268,7 +276,9 @@ export function reviewTools(ctx: ChatToolContext): ChatTool[] {
               guidance:
                 selected.size === 0
                   ? "No normalized source evidence is available for this finding. For ledger-level conflicts or quarantined rows, inspect import diagnostics and original rows locally; use list_imports to identify affected imports. Do not infer a correction from an empty result."
-                  : GUIDANCE,
+                  : issue.code === "EVENT_CASH_UNRESOLVED"
+                    ? "Inspect event-specific settlement or physical delivery evidence. Broker P&L remains available when its coverage is complete; reconstruction requires the missing cash treatment. Allocation changes cannot create settlement cash. Do not infer settlement from broker P&L, closing marks or matching totals."
+                    : GUIDANCE,
             },
             related.map((execution) => ({
               ...evidenceView(
