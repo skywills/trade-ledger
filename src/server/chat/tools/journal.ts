@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validDay } from "../../../shared/analytics.js";
 import type { Execution } from "../../../shared/domain.js";
 import { AppError } from "../../../shared/errors.js";
 import {
@@ -7,11 +8,9 @@ import {
   underlyingSymbol,
 } from "../../../shared/symbols.js";
 import {
-  activeBuildMeta,
-  activeLedgerSnapshot,
-  activeProjection,
-} from "../../builds/service.js";
-import { readStrategyMetadata } from "../../decisions/service.js";
+  decisionWatermark,
+  readStrategyMetadata,
+} from "../../decisions/service.js";
 import {
   type ChatTool,
   type ChatToolContext,
@@ -23,11 +22,20 @@ import {
   UNTRUSTED,
 } from "./shared.js";
 
+import { readToolSnapshot, snapshotMeta } from "./snapshot.js";
+
+const ExpectedBuild = { expectedBuildId: z.string().min(1).optional() };
+const ExpectedBuildFields = {
+  expectedBuildId: { type: "string", minLength: 1 },
+};
+const dateOrder = (q: { from?: string; to?: string }) =>
+  !q.from || !q.to || q.from <= q.to;
+
 const Paging = {
   offset: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(MAX_LIST_ROWS).optional(),
 };
-const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const IsoDate = z.string().refine(validDay, "Use a valid YYYY-MM-DD date.");
 const ListStrategies = z
   .object({
     status: z
@@ -38,22 +46,29 @@ const ListStrategies = z
     from: IsoDate.optional(),
     to: IsoDate.optional(),
     ...Paging,
+    ...ExpectedBuild,
   })
+  .strict()
+  .refine(dateOrder, "Start date must be on or before end date.");
+const GetStrategy = z
+  .object({ strategyId: z.string().min(1), ...ExpectedBuild })
   .strict();
-const GetStrategy = z.object({ strategyId: z.string().min(1) }).strict();
 const ListTransactions = z
   .object({
     symbol: z.string().min(1).optional(),
     from: IsoDate.optional(),
     to: IsoDate.optional(),
     ...Paging,
+    ...ExpectedBuild,
   })
-  .strict();
+  .strict()
+  .refine(dateOrder, "Start date must be on or before end date.");
 const ListIssues = z
   .object({
     severity: z.string().optional(),
     code: z.string().optional(),
     ...Paging,
+    ...ExpectedBuild,
   })
   .strict();
 
@@ -77,6 +92,7 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
         from: { type: "string" },
         to: { type: "string" },
         ...PagingSchemaFields,
+        ...ExpectedBuildFields,
       },
       additionalProperties: false,
     },
@@ -84,7 +100,7 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
     run: (input) =>
       refuseInvalidInput(() => {
         const q = ListStrategies.parse(input ?? {});
-        const active = activeProjection(ctx.store);
+        const active = readToolSnapshot(ctx, q.expectedBuildId);
         const rows = (active.projection?.strategies ?? [])
           .map((s) => ({
             ...s,
@@ -108,12 +124,7 @@ function listStrategiesTool(ctx: ChatToolContext): ChatTool {
           .sort((a, b) =>
             (b.openingDate ?? "").localeCompare(a.openingDate ?? ""),
           );
-        return pagedResult(
-          { buildId: active.buildId, stale: active.stale },
-          rows,
-          q.offset,
-          q.limit,
-        );
+        return pagedResult(snapshotMeta(active), rows, q.offset, q.limit);
       }),
   };
 }
@@ -124,40 +135,44 @@ function getStrategyTool(ctx: ChatToolContext): ChatTool {
     description: `Read one strategy with its allocations, links and notes/stop-loss metadata. ${UNTRUSTED}`,
     inputSchema: {
       type: "object",
-      properties: { strategyId: { type: "string" } },
+      properties: { strategyId: { type: "string" }, ...ExpectedBuildFields },
       required: ["strategyId"],
       additionalProperties: false,
     },
     approval: "never",
     run: (input) =>
-      refuseInvalidInput(() => {
-        const { strategyId } = GetStrategy.parse(input ?? {});
-        const active = activeProjection(ctx.store);
-        const strategy = active.projection?.strategies.find(
-          (s) => s.id === strategyId,
-        );
-        if (strategy === undefined)
-          throw new AppError(
-            "STRATEGY_NOT_FOUND",
-            `No strategy exists for id ${strategyId} in the active build.`,
-            404,
+      refuseInvalidInput(() =>
+        ctx.store.db.transaction(() => {
+          const { strategyId, expectedBuildId } = GetStrategy.parse(
+            input ?? {},
           );
-        return jsonResult({
-          buildId: active.buildId,
-          stale: active.stale,
-          strategy: {
-            ...strategy,
-            description: normalizeStrategyDescription(strategy.description),
-          },
-          allocations: (active.projection?.allocations ?? []).filter(
-            (a) => a.strategyId === strategyId,
-          ),
-          links: (active.projection?.links ?? []).filter(
-            (l) => l.from === strategyId || l.to === strategyId,
-          ),
-          metadata: readStrategyMetadata(ctx.store, strategyId),
-        });
-      }),
+          const active = readToolSnapshot(ctx, expectedBuildId);
+          const strategy = active.projection?.strategies.find(
+            (s) => s.id === strategyId,
+          );
+          if (strategy === undefined)
+            throw new AppError(
+              "STRATEGY_NOT_FOUND",
+              `No strategy exists for id ${strategyId} in the active build.`,
+              404,
+            );
+          return jsonResult({
+            ...snapshotMeta(active),
+            watermark: decisionWatermark(ctx.store),
+            strategy: {
+              ...strategy,
+              description: normalizeStrategyDescription(strategy.description),
+            },
+            allocations: (active.projection?.allocations ?? []).filter(
+              (a) => a.strategyId === strategyId,
+            ),
+            links: (active.projection?.links ?? []).filter(
+              (l) => l.from === strategyId || l.to === strategyId,
+            ),
+            metadata: readStrategyMetadata(ctx.store, strategyId),
+          });
+        })(),
+      ),
   };
 }
 
@@ -199,6 +214,7 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
         from: { type: "string" },
         to: { type: "string" },
         ...PagingSchemaFields,
+        ...ExpectedBuildFields,
       },
       additionalProperties: false,
     },
@@ -206,7 +222,8 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
     run: (input) =>
       refuseInvalidInput(() => {
         const q = ListTransactions.parse(input ?? {});
-        const rows = (activeLedgerSnapshot(ctx.store)?.executions ?? [])
+        const active = readToolSnapshot(ctx, q.expectedBuildId);
+        const rows = (active.ledger?.executions ?? [])
           .filter(
             (e) =>
               q.symbol === undefined ||
@@ -216,7 +233,7 @@ function listTransactionsTool(ctx: ChatToolContext): ChatTool {
           .filter((e) => within(e.date, q.from, q.to))
           .sort((a, b) => b.date.localeCompare(a.date));
         return pagedResult(
-          activeBuildMeta(ctx.store),
+          snapshotMeta(active),
           rows.map(transactionView),
           q.offset,
           q.limit,
@@ -235,6 +252,7 @@ function listReviewIssuesTool(ctx: ChatToolContext): ChatTool {
         severity: { type: "string" },
         code: { type: "string" },
         ...PagingSchemaFields,
+        ...ExpectedBuildFields,
       },
       additionalProperties: false,
     },
@@ -242,18 +260,13 @@ function listReviewIssuesTool(ctx: ChatToolContext): ChatTool {
     run: (input) =>
       refuseInvalidInput(() => {
         const q = ListIssues.parse(input ?? {});
-        const active = activeProjection(ctx.store);
+        const active = readToolSnapshot(ctx, q.expectedBuildId);
         const rows = (active.projection?.issues ?? []).filter(
           (i) =>
             (q.severity === undefined || i.severity === q.severity) &&
             (q.code === undefined || i.code === q.code),
         );
-        return pagedResult(
-          { buildId: active.buildId, stale: active.stale },
-          rows,
-          q.offset,
-          q.limit,
-        );
+        return pagedResult(snapshotMeta(active), rows, q.offset, q.limit);
       }),
   };
 }
