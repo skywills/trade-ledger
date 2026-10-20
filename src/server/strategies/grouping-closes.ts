@@ -1,6 +1,7 @@
 import type { Execution } from "../../shared/domain.js";
 import { splitAmount } from "./allocation.js";
 import { basisCloseAllocation } from "./grouping-basis.js";
+import { basisPnlShares } from "./grouping-basis-pnl.js";
 import {
   closeCandidates,
   closingExposure,
@@ -99,6 +100,12 @@ export function matchCloses(context: GroupingContext): Execution[] {
           quantity: part.quantity,
         })),
       );
+      const pnlShares = basisPnlShares(
+        close,
+        basisAllocation,
+        shares,
+        executionByKey,
+      );
       for (const part of basisAllocation) {
         const cash = shares.find((share) => share.strategyId === part.draft.id);
         if (cash === undefined)
@@ -109,9 +116,13 @@ export function matchCloses(context: GroupingContext): Execution[] {
             quantity: part.quantity,
             netCash: cash.amount,
             ...(part.lots === undefined ? {} : { basisLots: part.lots }),
-            // A multi-lot broker total has no per-lot P&L attribution. Accounting
-            // apportions it and marks the amounts estimated, preserving the total.
-            brokerPnl: basisAllocation.length === 1 ? brokerPnl : null,
+            // Proven lot costs improve attribution, but derived amounts remain
+            // estimated. Accounting retains the proportional fallback otherwise.
+            brokerPnl:
+              basisAllocation.length === 1
+                ? brokerPnl
+                : (pnlShares?.get(part.draft.id) ?? null),
+            pnlEstimated: pnlShares !== null,
           }),
         );
       }
