@@ -168,8 +168,27 @@ All four tasks completed. Release 3 is outside this branch.
 - Submission saves evidence and a pending card atomically, checks cancellation
   after waiting for the writer, and creates a fresh run when immutable evidence
   changes. Rejected validation never consumes a card slot or creates an empty run.
-- Verification: 841 unit/integration tests across 78 files; 9 targeted browser
+- Verification: 850 unit/integration tests across 79 files; 9 targeted browser
   tests; `npm run check:all` and built-server smoke passed. Lint reports existing
   warnings/information without errors.
 - Synthetic four-strategy lifecycle attachment preview: 47 ms on this machine.
   This is a small-fixture observation, not a performance guarantee.
+
+### Final independent review
+
+One whole-branch review found no Critical issue and one Important issue: reused
+payloads stripped unknown keys. Fixed strict validation throughout proposal,
+payload, source and nested allocation/target objects while reusing retained
+scalar/array constraints. Eight regressions failed first, then passed; defaults
+for valid legacy cards remain compatible. The full suite (850 tests), targeted
+browser tests (9), lint/typecheck and built-server smoke passed after the fix.
+
+Deferred minor: `full_rebuild_impacts_match_separate_test_store` currently checks
+known unchanged notes totals rather than an independent store. Changed counts
+are covered, but changed per-currency P&L/issues still need an independent
+accept-and-rebuild comparison. This remains a test coverage limitation.
+
+Review rulings uphold the split deferral above. Manual valuation, generic
+rejection proposals, multiplier corrections and release 3 remain separate work;
+cost if this scope decision is wrong: those capabilities remain unavailable
+until implemented separately.

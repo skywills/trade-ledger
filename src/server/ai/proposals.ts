@@ -36,7 +36,7 @@ const DecimalText = z
   .regex(/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/, "must be a decimal string");
 
 const IdSchema = z.string().min(1);
-const SourceRefSchema = z.object({
+const SourceRefSchema = z.strictObject({
   importId: IdSchema,
   rowNumber: z.number().int().positive(),
 });
@@ -48,12 +48,31 @@ const CommonFields = {
   strategyIds: z.array(IdSchema).default([]),
 };
 
-const AllocationRowSchema = z.object({
+const AllocationRowSchema = z.strictObject({
   executionKey: z.string().min(1),
   quantity: DecimalText,
   netCash: DecimalText,
   brokerPnl: DecimalText.nullable().default(null),
 });
+
+/** Retained payloads contain objects/arrays; preserve their scalar and array checks. */
+function strictPayload<T extends z.ZodType>(schema: T): T {
+  if (schema instanceof z.ZodObject) {
+    const fields = Object.fromEntries(
+      Object.entries(schema.shape).map(([key, value]) => [
+        key,
+        strictPayload(value as z.ZodType),
+      ]),
+    );
+    return schema.safeExtend(fields).strict() as unknown as T;
+  }
+  if (schema instanceof z.ZodArray)
+    return schema.clone({
+      ...schema.def,
+      element: strictPayload(schema.element as z.ZodType),
+    }) as unknown as T;
+  return schema;
+}
 
 function retainedVariant<
   K extends
@@ -74,7 +93,7 @@ function retainedVariant<
     .object({
       kind: z.literal(kind),
       ...CommonFields,
-      payload: payload as unknown as z.ZodType<
+      payload: strictPayload(payload) as unknown as z.ZodType<
         Extract<DecisionInput, { kind: K }>["payload"]
       >,
     })
@@ -82,47 +101,47 @@ function retainedVariant<
 }
 
 export const ProposalSchema = z.discriminatedUnion("kind", [
-  z.object({
+  z.strictObject({
     kind: z.literal("manual_allocation"),
     ...CommonFields,
-    payload: z.object({
+    payload: z.strictObject({
       strategyId: IdSchema,
       source: SourceRefSchema,
       allocations: z.array(AllocationRowSchema).min(1),
     }),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("identity_binding"),
     ...CommonFields,
-    payload: z.object({
+    payload: z.strictObject({
       source: SourceRefSchema,
       canonicalIdentity: IdSchema,
       expectedQuantity: DecimalText,
     }),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("group_explicit"),
     ...CommonFields,
-    payload: z.object({ strategyId: IdSchema, source: SourceRefSchema }),
+    payload: z.strictObject({ strategyId: IdSchema, source: SourceRefSchema }),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("lifecycle"),
     ...CommonFields,
-    payload: z.object({
+    payload: z.strictObject({
       event: z.enum(["assignment", "exercise", "expiry", "roll"]),
       sourceRef: SourceRefSchema,
       targetRef: SourceRefSchema,
     }),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("notes"),
     ...CommonFields,
-    payload: z.object({ strategyId: IdSchema, text: z.string().min(1) }),
+    payload: z.strictObject({ strategyId: IdSchema, text: z.string().min(1) }),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("stop_loss"),
     ...CommonFields,
-    payload: z.object({ strategyId: IdSchema, price: DecimalText }),
+    payload: z.strictObject({ strategyId: IdSchema, price: DecimalText }),
   }),
   retainedVariant("group_merge"),
   retainedVariant("import_exclusion"),
