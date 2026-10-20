@@ -16,6 +16,8 @@ import {
   type SaveDecision,
 } from "./api.js";
 import { BuildAction } from "./BuildAction.js";
+import { ConnectionReview } from "./ConnectionReview.js";
+import { connectionGroups, reviewLabel } from "./connections.js";
 import { MembershipEditor, SourcePartitionEditor } from "./MembershipEditor.js";
 import { ValuationEditor } from "./ValuationEditor.js";
 import "./lifecycles.css";
@@ -182,6 +184,35 @@ export function LifecycleDetail({ id }: { id: string }) {
           <ErrorPanel message={error} onRetry={refresh} />
         ))}
       <p role="status">{notice}</p>
+      {projection &&
+        d.buildId &&
+        connectionGroups(
+          d.suggestions,
+          projection.members,
+          all.data?.connectionExecutions.length
+            ? all.data.connectionExecutions
+            : d.executions,
+        ).map((group) => (
+          <ConnectionReview
+            key={`${group.key}:${d.buildId}`}
+            disabled={disabled}
+            context={{
+              group,
+              lifecycles: projection.lifecycles,
+              members: projection.members,
+              executions: all.data?.connectionExecutions.length
+                ? all.data.connectionExecutions
+                : d.executions,
+              buildId: d.buildId ?? "",
+              watermark: d.watermark,
+            }}
+            onChanged={(destination) => {
+              if (destination && destination !== id)
+                navigate(`/lifecycles/${encodeURIComponent(destination)}`);
+              else refresh();
+            }}
+          />
+        ))}
       <div className="card-grid">
         <section className="card">
           <h3>Lifecycle holdings</h3>
@@ -192,8 +223,16 @@ export function LifecycleDetail({ id }: { id: string }) {
             <dd>{l.originStrategyType}</dd>
             <dt>Stage</dt>
             <dd>{l.stage.replaceAll("_", " ")}</dd>
-            <dt>Status</dt>
-            <dd>{l.status.replaceAll("_", " ")}</dd>
+            <dt>Position</dt>
+            <dd>{l.positions.length ? "Open" : "Closed"}</dd>
+            <dt>Review</dt>
+            <dd>
+              {l.reasons.includes("PENDING_CALL_ATTACHMENT")
+                ? "Connection pending"
+                : l.status === "unresolved"
+                  ? "Needs review"
+                  : "Complete"}
+            </dd>
             <dt>Covered shares</dt>
             <dd>{l.coveredShares}</dd>
             <dt>Uncovered shares</dt>
@@ -210,7 +249,7 @@ export function LifecycleDetail({ id }: { id: string }) {
               </li>
             ))}
           </ul>
-          {l.reasons.length > 0 && <p>{l.reasons.join(" · ")}</p>}
+          {l.reasons.length > 0 && <p>{reviewLabel(l.reasons)}</p>}
         </section>
         <section className="card">
           <h3>Cash and results · {l.currency}</h3>
@@ -327,65 +366,73 @@ export function LifecycleDetail({ id }: { id: string }) {
           </li>
         ))}
       </ul>
-      <details>
-        <summary>Correct a retained decision</summary>
-        <label>
-          Superseded decision ID (optional)
-          <input
-            disabled={disabled}
-            value={supersedesId}
-            onChange={(e) => setSupersedesId(e.target.value)}
+      <details className="advanced-adjustments">
+        <summary>Advanced adjustments</summary>
+        <p>
+          Split individual fills, correct source quantities, or replace a
+          retained decision.
+        </p>
+        <details>
+          <summary>Correct a retained decision</summary>
+          <label>
+            Superseded decision ID (optional)
+            <input
+              disabled={disabled}
+              value={supersedesId}
+              onChange={(e) => setSupersedesId(e.target.value)}
+            />
+          </label>
+          <p>Enter the earlier decision ID before saving its replacement.</p>
+        </details>
+        {d.suggestions.map((s) => (
+          <MembershipEditor
+            key={`${s.id}:${d.buildId}:${projection !== null}`}
+            suggestion={s}
+            executions={d.executions}
+            openingCash={
+              projection ? sourceCash(projection.members, s.callOpening) : null
+            }
+            callMembers={
+              projection?.members.filter(
+                (m) =>
+                  m.allocation.strategyId === s.callOpening.strategyId &&
+                  d.executions.find((e) => e.key === m.allocation.executionKey)
+                    ?.instrument.key ===
+                    d.executions.find(
+                      (e) => e.key === s.callOpening.executionKey,
+                    )?.instrument.key,
+              ) ?? []
+            }
+            candidates={s.candidateLifecycleIds}
+            save={save}
+            disabled={disabled || !projection}
           />
-        </label>
-        <p>Enter the earlier decision ID before saving its replacement.</p>
+        ))}
+        {projection && (
+          <SourcePartitionEditor
+            key={d.buildId}
+            members={projection.members.filter((m) =>
+              projection.lifecycles.some(
+                (x) =>
+                  x.id === m.lifecycleId &&
+                  x.account === l.account &&
+                  x.currency === l.currency &&
+                  x.underlyingKey === l.underlyingKey,
+              ),
+            )}
+            candidates={projection.lifecycles
+              .filter(
+                (x) =>
+                  x.account === l.account &&
+                  x.currency === l.currency &&
+                  x.underlyingKey === l.underlyingKey,
+              )
+              .map((x) => x.id)}
+            save={save}
+            disabled={disabled}
+          />
+        )}
       </details>
-      {d.suggestions.map((s) => (
-        <MembershipEditor
-          key={s.id}
-          suggestion={s}
-          executions={d.executions}
-          openingCash={
-            projection ? sourceCash(projection.members, s.callOpening) : null
-          }
-          callMembers={
-            projection?.members.filter(
-              (m) =>
-                m.allocation.strategyId === s.callOpening.strategyId &&
-                d.executions.find((e) => e.key === m.allocation.executionKey)
-                  ?.instrument.key ===
-                  d.executions.find((e) => e.key === s.callOpening.executionKey)
-                    ?.instrument.key,
-            ) ?? []
-          }
-          candidates={s.candidateLifecycleIds}
-          save={save}
-          disabled={disabled}
-        />
-      ))}
-      {projection && (
-        <SourcePartitionEditor
-          key={d.buildId}
-          members={projection.members.filter((m) =>
-            projection.lifecycles.some(
-              (x) =>
-                x.id === m.lifecycleId &&
-                x.account === l.account &&
-                x.currency === l.currency &&
-                x.underlyingKey === l.underlyingKey,
-            ),
-          )}
-          candidates={projection.lifecycles
-            .filter(
-              (x) =>
-                x.account === l.account &&
-                x.currency === l.currency &&
-                x.underlyingKey === l.underlyingKey,
-            )
-            .map((x) => x.id)}
-          save={save}
-          disabled={disabled}
-        />
-      )}
       <h3>Wheel campaign</h3>
       {l.campaignId && (
         <p>

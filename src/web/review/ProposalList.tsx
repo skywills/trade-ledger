@@ -6,6 +6,8 @@ import {
 } from "../../shared/api.js";
 import { ApiError, requestJson } from "../api.js";
 import { ErrorPanel } from "../components.js";
+import { BuildAction } from "../lifecycles/BuildAction.js";
+import { AgentConnectionProposal } from "./AgentConnectionProposal.js";
 import { proposalSummary } from "./proposalSummary.js";
 
 async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
@@ -36,6 +38,7 @@ export function ProposalList({
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [needsUpdate, setNeedsUpdate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = run.proposals.filter((p) => !p.accepted).length;
 
@@ -59,36 +62,60 @@ export function ProposalList({
   return (
     <div className="proposal-list" data-testid="proposal-list">
       {error !== null ? <ErrorPanel message={error} /> : null}
+      {needsUpdate && (
+        <section
+          className="connection-status"
+          aria-label="Journal update needed"
+        >
+          <p role="status">
+            A connection decision may already be saved. Update the journal
+            before continuing.
+          </p>
+          <BuildAction
+            onBuilt={() => {
+              setNeedsUpdate(false);
+              onChanged();
+            }}
+          />
+        </section>
+      )}
       <ul>
         {run.proposals.map((entry) => (
           <li key={entry.id} className="proposal-card">
-            <div>
-              <strong>{entry.proposal.kind}</strong>{" "}
-              <span className="muted">
-                ({entry.accepted ? "accepted" : "pending"})
-              </span>
-              {entry.proposal.rationale ? (
-                <p>{entry.proposal.rationale}</p>
-              ) : null}
-              <ul
-                aria-label="Proposed changes"
-                style={{ overflowWrap: "anywhere" }}
-              >
-                {proposalSummary(entry.proposal).map((line, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: immutable proposal lines
-                  <li key={index}>{line}</li>
-                ))}
-              </ul>
-            </div>
-            {entry.accepted ? null : (
-              <button
-                type="button"
-                onClick={() => void decide(entry.id)}
-                disabled={busy}
-              >
-                Accept
-              </button>
-            )}
+            <AgentConnectionProposal
+              run={run}
+              entry={entry}
+              onChanged={onChanged}
+              onRecoveryNeeded={() => setNeedsUpdate(true)}
+            >
+              <div>
+                <strong>{entry.proposal.kind}</strong>{" "}
+                <span className="muted">
+                  ({entry.accepted ? "accepted" : "pending"})
+                </span>
+                {entry.proposal.rationale ? (
+                  <p>{entry.proposal.rationale}</p>
+                ) : null}
+                <ul
+                  aria-label="Proposed changes"
+                  style={{ overflowWrap: "anywhere" }}
+                >
+                  {proposalSummary(entry.proposal).map((line, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: immutable proposal lines
+                    <li key={index}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+              {entry.accepted ? null : (
+                <button
+                  type="button"
+                  onClick={() => void decide(entry.id)}
+                  disabled={busy || needsUpdate}
+                >
+                  Accept
+                </button>
+              )}
+            </AgentConnectionProposal>
           </li>
         ))}
       </ul>
@@ -97,7 +124,7 @@ export function ProposalList({
           type="button"
           className="secondary"
           onClick={() => void decide(null)}
-          disabled={busy}
+          disabled={busy || needsUpdate}
         >
           Reject all pending
         </button>

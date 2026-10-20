@@ -4,6 +4,8 @@ import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link } from "../navigation.js";
 import { LifecycleListSchema } from "./api.js";
 import { BuildAction } from "./BuildAction.js";
+import { ConnectionQueue } from "./ConnectionQueue.js";
+import { reviewLabel } from "./connections.js";
 import "./lifecycles.css";
 export function LifecyclesPage() {
   const remote = useJson("/api/lifecycles", LifecycleListSchema);
@@ -37,6 +39,7 @@ export function LifecyclesPage() {
           <BuildAction onBuilt={remote.reload} />
         </div>
       )}
+      <ConnectionQueue data={data} />
       {projection && (
         <>
           <TableScroll label="Trade lifecycles">
@@ -46,7 +49,8 @@ export function LifecyclesPage() {
                   <th>Lifecycle</th>
                   <th>Account</th>
                   <th>Stage</th>
-                  <th>Status</th>
+                  <th>Position</th>
+                  <th>Review</th>
                   <th>Broker P&amp;L</th>
                   <th>Reconstructed P&amp;L</th>
                 </tr>
@@ -63,7 +67,14 @@ export function LifecyclesPage() {
                     </td>
                     <td>{l.account}</td>
                     <td>{l.stage.replaceAll("_", " ")}</td>
-                    <td>{l.status.replaceAll("_", " ")}</td>
+                    <td>{l.positions.length ? "Open" : "Closed"}</td>
+                    <td>
+                      {l.reasons.includes("PENDING_CALL_ATTACHMENT")
+                        ? "Connection pending"
+                        : l.status === "unresolved"
+                          ? "Needs review"
+                          : "Complete"}
+                    </td>
                     <td>{formatMoney(l.brokerPnl, l.currency)}</td>
                     <td>{formatMoney(l.reconstructedPnl, l.currency)}</td>
                   </tr>
@@ -94,13 +105,17 @@ export function LifecyclesPage() {
               </li>
             ))}
           </ul>
-          {projection.issues.length > 0 && (
+          {projection.issues.some(
+            (i) => i.code !== "PENDING_CALL_ATTACHMENT",
+          ) && (
             <aside aria-label="Lifecycle issues">
               <h3>Needs review</h3>
               <ul>
-                {projection.issues.map((i) => (
-                  <li key={i.key}>{i.code.replaceAll("_", " ")}</li>
-                ))}
+                {projection.issues
+                  .filter((i) => i.code !== "PENDING_CALL_ATTACHMENT")
+                  .map((i) => (
+                    <li key={i.key}>{reviewLabel([i.code])}</li>
+                  ))}
               </ul>
             </aside>
           )}

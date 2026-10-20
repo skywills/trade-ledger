@@ -135,7 +135,21 @@ it.each(kinds)(
       accepted: false,
       submittedAt: new Date().toISOString(),
     });
-    await acceptProposal(t.store, runId, proposalId, watermark);
+    const accepted = await acceptProposal(
+      t.store,
+      runId,
+      proposalId,
+      watermark,
+      "connection-retry",
+    );
+    const replay = await acceptProposal(
+      t.store,
+      runId,
+      proposalId,
+      watermark,
+      "connection-retry",
+    );
+    expect(replay.map((d) => d.id)).toEqual(accepted.map((d) => d.id));
     expect(decisionWatermark(t.store)).toBe(watermark + 1);
     await expect(
       acceptProposal(t.store, runId, proposalId, watermark + 1),

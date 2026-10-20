@@ -233,7 +233,7 @@ describe("retained decisions and stable strategy identities", () => {
           text: "Idempotent note",
           clientRequestId: "req-1",
         }),
-        1,
+        0,
       );
       expect(second.id).toBe(first.id);
       expect(second.sequence).toBe(first.sequence);

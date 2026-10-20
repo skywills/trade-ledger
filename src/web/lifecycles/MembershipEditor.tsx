@@ -102,11 +102,25 @@ export function MembershipEditor({
   save: SaveDecision;
   disabled: boolean;
 }) {
+  const openings = callMembers.filter((m) => m.allocation.role === "open");
+  const openingCount = new Set(openings.map((m) => m.allocation.executionKey))
+    .size;
+  const multipleOpenings = openingCount > 1;
+  const openingQuantity = multipleOpenings
+    ? openings
+        .reduce((sum, m) => sum.plus(m.quantity), new Decimal(0))
+        .toString()
+    : suggestion.quantity;
+  const totalOpeningCash = multipleOpenings
+    ? openings
+        .reduce((sum, m) => sum.plus(m.netCash), new Decimal(0))
+        .toString()
+    : openingCash;
   const [targets, setTargets] = useState([
     {
       key: crypto.randomUUID(),
       lifecycleId: suggestion.candidateLifecycleIds[0] ?? "",
-      quantity: new Decimal(suggestion.quantity).abs().toString(),
+      quantity: new Decimal(openingQuantity).abs().toString(),
     },
   ]);
   const [reason, setReason] = useState("");
@@ -117,8 +131,12 @@ export function MembershipEditor({
   );
   function validate() {
     try {
-      if (openingCash === null)
+      if (totalOpeningCash === null)
         throw new Error("Wait for source cash to load, then preview again.");
+      if (multipleOpenings && targets.length !== 1)
+        throw new Error(
+          "Use Correct source membership to split multiple opening fills between lifecycles.",
+        );
       if (new Set(targets.map((t) => t.lifecycleId)).size !== targets.length)
         throw new Error("Choose a different lifecycle for each part.");
       const sum = targets.reduce((n, t) => {
@@ -129,9 +147,9 @@ export function MembershipEditor({
           );
         return n.plus(q);
       }, new Decimal(0));
-      if (!sum.eq(new Decimal(suggestion.quantity).abs()))
+      if (!sum.eq(new Decimal(openingQuantity).abs()))
         throw new Error(
-          `Allocate all ${suggestion.quantity} contracts exactly once.`,
+          `Allocate all ${openingQuantity} contracts exactly once.`,
         );
       setError(null);
       setPreview(true);
@@ -140,7 +158,7 @@ export function MembershipEditor({
     }
   }
   const planned = preview
-    ? attachmentPreview(callMembers, targets, suggestion.quantity)
+    ? attachmentPreview(callMembers, targets, openingQuantity)
     : { moving: [], pending: [] };
   return (
     <fieldset disabled={disabled}>
@@ -152,8 +170,15 @@ export function MembershipEditor({
         >
           {execution?.instrument.symbol ?? suggestion.callOpening.executionKey}
         </Link>{" "}
-        · {suggestion.quantity} contracts
+        · {openingQuantity} contracts
       </p>
+      {multipleOpenings && (
+        <p>
+          This component has {openingCount} opening fills. Confirming assigns
+          all listed opening and closing source quantities to the selected
+          lifecycle. To assign fills separately, use Correct source membership.
+        </p>
+      )}
       <p>{suggestion.reasons.join(" · ")}</p>
       {targets.map((target, index) => (
         <div className="lifecycle-partition" key={target.key}>
@@ -208,6 +233,7 @@ export function MembershipEditor({
       <div className="lifecycle-actions">
         <button
           type="button"
+          disabled={multipleOpenings}
           onClick={() => {
             setPreview(false);
             setTargets([
@@ -230,9 +256,9 @@ export function MembershipEditor({
         <div className="lifecycle-status">
           <h4>Attachment preview</h4>
           <p>
-            The selected call opening moves with closes that can be assigned as
-            whole contracts. Future closes follow the same rule. Stock remains
-            in its existing lifecycle.
+            {multipleOpenings
+              ? "Every listed source allocation moves in full. Future fills require a separate review. Stock remains in its existing lifecycle."
+              : "The selected call opening moves with closes that can be assigned as whole contracts. Future closes follow the same rule. Stock remains in its existing lifecycle."}
           </p>
           {planned.pending.length > 0 && (
             <aside aria-label="Closes requiring quantity review">
@@ -269,10 +295,10 @@ export function MembershipEditor({
                 ? q.times(execution.instrument.multiplier).toString()
                 : null;
               const cash =
-                openingCash === null
+                totalOpeningCash === null
                   ? null
                   : (splitAmount(
-                      openingCash,
+                      totalOpeningCash,
                       targets.map((target) => ({
                         strategyId: target.lifecycleId,
                         quantity: target.quantity,
@@ -294,18 +320,48 @@ export function MembershipEditor({
           <button
             type="button"
             onClick={() =>
-              void save("lifecycle_attachment", {
-                opening: suggestion.callOpening,
-                targets: targets.map(({ lifecycleId, quantity }) => ({
-                  lifecycleId,
-                  quantity: new Decimal(quantity)
-                    .abs()
-                    .times(
-                      new Decimal(suggestion.quantity).isNegative() ? -1 : 1,
-                    )
-                    .toString(),
-                })),
-              })
+              multipleOpenings
+                ? void save("lifecycle_membership", {
+                    requireCallCoverage: true,
+                    assignments: [
+                      ...new Map(
+                        callMembers.map((m) => [
+                          JSON.stringify(m.allocation),
+                          m.allocation,
+                        ]),
+                      ).values(),
+                    ].map((allocation) => ({
+                      allocation,
+                      lifecycleId: targets[0]?.lifecycleId ?? "",
+                      quantity: callMembers
+                        .filter(
+                          (m) =>
+                            m.allocation.strategyId === allocation.strategyId &&
+                            m.allocation.executionKey ===
+                              allocation.executionKey &&
+                            m.allocation.role === allocation.role,
+                        )
+                        .reduce(
+                          (sum, m) => sum.plus(m.quantity),
+                          new Decimal(0),
+                        )
+                        .toString(),
+                    })),
+                  })
+                : void save("lifecycle_attachment", {
+                    opening: suggestion.callOpening,
+                    targets: targets.map(({ lifecycleId, quantity }) => ({
+                      lifecycleId,
+                      quantity: new Decimal(quantity)
+                        .abs()
+                        .times(
+                          new Decimal(suggestion.quantity).isNegative()
+                            ? -1
+                            : 1,
+                        )
+                        .toString(),
+                    })),
+                  })
             }
           >
             Accept attachment and rebuild

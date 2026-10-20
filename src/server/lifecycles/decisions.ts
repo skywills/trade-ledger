@@ -97,6 +97,60 @@ export function applyMembershipChanges(
     );
     draft.members.push(...pieces);
   };
+  // Recheck covered owners so decisions saved out of order cannot overbook shares.
+  const validateCallCoverage = () => {
+    const ownerIds = new Set(
+      decisions.flatMap((d) => {
+        if (d.kind === "lifecycle_attachment") {
+          const p = LifecycleAttachmentPayloadSchema.safeParse(d.payload);
+          return p.success ? p.data.targets.map((t) => t.lifecycleId) : [];
+        }
+        if (d.kind === "lifecycle_membership") {
+          const p = LifecycleMembershipPayloadSchema.safeParse(d.payload);
+          return p.success && p.data.requireCallCoverage
+            ? p.data.assignments.map((a) => a.lifecycleId)
+            : [];
+        }
+        return [];
+      }),
+    );
+    for (const id of ownerIds) {
+      const opens = draft.members.filter(
+        (m) =>
+          m.lifecycleId === id &&
+          m.allocation.role === "open" &&
+          new Decimal(m.quantity).lt(0) &&
+          exec.get(m.allocation.executionKey)?.instrument.putCall === "C",
+      );
+      for (const open of opens) {
+        const opening = exec.get(open.allocation.executionKey);
+        if (!opening) continue;
+        const demand = opens
+          .filter((other) => {
+            const e = exec.get(other.allocation.executionKey);
+            return (
+              e && (other === open || compareLifecycleTime(e, opening) === 0)
+            );
+          })
+          .reduce(
+            (total, m) =>
+              total.plus(
+                new Decimal(m.quantity)
+                  .abs()
+                  .times(
+                    exec.get(m.allocation.executionKey)?.instrument
+                      .multiplier ?? "0",
+                  ),
+              ),
+            new Decimal(0),
+          );
+        if (availableShares(ledger, draft, id, opening).lt(demand))
+          invalid(
+            "These calls overlap an existing reservation of the selected shares.",
+          );
+      }
+    }
+  };
   const explicitRefs = new Set(
     decisions
       .filter((d) => d.kind === "lifecycle_membership")
@@ -186,53 +240,7 @@ export function applyMembershipChanges(
           }
           replace(b, targets);
         }
-        // Validate all covered-call openings, including already accepted future
-        // calls, so decision arrival order cannot overbook the same shares.
-        const ownerIds = new Set(
-          decisions
-            .filter((d) => d.kind === "lifecycle_attachment")
-            .flatMap((d) => {
-              const r = LifecycleAttachmentPayloadSchema.safeParse(d.payload);
-              return r.success ? r.data.targets.map((t) => t.lifecycleId) : [];
-            }),
-        );
-        for (const id of ownerIds) {
-          const opens = draft.members.filter(
-            (m) =>
-              m.lifecycleId === id &&
-              m.allocation.role === "open" &&
-              new Decimal(m.quantity).lt(0) &&
-              exec.get(m.allocation.executionKey)?.instrument.putCall === "C",
-          );
-          for (const open of opens) {
-            const opening = exec.get(open.allocation.executionKey);
-            if (!opening) continue;
-            const demand = opens
-              .filter((other) => {
-                const e = exec.get(other.allocation.executionKey);
-                return (
-                  e &&
-                  (other === open || compareLifecycleTime(e, opening) === 0)
-                );
-              })
-              .reduce(
-                (total, m) =>
-                  total.plus(
-                    new Decimal(m.quantity)
-                      .abs()
-                      .times(
-                        exec.get(m.allocation.executionKey)?.instrument
-                          .multiplier ?? "0",
-                      ),
-                  ),
-                new Decimal(0),
-              );
-            if (availableShares(ledger, draft, id, opening).lt(demand))
-              invalid(
-                "These calls overlap an existing reservation of the selected shares.",
-              );
-          }
-        }
+        validateCallCoverage();
       } else if (d.kind === "lifecycle_membership") {
         const p = LifecycleMembershipPayloadSchema.parse(d.payload);
         const keys = [
@@ -246,6 +254,7 @@ export function applyMembershipChanges(
             p.assignments.filter((t) => refKey(t.allocation) === key),
           );
         }
+        if (p.requireCallCoverage) validateCallCoverage();
       } else if (d.kind === "wheel_campaign") {
         const p = CampaignPayloadSchema.parse(d.payload);
         const old = draft.campaigns.find((c) => c.id === p.campaignId);
