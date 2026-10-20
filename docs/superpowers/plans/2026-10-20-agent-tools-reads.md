@@ -173,9 +173,30 @@ for (const name of FORBIDDEN_TOOL_NAMES) expect(offeredNames).not.toContain(name
 Release 1 implements every read/evidence requirement from the design. Proposal
 previews/history and portfolio/export are intentionally in the sibling plans.
 All five Review Focus conditions have regression tests. All five tasks completed on
-`feat/agent-read-tools`; 803 Vitest tests passed before whole-branch review.
+`feat/agent-read-tools`; 803 Vitest tests passed before whole-branch review. Independent review found a
+source-chunk JSON line-limit defect; adaptive chunk sizing fixes it, with
+regressions for dense emoji, backslashes, newlines and NUL characters.
 
 Execution ruling: the existing dashboard deterministically selects its first sorted
 currency when omitted. The tools preserve that behavior and disclose filters.currency
 instead of introducing the proposed ambiguity error. Shared defineReadTool and
 PagingInput helpers keep model schemas aligned with strict runtime validation.
+
+
+Execution boundaries retained after review:
+- Dependencies were reused from the main checkout through a node_modules symlink;
+  no dependency versions changed. A fresh environment should install the lockfile.
+- Shared strict Zod schemas generate tool input schemas; changing these adapters
+  remains a localized refactor rather than maintaining separate model schemas.
+- Accounting delegates to existing services; a separate accounting audit is not
+  part of this release and pre-existing formula defects would remain unchanged.
+- Release 2/3 capabilities remain in their own plans. Existing get_strategy keeps
+  its compatible response shape and can still exceed output limits for unusually
+  large details; the new lifecycle/source tools provide bounded evidence access.
+
+
+Final verification after the review fix: `npm run check:all`, `npm test`
+(807/807 in 73 files), and `npm run test:build-smoke` passed. Independent review
+found no Critical or Minor issues; its one Important finding has a failing-then-
+passing regression and the complete suite is green. Feature branch and worktree
+are preserved for the user's next action; no merge or push was requested.

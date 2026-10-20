@@ -114,6 +114,41 @@ it("rejects_unknown_row_field_and_invalid_offsets with specific errors", async (
   ).toContain("ANALYTICS_BUILD_CHANGED");
 });
 
+it.each(["🦊", "\\", "\n", "\u0000"])(
+  "source chunks fit model lines and reassemble repeated %j characters",
+  async (character) => {
+    const { MODEL_MAX_LINE_CHARS } = await import("@nathapp/nax-agent");
+    const { store, tools, importId } = await setup();
+    const original = character.repeat(2_100);
+    store.db
+      .prepare("UPDATE import_rows SET raw_fields_json=? WHERE id='quarantine'")
+      .run(JSON.stringify({ Note: original }));
+    const pieces: string[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const result = await callTool(tools, "get_import_row_field", {
+        importId,
+        rowNumber: 999,
+        field: "Note",
+        valueOffset: offset,
+      });
+      expect(result.isError, result.content).not.toBe(true);
+      expect(
+        Math.max(...result.content.split("\n").map((line) => line.length)),
+      ).toBeLessThanOrEqual(MODEL_MAX_LINE_CHARS);
+      const chunk = JSON.parse(result.content);
+      expect(Array.from(chunk.value).length).toBeGreaterThan(0);
+      expect(Array.from(chunk.value).length).toBeLessThanOrEqual(1_000);
+      expect(
+        chunk.nextValueOffset === null || chunk.nextValueOffset > offset,
+      ).toBe(true);
+      pieces.push(chunk.value);
+      offset = chunk.nextValueOffset;
+    }
+    expect(pieces.join("")).toBe(original);
+  },
+);
+
 it("preview_pages_more_than_50_issues while preserving counts and committable", async () => {
   const { store, tools } = await setup();
   const preview = await previewImport(store, {

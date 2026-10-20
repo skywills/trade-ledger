@@ -78,19 +78,26 @@ export function importEvidenceTools(ctx: ChatToolContext): ChatTool[] {
               404,
             );
           const characters = Array.from(row.fields[q.field] ?? "");
-          const end = Math.min(
-            q.valueOffset + FIELD_CHUNK_CHARACTERS,
-            characters.length,
+          let count = Math.max(
+            0,
+            Math.min(FIELD_CHUNK_CHARACTERS, characters.length - q.valueOffset),
           );
-          return jsonResult({
-            ...snapshotMeta(snapshot),
-            importId: q.importId,
-            rowNumber: q.rowNumber,
-            field: q.field,
-            value: characters.slice(q.valueOffset, end).join(""),
-            totalCharacters: characters.length,
-            nextValueOffset: end < characters.length ? end : null,
-          });
+          // JSON escaping and UTF-16 surrogate pairs can exceed a model line
+          // before the code-point ceiling is reached. Advance only by what fits.
+          while (true) {
+            const end = q.valueOffset + count;
+            const result = jsonResult({
+              ...snapshotMeta(snapshot),
+              importId: q.importId,
+              rowNumber: q.rowNumber,
+              field: q.field,
+              value: characters.slice(q.valueOffset, end).join(""),
+              totalCharacters: characters.length,
+              nextValueOffset: end < characters.length ? end : null,
+            });
+            if (!result.isError || count <= 1) return result;
+            count = Math.max(1, Math.floor(count * 0.75));
+          }
         })(),
     ),
   ];
