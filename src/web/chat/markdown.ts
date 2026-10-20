@@ -17,7 +17,8 @@ export type Inline =
   | { kind: "text"; text: string }
   | { kind: "strong"; text: string }
   | { kind: "em"; text: string }
-  | { kind: "code"; text: string };
+  | { kind: "code"; text: string }
+  | { kind: "download"; text: string; href: string };
 
 const FENCE = /^\s*```/;
 const HEADING = /^(#{1,4})\s+(.+)$/;
@@ -146,10 +147,43 @@ export function parseBlocks(text: string): Block[] {
   return blocks;
 }
 
+/** Only the existing build-pinned same-origin CSV route is navigable. */
+export function isAnalyticsDownloadHref(value: string): boolean {
+  if (
+    !value.startsWith("/api/analytics/export?") ||
+    [...value].some(
+      (char) =>
+        char.charCodeAt(0) <= 32 ||
+        char.charCodeAt(0) === 127 ||
+        char === "\\" ||
+        char === "#",
+    )
+  )
+    return false;
+  try {
+    const url = new URL(value, "https://journal.invalid");
+    return (
+      url.pathname === "/api/analytics/export" &&
+      url.hash === "" &&
+      url.searchParams.getAll("expectedBuildId").length === 1 &&
+      Boolean(url.searchParams.get("expectedBuildId")?.trim())
+    );
+  } catch {
+    return false;
+  }
+}
+
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s\n][^*\n]*\*)|((?<![A-Za-z0-9])_[^_\s\n][^_\n]*_(?![A-Za-z0-9]))/g;
+  /(`[^`\n]+`)|(\[[^[\]\r\n]+\]\([^\r\n]*?\))|(\*\*[^*\n]+\*\*)|(\*[^*\s\n][^*\n]*\*)|((?<![A-Za-z0-9])_[^_\s\n][^_\n]*_(?![A-Za-z0-9]))/g;
 
 function tokenFor(raw: string): Inline {
+  if (raw.startsWith("[")) {
+    const split = raw.indexOf("](");
+    const href = raw.slice(split + 2, -1);
+    return isAnalyticsDownloadHref(href)
+      ? { kind: "download", text: raw.slice(1, split), href }
+      : { kind: "text", text: raw };
+  }
   if (raw.startsWith("`")) return { kind: "code", text: raw.slice(1, -1) };
   if (raw.startsWith("**")) return { kind: "strong", text: raw.slice(2, -2) };
   return { kind: "em", text: raw.slice(1, -1) };

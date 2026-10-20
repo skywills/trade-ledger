@@ -5,7 +5,10 @@ import { createDefaultSecretResolver } from "../../src/server/ai/credentials.js"
 import { saveProfile } from "../../src/server/ai/profiles.js";
 import { acceptProposal } from "../../src/server/ai/proposals.js";
 import { listRunsForThread, readRun } from "../../src/server/ai/runs.js";
-import { BuildScheduler } from "../../src/server/builds/service.js";
+import {
+  activeProjection,
+  BuildScheduler,
+} from "../../src/server/builds/service.js";
 import type { ChatFrame } from "../../src/server/chat/frames.js";
 import { type ChatLimits, ChatService } from "../../src/server/chat/service.js";
 import { listMessages, readThread } from "../../src/server/chat/threads.js";
@@ -159,6 +162,62 @@ describe("ChatService read-only turns", () => {
       if (state === "empty") expect(toolContents).toContain('"buildId":null');
     },
   );
+
+  it("offers position and export tools and returns a build-pinned download link", async () => {
+    const plan: InferencePlanStep[] = [];
+    const h = await harness(plan);
+    const buildId = activeProjection(h.store).buildId;
+    const href = `/api/analytics/export?dataset=summary&unit=strategy&currency=USD&basis=broker&scope=closed&expectedBuildId=${buildId}`;
+    plan.push(
+      {
+        kind: "tool-call",
+        toolName: "get_open_positions_summary",
+        arguments: { expectedBuildId: buildId },
+      },
+      {
+        kind: "tool-call",
+        toolName: "export_analytics",
+        arguments: {
+          dataset: "summary",
+          unit: "strategy",
+          currency: "USD",
+          expectedBuildId: buildId,
+        },
+      },
+      { kind: "text", text: `[Download CSV](${href})` },
+    );
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    const { assistantMessageId } = await h.chat.sendMessage(thread.id, {
+      clientMessageId: "export",
+      text: "Show current quantities and export analytics",
+    });
+    await waitIdle(h.store, thread.id);
+    const assistant = listMessages(h.store, thread.id).find(
+      (m) => m.id === assistantMessageId,
+    );
+    expect(assistant?.tools.map((t) => t.name)).toEqual([
+      "get_open_positions_summary",
+      "export_analytics",
+    ]);
+    expect(assistant?.tools.every((t) => !t.isError)).toBe(true);
+    expect(assistant?.content).toBe(`[Download CSV](${href})`);
+    const contents = h.inference
+      .receivedRequests()
+      .flatMap(
+        (r) =>
+          (
+            r.json as {
+              messages?: { role?: string; content?: unknown }[];
+            } | null
+          )?.messages ?? [],
+      )
+      .filter((m) => m.role === "tool")
+      .map((m) => m.content)
+      .join("\n");
+    expect(contents).toContain('"downloadUrl":"/api/analytics/export?');
+    expect(contents).toContain(`expectedBuildId=${buildId}`);
+    expect(contents).not.toContain('"csv":');
+  });
 
   it("runs a tool-using turn and persists the final answer", async () => {
     const h = await harness([
