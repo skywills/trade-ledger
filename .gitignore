@@ -9,3 +9,4 @@ playwright-report/
 test-results/
 .superpowers/
 sample_data/
+.worktrees/
