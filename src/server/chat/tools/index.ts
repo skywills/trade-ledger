@@ -1,6 +1,7 @@
 import { analyticsTools } from "./analytics.js";
 import { capabilitiesTool } from "./capabilities.js";
 import { decisionHistoryTools } from "./decisions.js";
+import { exportTools } from "./exports.js";
 import { importEvidenceTools } from "./imports.js";
 import { journalTools } from "./journal.js";
 import { lifecycleTools } from "./lifecycles.js";
@@ -24,6 +25,7 @@ export function createChatTools(ctx: ChatToolContext): ChatTool[] {
     ...proposalPreviewTools(ctx),
     ...analyticsTools(ctx),
     ...positionTools(ctx),
+    ...exportTools(ctx),
     ...lifecycleTools(ctx),
     ...importEvidenceTools(ctx),
     ...pnlTools(ctx),
