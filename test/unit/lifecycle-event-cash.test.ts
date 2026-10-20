@@ -202,6 +202,177 @@ describe("lifecycle assignment/exercise cash evidence", () => {
     expect(p.issues.map((i) => i.code)).not.toContain("EVENT_CASH_UNRESOLVED");
   });
 
+  it.each(["0", "-1", "10000"])(
+    "withholds reconstruction for a linked delivery with unsupported cash %s",
+    (cash) => {
+      const f = assigned(true);
+      const delivery = required(
+        f.ledger.executions.find((e) => e.key === "s-buy"),
+      );
+      delivery.netCash = cash;
+      required(
+        f.projection.allocations.find((a) => a.executionKey === delivery.key),
+      ).netCash = cash;
+      const p = account(f);
+      const l = required(p.lifecycles[0]);
+      expect(l).toMatchObject({
+        status: "closed",
+        complete: true,
+        cashflow: String(9850 + Number(cash)),
+        brokerPnl: "0",
+        reconstructedPnl: null,
+      });
+      expect(p.issues.map((i) => i.code)).toEqual(["EVENT_CASH_UNRESOLVED"]);
+      expect(valueLifecycles(f.ledger, p, [])[0]).toMatchObject({
+        totalPnl: null,
+        unrealizedPnl: null,
+        realizedBrokerPnl: "0",
+        estimated: true,
+        reasons: ["EVENT_CASH_UNRESOLVED"],
+      });
+    },
+  );
+
+  it("checks owned delivery cash rather than borrowing the execution's cash", () => {
+    const f = assigned(true);
+    const p = projectLifecycles(f.ledger, f.projection, []);
+    required(
+      p.members.find((m) => m.allocation.executionKey === "s-buy"),
+    ).netCash = "0";
+    accountLifecycles(f.ledger, f.projection, p);
+    expect(required(p.lifecycles[0]).reconstructedPnl).toBeNull();
+    expect(p.issues.map((i) => i.code)).toEqual(["EVENT_CASH_UNRESOLVED"]);
+  });
+
+  it.each([
+    { optionCash: "-10000", stockCash: "0", commission: null, taxes: null },
+    {
+      optionCash: "-1",
+      stockCash: "-10000.50",
+      commission: "-1",
+      taxes: "-0.50",
+    },
+  ])(
+    "accepts recorded principal on either leg and recorded charges: %j",
+    ({ optionCash, stockCash, commission, taxes }) => {
+      const f = assigned(true);
+      const event = required(
+        f.ledger.executions.find((e) => e.key === "p-assign"),
+      );
+      const delivery = required(
+        f.ledger.executions.find((e) => e.key === "s-buy"),
+      );
+      event.netCash = optionCash;
+      event.commission = commission;
+      delivery.netCash = stockCash;
+      delivery.taxes = taxes;
+      for (const a of f.projection.allocations) {
+        a.netCash = required(
+          f.ledger.executions.find((e) => e.key === a.executionKey),
+        ).netCash;
+      }
+      const p = account(f);
+      expect(required(p.lifecycles[0]).reconstructedPnl).toBe(
+        commission === null ? "-150" : "-151.5",
+      );
+      expect(p.issues.map((i) => i.code)).not.toContain(
+        "EVENT_CASH_UNRESOLVED",
+      );
+    },
+  );
+
+  it.each([
+    {
+      instrument: put,
+      event: "assignment",
+      opening: "-1",
+      closing: "1",
+      shares: "100",
+      cash: "-10000",
+    },
+    {
+      instrument: call,
+      event: "assignment",
+      opening: "-1",
+      closing: "1",
+      shares: "-100",
+      cash: "10500",
+    },
+    {
+      instrument: put,
+      event: "exercise",
+      opening: "1",
+      closing: "-1",
+      shares: "-100",
+      cash: "10000",
+    },
+    {
+      instrument: call,
+      event: "exercise",
+      opening: "1",
+      closing: "-1",
+      shares: "100",
+      cash: "-10500",
+    },
+  ] as const)(
+    "accepts signed strike cash for $event $instrument.putCall",
+    ({ instrument, event, opening, closing, shares, cash }) => {
+      const f = fixture(
+        [
+          ["option", execution("open", instrument, opening, "0", 1, "open")],
+          [
+            "option",
+            execution("event", instrument, closing, "0", 2, "close", event),
+          ],
+          [
+            "stock",
+            execution("delivery", stock, shares, cash, 2, "open", event),
+          ],
+          [
+            "stock",
+            execution(
+              "unwind",
+              stock,
+              String(-Number(shares)),
+              String(-Number(cash)),
+              3,
+              "close",
+            ),
+          ],
+        ],
+        [{ from: "option", to: "stock", type: event, sources: [] }],
+      );
+      const p = account(f);
+      expect(required(p.lifecycles[0]).reconstructedPnl).toBe("0");
+      expect(p.issues).toEqual([]);
+    },
+  );
+
+  it.each([
+    { strike: null, expectedPnl: null },
+    { strike: "-100", expectedPnl: null },
+    { strike: "0", expectedPnl: "9850" },
+  ])(
+    "requires a known nonnegative strike for zero-cash delivery: $strike",
+    ({ strike, expectedPnl }) => {
+      const f = assigned(true);
+      const event = required(
+        f.ledger.executions.find((e) => e.key === "p-assign"),
+      );
+      event.instrument = { ...event.instrument, strike };
+      required(f.ledger.executions.find((e) => e.key === "s-buy")).netCash =
+        "0";
+      required(
+        f.projection.allocations.find((a) => a.executionKey === "s-buy"),
+      ).netCash = "0";
+      const p = account(f);
+      expect(required(p.lifecycles[0]).reconstructedPnl).toBe(expectedPnl);
+      expect(
+        required(p.lifecycles[0]).reasons.includes("EVENT_CASH_UNRESOLVED"),
+      ).toBe(expectedPnl === null);
+    },
+  );
+
   it("retains reconstruction for a complete physical assignment lifecycle", () => {
     const p = account(assigned(true));
     expect(required(p.lifecycles[0])).toMatchObject({
