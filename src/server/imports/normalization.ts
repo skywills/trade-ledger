@@ -76,10 +76,15 @@ const DERIVATIVE_ASSET_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 const EVENT_CODES: ReadonlyArray<readonly [string, Execution["event"]]> = [
+  // A cancellation is retained for revision/review handling, never settlement.
+  ["Ca", "unsupported"],
   ["A", "assignment"],
   ["Ex", "exercise"],
-  ["Exp", "expiry"],
-  ["Ca", "cash_settlement"],
+  ["Ep", "expiry"],
+  ["Exp", "expiry"], // Retain compatibility with earlier explicit exports.
+  ["Off", "cash_settlement"],
+  ["S0", "cash_settlement"],
+  ["S1", "cash_settlement"],
 ];
 
 /**
@@ -424,27 +429,8 @@ export function normalizeExecution(
     }
   }
 
-  // A worthless option expiry has no closing proceeds. Broker P&L may be
-  // positive or negative and is retained separately from cashflow. Explicit
-  // lifecycle codes/action IDs win; zero cash alone is not expiry evidence.
-  if (
-    event === "trade" &&
-    assetClass === "OPT" &&
-    action !== "open" &&
-    action !== "mixed" &&
-    brokerIds.PositionActionID === undefined &&
-    expiry !== null &&
-    date !== null &&
-    date >= expiry &&
-    quantity !== null &&
-    !new Decimal(quantity).isZero() &&
-    price !== null &&
-    new Decimal(price).isZero() &&
-    netCash !== null &&
-    new Decimal(netCash).isZero() &&
-    (proceeds === null || new Decimal(proceeds).isZero())
-  )
-    event = "expiry";
+  // Zero-price, zero-cash closes can be expiry, assignment, or exercise.
+  // Only explicit broker event codes establish which lifecycle event occurred.
 
   const sourceTimezone = (fields["TimeZone"] ?? "").trim();
   const configuredTimezone = reportTimezone?.trim() ?? "";

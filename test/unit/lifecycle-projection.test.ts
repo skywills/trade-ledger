@@ -624,3 +624,240 @@ it("shows confirmed calls against purchased shares as a covered-call stage", () 
     coveredShares: "100",
   });
 });
+
+it.each([false, true])(
+  "accepts explicit opening and closing roles at the same instant (reverse rows=%s)",
+  (reverse) => {
+    const opening = execution("tied-open", stock, "-100", "10000", 1, "open");
+    const close = execution("tied-close", stock, "100", "-10100", 1, "close");
+    opening.sources = [{ importId: "imp", rowNumber: reverse ? 3 : 2 }];
+    close.sources = [{ importId: "imp", rowNumber: reverse ? 2 : 3 }];
+    const rows: Array<[string, typeof opening]> = [
+      ["stock-origin", opening],
+      ["stock-origin", close],
+    ];
+    const f = fixture(reverse ? rows.reverse() : rows);
+    const p = projectLifecycles(f.ledger, f.projection, [], ids);
+    expect(p.lifecycles[0]).toMatchObject({
+      status: "closed",
+      complete: true,
+      positions: [],
+      cashflow: "-100",
+    });
+    expect(p.lifecycles[0]?.reasons).not.toContain(
+      "LIFECYCLE_EXPOSURE_UNRESOLVED",
+    );
+  },
+);
+
+it.each(["unknown-role", "different-report", "date-only"])(
+  "keeps tied exposure unresolved with %s evidence",
+  (kind) => {
+    const opening = execution("weak-open", stock, "-100", "10000", 1, "open");
+    const close = execution("weak-close", stock, "100", "-10100", 1, "close");
+    const f = fixture([
+      ["stock-origin", opening],
+      ["stock-origin", close],
+    ]);
+    if (kind === "unknown-role") opening.action = "unknown";
+    if (kind === "different-report") {
+      opening.rawDateTime = close.rawDateTime = "2026-10-01T12:00:00";
+      opening.timezone = close.timezone = null;
+      close.sources = [{ importId: "other", rowNumber: 2 }];
+    }
+    if (kind === "date-only")
+      opening.rawDateTime = close.rawDateTime = "2026-10-01";
+    const p = projectLifecycles(f.ledger, f.projection, [], ids);
+    expect(p.lifecycles[0]?.status).toBe("unresolved");
+  },
+);
+
+it("does not spend a tied opening twice before a later replenishment", () => {
+  const f = fixture([
+    ["stock-origin", execution("open", stock, "100", "-10000", 1, "open")],
+    ["stock-origin", execution("close-a", stock, "-60", "6000", 1, "close")],
+    ["stock-origin", execution("close-b", stock, "-60", "6000", 1, "close")],
+    ["stock-origin", execution("later", stock, "20", "-2000", 2, "open")],
+  ]);
+  const p = projectLifecycles(f.ledger, f.projection, [], ids);
+  expect(p.lifecycles[0]?.status).toBe("unresolved");
+  expect(p.lifecycles[0]?.reasons).toContain("LIFECYCLE_EXPOSURE_UNRESOLVED");
+});
+
+it("does not spend tied exposure twice across slices of one close", () => {
+  const close = execution("shared-close", stock, "-120", "12000", 1, "close");
+  const f = fixture([
+    ["one", execution("one-open", stock, "100", "-10000", 1, "open")],
+    ["one", close],
+    ["one", execution("later-open", stock, "20", "-2000", 2, "open")],
+    ["two", execution("two-open", stock, "60", "-6000", 1, "open")],
+    ["two", close],
+  ]);
+  f.ledger.executions = [
+    ...new Map(f.ledger.executions.map((e) => [e.key, e])).values(),
+  ];
+  for (const a of f.projection.allocations.filter(
+    (a) => a.executionKey === close.key,
+  )) {
+    a.quantity = "-60";
+    a.netCash = "6000";
+  }
+  const p = projectLifecycles(
+    f.ledger,
+    f.projection,
+    [
+      {
+        id: "move",
+        sequence: 1,
+        kind: "lifecycle_membership",
+        sources: [],
+        strategyIds: [],
+        supersedesId: null,
+        payload: {
+          assignments: [
+            {
+              allocation: {
+                strategyId: "two",
+                executionKey: "shared-close",
+                role: "close",
+              },
+              lifecycleId: "A:one-open",
+              quantity: "-60",
+            },
+          ],
+        },
+      },
+    ],
+    ids,
+  );
+  const lifecycle = p.lifecycles.find((l) => l.id === "A:one-open");
+  expect(lifecycle?.status).toBe("unresolved");
+  expect(lifecycle?.reasons).toContain("LIFECYCLE_EXPOSURE_UNRESOLVED");
+});
+
+it.each([false, true])(
+  "combines assignment and exercise when exercise closes uniquely owned stock (reverse links=%s)",
+  (reverse) => {
+    const shortCall = {
+      ...call,
+      key: "short-call",
+      conid: "101",
+      strike: "100",
+    };
+    const longCall = { ...call, key: "long-call", conid: "102", strike: "105" };
+    const shortOpen = execution(
+      "short-open",
+      shortCall,
+      "-1",
+      "300",
+      1,
+      "open",
+    );
+    const shortClose = execution(
+      "short-assign",
+      shortCall,
+      "1",
+      "0",
+      2,
+      "close",
+      "assignment",
+    );
+    const longOpen = execution("long-open", longCall, "1", "-100", 1, "open");
+    const longClose = execution(
+      "long-exercise",
+      longCall,
+      "-1",
+      "0",
+      2,
+      "close",
+      "exercise",
+    );
+    const stockOpen = execution(
+      "stock-open",
+      stock,
+      "-100",
+      "10000",
+      2,
+      "open",
+      "assignment",
+    );
+    const stockClose = execution(
+      "stock-close",
+      stock,
+      "100",
+      "-10500",
+      2,
+      "close",
+      "exercise",
+    );
+    shortClose.brokerIds.PositionActionID =
+      stockOpen.brokerIds.PositionActionID = "assign";
+    longClose.brokerIds.PositionActionID =
+      stockClose.brokerIds.PositionActionID = "exercise";
+    stockClose.brokerPnl = "-300";
+    const links = [
+      {
+        from: "short-origin",
+        to: "stock-origin",
+        type: "assignment",
+        sources: [...shortClose.sources, ...stockOpen.sources],
+      },
+      {
+        from: "long-origin",
+        to: "stock-origin",
+        type: "exercise",
+        sources: [...longClose.sources, ...stockClose.sources],
+      },
+    ];
+    // Source references distinguish simultaneous broker events.
+    [shortOpen, shortClose, longOpen, longClose, stockOpen, stockClose].forEach(
+      (e, i) => {
+        e.sources = [{ importId: "imp", rowNumber: i + 2 }];
+      },
+    );
+    if (links[0])
+      links[0].sources = [...shortClose.sources, ...stockOpen.sources];
+    if (links[1])
+      links[1].sources = [...longClose.sources, ...stockClose.sources];
+    const f = fixture(
+      [
+        ["short-origin", shortOpen],
+        ["short-origin", shortClose],
+        ["long-origin", longOpen],
+        ["long-origin", longClose],
+        [
+          "stock-origin",
+          execution("unrelated-shares", stock, "50", "-5000", 1, "open"),
+        ],
+        ["stock-origin", stockOpen],
+        ["stock-origin", stockClose],
+      ],
+      reverse ? links.reverse() : links,
+    );
+    const p = accountLifecycles(
+      f.ledger,
+      f.projection,
+      projectLifecycles(f.ledger, f.projection, [], ids),
+    );
+    expect(p.lifecycles).toHaveLength(2);
+    expect(p.lifecycles[0]).toMatchObject({
+      id: "A:short-open",
+      status: "closed",
+      complete: true,
+      cashflow: "-300",
+      brokerPnl: "-300",
+      reconstructedPnl: "-300",
+      positions: [],
+    });
+    expect(p.members).toHaveLength(7);
+    expect(
+      p.lifecycles.find((l) => l.id === "A:unrelated-shares"),
+    ).toMatchObject({
+      status: "open",
+      positions: [{ instrumentKey: "stock", quantity: "50" }],
+      cashflow: "-5000",
+    });
+    expect(validateMembership(f.ledger, f.projection, p.members)).toEqual([]);
+    expect(p.issues).toEqual([]);
+  },
+);

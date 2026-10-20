@@ -128,7 +128,7 @@ describe("contract multipliers and lifecycle", () => {
     expect(normalized({ Multiplier }).execution).toBeNull();
   });
   it.each(["VIX", "SQQQ", "SQQQ2"])(
-    "recognizes zero-value expiry for %s without rewriting P&L",
+    "recognizes explicit zero-value expiry for %s without rewriting P&L",
     (symbol) => {
       const result = normalized({
         Symbol: symbol,
@@ -138,7 +138,7 @@ describe("contract multipliers and lifecycle", () => {
         Proceeds: "0",
         NetCash: "0",
         FifoPnlRealized: "37",
-        "Notes/Codes": "C",
+        "Notes/Codes": "C;Exp",
       });
       expect(result.execution).toMatchObject({
         event: "expiry",
@@ -166,7 +166,7 @@ describe("contract multipliers and lifecycle", () => {
       ).toBe("trade");
     }
     expect(
-      normalized({ TradePrice: "0", NetCash: "0", "Notes/Codes": "C;Ca" })
+      normalized({ TradePrice: "0", NetCash: "0", "Notes/Codes": "C;Off" })
         .execution?.event,
     ).toBe("cash_settlement");
   });
@@ -187,7 +187,7 @@ describe("contract multipliers and lifecycle", () => {
           NetCash: "0",
           IBCommission: "0",
           FifoPnlRealized: pnl,
-          "Notes/Codes": "C",
+          "Notes/Codes": "C;Exp",
         }),
       ]);
       expect(
@@ -215,7 +215,7 @@ describe("contract multipliers and lifecycle", () => {
         Proceeds: "0",
         NetCash: "0",
         FifoPnlRealized: "37",
-        "Notes/Codes": "C",
+        "Notes/Codes": "C;Exp",
       }),
     ]);
     expect(projection.issues.map((i) => i.code)).toContain("MISSING_OPENING");
@@ -272,7 +272,7 @@ it("settles an option in cash without a stock leg or duplicate P&L", async () =>
       NetCash: "-20",
       IBCommission: "0",
       FifoPnlRealized: "17",
-      "Notes/Codes": "C;Ca",
+      "Notes/Codes": "C;Off",
     }),
   ]);
   expect(
@@ -381,7 +381,7 @@ it("inherits a multiplier across an unambiguous missing contract ID and closes e
       Proceeds: "0",
       NetCash: "0",
       FifoPnlRealized: "37",
-      "Notes/Codes": "C",
+      "Notes/Codes": "C;Exp",
     }),
   ]);
   expect(
@@ -485,3 +485,143 @@ it("inherits complete no-ID contract evidence without conflating ambiguous known
       ?.instrument.multiplier,
   ).toBeNull();
 });
+
+it.each(["0", "37", "-39"])(
+  "does not infer expiry from zero cash or broker P&L %s without event codes",
+  (pnl) => {
+    const result = normalized({
+      DateTime: "2026-10-16 16:00:00",
+      Quantity: "2",
+      TradePrice: "0",
+      Proceeds: "0",
+      NetCash: "0",
+      FifoPnlRealized: pnl,
+      "Notes/Codes": "C",
+    });
+    expect(result.execution).toMatchObject({
+      event: "trade",
+      netCash: "0",
+      brokerPnl: pnl,
+    });
+  },
+);
+
+it.each([
+  {
+    actionId: "",
+    event: "expiry",
+    expected: { status: "closed", complete: true, reconstructedPnl: "37" },
+  },
+  {
+    actionId: "unmatched-action",
+    event: "expiry",
+    expected: { status: "closed", complete: true, reconstructedPnl: "37" },
+  },
+  {
+    actionId: "",
+    event: "roll",
+    expected: { status: "unresolved", complete: false, reconstructedPnl: null },
+  },
+])(
+  "requires event evidence before final accounting ($actionId, correction=$event)",
+  async ({ actionId, event, expected }) => {
+    const { ledger, projection } = await build([
+      fields(),
+      fields({
+        TradeID: "booked-close",
+        DateTime: "2026-10-16 16:00:00",
+        Quantity: "2",
+        TradePrice: "0",
+        Proceeds: "0",
+        NetCash: "0",
+        IBCommission: "0",
+        FifoPnlRealized: "0",
+        "Notes/Codes": "C",
+        PositionActionID: actionId,
+      }),
+    ]);
+    expect(projection.strategies).toHaveLength(1);
+    expect(projection.strategies[0]).toMatchObject({
+      status: "unresolved",
+      complete: false,
+      cashflow: "37",
+      brokerPnl: "0",
+      reconstructedPnl: null,
+    });
+    expect(projection.issues.map((i) => i.code)).toContain(
+      "LIFECYCLE_UNRESOLVED",
+    );
+    expect(projection.issues.map((i) => i.code)).not.toContain(
+      "MISSING_OPENING",
+    );
+    expect(projection.issues.map((i) => i.code)).not.toContain(
+      "PNL_RECONCILIATION",
+    );
+    expect(projection.links).toEqual([]);
+    const opening = ledger.executions.find((e) => e.action === "open");
+    const close = ledger.executions.find(
+      (e) => e.brokerIds.TradeID === "booked-close",
+    );
+    if (!opening || !close) throw new Error("Expected source executions");
+    const corrected = accountProjection(
+      ledger,
+      groupStrategies(
+        ledger,
+        [
+          {
+            id: "confirm-expiry",
+            sequence: 1,
+            kind: "lifecycle",
+            supersedesId: null,
+            sources: [...opening.sources, ...close.sources],
+            strategyIds: [],
+            payload: {
+              event,
+              sourceRef: opening.sources[0],
+              targetRef: close.sources[0],
+            },
+          },
+        ],
+        (account, keys) => `${account}:${keys.join(",")}`,
+      ),
+    );
+    expect(corrected.strategies[0]).toMatchObject(expected);
+    if (event === "expiry") {
+      expect(corrected.issues.map((i) => i.code)).not.toContain(
+        "LIFECYCLE_UNRESOLVED",
+      );
+    } else {
+      expect(corrected.issues.map((i) => i.code)).toContain(
+        "LIFECYCLE_UNRESOLVED",
+      );
+    }
+  },
+);
+
+it.each([
+  ["Ep", "expiry"],
+  ["Ca", "unsupported"],
+  ["Off", "cash_settlement"],
+  ["S0", "cash_settlement"],
+  ["S1", "cash_settlement"],
+])(
+  "interprets broker code %s according to its supplied definition",
+  (code, event) => {
+    const result = normalized({
+      "Notes/Codes": code,
+      "Open/CloseIndicator": "C",
+      PositionActionID: "broker-action",
+      DateTime: "2026-10-16 16:20:00",
+      Quantity: "2",
+      TradePrice: "0",
+      Proceeds: "0",
+      NetCash: "0",
+    });
+    expect(result.execution).toMatchObject({
+      action: "close",
+      event,
+      netCash: "0",
+    });
+    expect(result.execution?.codes).toEqual([code]);
+  },
+);

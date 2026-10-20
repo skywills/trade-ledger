@@ -7,9 +7,9 @@ import {
   sourceKey,
 } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
-import { validateLifecycle } from "./lifecycle.js";
+import { looksLikeBookedEvent, validateLifecycle } from "./lifecycle.js";
 import { isDerivative } from "./matching.js";
-import { makeIssue } from "./projection.js";
+import { makeIssue, pushDraftIssue } from "./projection.js";
 
 function lifecycleEventFor(group: readonly Execution[]): string {
   for (const event of ["assignment", "exercise", "expiry", "cash_settlement"]) {
@@ -36,6 +36,7 @@ export function buildGroupingLinks(
   }
 
   const links: Link[] = [];
+  const resolvedEvents = new Set<Id>();
   const linkKeys = new Set<string>();
   const addLink = (
     from: Id,
@@ -74,6 +75,8 @@ export function buildGroupingLinks(
       addIssue(issue);
       continue;
     }
+    resolvedEvents.add(option.key);
+    resolvedEvents.add(stock.key);
     const from = strategiesOfExecution.get(option.key) ?? [];
     const to = strategiesOfExecution.get(stock.key) ?? [];
     for (const source of from)
@@ -100,6 +103,10 @@ export function buildGroupingLinks(
     if (issue !== null) {
       addIssue(issue);
       continue;
+    }
+    if (instruction.event !== "roll") {
+      resolvedEvents.add(source.key);
+      resolvedEvents.add(target.key);
     }
     const from =
       strategiesOfExecution.get(source.key) ??
@@ -134,6 +141,32 @@ export function buildGroupingLinks(
       .flatMap((execution) => execution.sources);
     for (const closeDraftId of [...closeDraftIds].sort())
       addLink(closeDraftId, openDraftId, "roll", sources);
+  }
+  // Matching an opening establishes quantity provenance, not the event type.
+  // Run after link validation so broker evidence and retained corrections can
+  // resolve booked events, including corrections within a single strategy.
+  for (const draft of drafts.values()) {
+    for (const leg of draft.legs) {
+      const execution = context.executionByKey.get(leg.executionKey);
+      if (
+        !execution ||
+        leg.role !== "close" ||
+        !looksLikeBookedEvent(execution) ||
+        resolvedEvents.has(execution.key)
+      )
+        continue;
+      draft.unresolved = true;
+      draft.complete = false;
+      pushDraftIssue(
+        draft,
+        makeIssue(
+          "LIFECYCLE_UNRESOLVED",
+          execution.sources,
+          "warning",
+          execution.key,
+        ),
+      );
+    }
   }
   return links;
 }

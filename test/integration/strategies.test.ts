@@ -605,7 +605,7 @@ describe("strategy grouping, closes and option lifecycle links", () => {
         optionLeg("CASH", "T-CASH", {
           TradeDate: "2026-12-18",
           Quantity: "+1",
-          "Notes/Codes": "Ca",
+          "Notes/Codes": "Off",
           NetCash: "100",
           TradePrice: "1",
         }),

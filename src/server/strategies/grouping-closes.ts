@@ -9,9 +9,8 @@ import {
 import { orderByKnownChronology } from "./grouping-close-order.js";
 import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
-import { looksLikeBookedEvent } from "./lifecycle.js";
 import { signOf } from "./matching.js";
-import { addLeg, legOf, makeIssue, pushDraftIssue } from "./projection.js";
+import { addLeg, legOf, makeIssue } from "./projection.js";
 
 export function matchCloses(context: GroupingContext): Execution[] {
   const {
@@ -158,16 +157,6 @@ export function matchCloses(context: GroupingContext): Execution[] {
     recordConsumption(close, closeQuantity, netCash, brokerPnl);
     draft.unresolved = true;
     draft.complete = false;
-    if (
-      candidates.length === 0 &&
-      close.brokerIds.PositionActionID === undefined &&
-      looksLikeBookedEvent(close)
-    ) {
-      pushDraftIssue(
-        draft,
-        makeIssue("LIFECYCLE_UNRESOLVED", close.sources, "warning", close.key),
-      );
-    }
   }
   return orderedCloseExecutions;
 }
