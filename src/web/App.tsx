@@ -46,6 +46,7 @@ function renderRoute(pathname: string) {
       return segments.length <= 2 &&
         (second === undefined ||
           second === "analysis" ||
+          second === "open-positions" ||
           second === "reports") ? (
         <DashboardPage view={second ?? "overview"} />
       ) : (

@@ -1,5 +1,8 @@
 import { useEffect } from "react";
-import { ExportQuerySchema } from "../../shared/analytics.js";
+import {
+  DetailQuerySchema,
+  ExportQuerySchema,
+} from "../../shared/analytics.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { BuildAction } from "../lifecycles/BuildAction.js";
 import { Link, navigate, useLocation } from "../navigation.js";
@@ -7,6 +10,7 @@ import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
 import { DashboardFilters } from "./DashboardFilters.js";
 import { DataQuality } from "./DataQuality.js";
+import { DetailTable } from "./DetailTable.js";
 import { ExportButton } from "./ExportButton.js";
 import { Overview } from "./Overview.js";
 import {
@@ -32,8 +36,9 @@ export function DashboardPage({ view }: { view: DashboardView }) {
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
   }, [data, state, view]);
+  const openPositions = view === "open-positions";
   const exportDataset =
-    state.detail.kind === "strategies"
+    openPositions || state.detail.kind === "strategies"
       ? "strategies"
       : state.detail.kind === "transactions"
         ? "transactions"
@@ -51,10 +56,22 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         ...data.filters,
         ...exportDetail,
         dataset: exportDataset,
+        ...(openPositions ? { scope: "current-open" } : {}),
         expectedBuildId:
           state.detail.expectedBuildId ?? data.buildId ?? undefined,
       })
     : null;
+  const openQuery =
+    data && openPositions
+      ? DetailQuerySchema.safeParse({
+          ...data.filters,
+          ...state.detail,
+          kind: "strategies",
+          scope: "current-open",
+          expectedBuildId:
+            state.detail.expectedBuildId ?? data.buildId ?? undefined,
+        })
+      : null;
   function refreshAnalytics() {
     const { expectedBuildId: _old, ...detail } = state.detail;
     navigate(dashboardHref(view, { ...state, detail }));
@@ -76,19 +93,26 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         </span>
       </div>
       <nav className="dashboard-tabs" aria-label="Dashboard views">
-        {(["overview", "analysis", "reports"] as const).map((v) => (
-          <Link
-            key={v}
-            to={dashboardHref(v, state)}
-            aria-current={view === v ? "page" : undefined}
-          >
-            {v === "overview"
-              ? "Overview"
-              : v === "analysis"
-                ? "Analysis"
-                : "Reports"}
-          </Link>
-        ))}
+        {(["overview", "open-positions", "analysis", "reports"] as const).map(
+          (v) => (
+            <Link
+              key={v}
+              to={dashboardHref(
+                v,
+                v === view ? state : { ...state, detail: {} },
+              )}
+              aria-current={view === v ? "page" : undefined}
+            >
+              {v === "overview"
+                ? "Overview"
+                : v === "open-positions"
+                  ? "Open Positions"
+                  : v === "analysis"
+                    ? "Analysis"
+                    : "Reports"}
+            </Link>
+          ),
+        )}
       </nav>
       {data?.buildId && exportQuery?.success && (
         <ExportButton
@@ -126,13 +150,22 @@ export function DashboardPage({ view }: { view: DashboardView }) {
           <div className="dashboard-provenance">
             <BuildBadge buildId={data.buildId} stale={data.stale} />
             <span>
-              {data.performance.eligible} / {data.performance.closed}{" "}
-              {data.filters.unit === "strategy"
-                ? "closed strategy components"
-                : "completed lifecycles"}{" "}
-              with{" "}
-              {data.filters.basis === "broker" ? "broker" : "reconstructed"}{" "}
-              P&amp;L · {data.filters.currency ?? "No currency"}
+              {openPositions ? (
+                <>
+                  Current open positions ·{" "}
+                  {data.filters.currency ?? "No currency"}
+                </>
+              ) : (
+                <>
+                  {data.performance.eligible} / {data.performance.closed}{" "}
+                  {data.filters.unit === "strategy"
+                    ? "closed strategy components"
+                    : "completed lifecycles"}{" "}
+                  with{" "}
+                  {data.filters.basis === "broker" ? "broker" : "reconstructed"}{" "}
+                  P&amp;L · {data.filters.currency ?? "No currency"}
+                </>
+              )}
             </span>
           </div>
           <DataQuality data={data} />
@@ -148,6 +181,18 @@ export function DashboardPage({ view }: { view: DashboardView }) {
             <div data-testid="dashboard-content">
               {view === "overview" ? (
                 <Overview data={data} />
+              ) : openPositions ? (
+                openQuery?.success ? (
+                  <DetailTable
+                    query={openQuery.data}
+                    view="open-positions"
+                    onRefresh={remote.reload}
+                  />
+                ) : (
+                  <p role="alert" className="dashboard-warning">
+                    Invalid position filters. Reset filters to continue.
+                  </p>
+                )
               ) : view === "analysis" ? (
                 <Analysis
                   data={data}

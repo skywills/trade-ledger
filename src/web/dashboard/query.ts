@@ -6,7 +6,11 @@ import {
   normalizeSymbol,
   normalizeUnderlyingKey,
 } from "../../shared/symbols.js";
-export type DashboardView = "overview" | "analysis" | "reports";
+export type DashboardView =
+  | "overview"
+  | "analysis"
+  | "reports"
+  | "open-positions";
 export type Preset =
   | "all"
   | "this-month"
@@ -105,7 +109,22 @@ export function readDashboardQuery(
     preset,
     section:
       params.get("section") === "transactions" ? "transactions" : "performance",
-    detail: view === "analysis" ? detail : {},
+    detail:
+      view === "analysis"
+        ? detail
+        : view === "open-positions"
+          ? Object.fromEntries(
+              Object.entries(detail).filter(([key]) =>
+                [
+                  "page",
+                  "pageSize",
+                  "sort",
+                  "direction",
+                  "expectedBuildId",
+                ].includes(key),
+              ),
+            )
+          : {},
     error: !["all", "this-month", "last-month", "this-year", "custom"].includes(
       preset,
     )
@@ -125,6 +144,15 @@ export function dashboardHref(
   if (view === "analysis") p.set("section", state.section);
   if (view === "analysis")
     for (const [k, v] of Object.entries(state.detail)) p.set(k, v);
+  if (view === "open-positions")
+    for (const key of [
+      "page",
+      "pageSize",
+      "sort",
+      "direction",
+      "expectedBuildId",
+    ])
+      if (state.detail[key]) p.set(key, state.detail[key]);
   return `/dashboard${view === "overview" ? "" : `/${view}`}?${p}`;
 }
 export function changeDashboard(

@@ -8,16 +8,18 @@ import { dashboardHref, localToday, readDashboardQuery } from "./query.js";
 export function DetailTable({
   query,
   onRefresh,
+  view = "analysis",
 }: {
   query: DetailQuery;
+  view?: "analysis" | "open-positions";
   onRefresh?: (() => void) | undefined;
 }) {
   const remote = useAnalyticsDetails(query);
   const { search } = useLocation();
-  const state = readDashboardQuery(search, "analysis", localToday());
+  const state = readDashboardQuery(search, view, localToday());
   const update = (patch: Record<string, string>) =>
     navigate(
-      dashboardHref("analysis", {
+      dashboardHref(view, {
         ...state,
         detail: {
           kind: query.kind,
@@ -29,6 +31,7 @@ export function DetailTable({
         },
       }),
     );
+  const openPositions = view === "open-positions";
   const lifecycle = query.unit !== "strategy";
   const titles = {
     closed: lifecycle ? "Completed lifecycles" : "Closed strategy components",
@@ -42,8 +45,11 @@ export function DetailTable({
       ? "Completed lifecycles with unknown dates"
       : "Closed strategy components with unknown dates",
   };
-  const title =
-    query.kind === "transactions" ? "Transaction details" : titles[query.scope];
+  const title = openPositions
+    ? "Open positions"
+    : query.kind === "transactions"
+      ? "Transaction details"
+      : titles[query.scope];
   if (remote.status === "loading")
     return <Loading label="Loading matching records…" />;
   if (remote.status === "error")
@@ -54,7 +60,7 @@ export function DetailTable({
           type="button"
           onClick={() => {
             const { expectedBuildId: _old, ...detail } = state.detail;
-            navigate(dashboardHref("analysis", { ...state, detail }));
+            navigate(dashboardHref(view, { ...state, detail }));
             onRefresh?.();
           }}
         >
@@ -120,10 +126,19 @@ export function DetailTable({
             {data.kind === "strategies" ? (
               <tr>
                 <th>Trade</th>
+                {openPositions && <th>Underlying</th>}
                 <th>Type</th>
-                {sortHeader("closeDate", "Closed")}
+                {openPositions ? (
+                  <>
+                    <th>Remaining quantity</th>
+                    <th>Opened</th>
+                    <th>Expiry</th>
+                  </>
+                ) : (
+                  sortHeader("closeDate", "Closed")
+                )}
                 <th>Status</th>
-                {sortHeader("pnl", `P&L (${currency})`)}
+                {!openPositions && sortHeader("pnl", `P&L (${currency})`)}
               </tr>
             ) : (
               <tr>
@@ -153,10 +168,39 @@ export function DetailTable({
                         {s.description || s.id}
                       </Link>
                     </td>
+                    {openPositions && (
+                      <td>
+                        {s.underlying === "__unknown__"
+                          ? "Unknown"
+                          : s.underlying === "__multi__"
+                            ? "Multiple"
+                            : s.underlying.replace(/^value:/, "")}
+                      </td>
+                    )}
                     <td>{s.type}</td>
-                    <td>{s.closeDate ?? "Unknown"}</td>
+                    {openPositions ? (
+                      <>
+                        <td>
+                          {s.positions.length
+                            ? s.positions.map((position) => (
+                                <div key={position.instrumentKey}>
+                                  {position.quantity}
+                                  {s.positions.length > 1 &&
+                                    ` · ${position.instrumentKey}`}
+                                </div>
+                              ))
+                            : "—"}
+                        </td>
+                        <td>{s.openingDate ?? "Unknown"}</td>
+                        <td>{s.expiry ?? "—"}</td>
+                      </>
+                    ) : (
+                      <td>{s.closeDate ?? "Unknown"}</td>
+                    )}
                     <td>{s.status.replaceAll("_", " ")}</td>
-                    <td>{formatMoney(s.selectedPnl, currency)}</td>
+                    {!openPositions && (
+                      <td>{formatMoney(s.selectedPnl, currency)}</td>
+                    )}
                   </tr>
                 ))
               : data.items.map((e) => (
