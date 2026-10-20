@@ -147,7 +147,7 @@ export function DashboardFilters({
           <button type="submit">Apply dates</button>
         </form>
       )}
-      {view === "analysis" && (
+      {(view === "analysis" || view === "open-positions") && (
         <div className="dashboard-filter-row dashboard-advanced-filters">
           {(
             [
