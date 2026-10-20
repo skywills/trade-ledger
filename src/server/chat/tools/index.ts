@@ -5,6 +5,7 @@ import { importEvidenceTools } from "./imports.js";
 import { journalTools } from "./journal.js";
 import { lifecycleTools } from "./lifecycles.js";
 import { pnlTools } from "./pnl.js";
+import { proposalPreviewTools } from "./proposal-preview.js";
 import { proposalTools } from "./proposals.js";
 import { guardReads, resetAfterWrite } from "./repeatGuard.js";
 import { reviewTools } from "./review.js";
@@ -19,6 +20,7 @@ import { writeTools } from "./writes.js";
 export function createChatTools(ctx: ChatToolContext): ChatTool[] {
   const reads = [
     ...decisionHistoryTools(ctx),
+    ...proposalPreviewTools(ctx),
     ...analyticsTools(ctx),
     ...lifecycleTools(ctx),
     ...importEvidenceTools(ctx),
