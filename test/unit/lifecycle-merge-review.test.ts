@@ -231,7 +231,7 @@ it("does not merge independent cycles when partial exercises deliver to differen
 it("coalesces retained quantity partitions whose lifecycle targets combine", () => {
   const f = spread();
   f.ledger.executions.push(
-    execution("extra-shares", stock, "200", "-20000", 1, "open"),
+    execution("extra-shares", stock, "200", "-20000", 3, "open"),
   );
   f.projection = groupStrategies(
     f.ledger,
