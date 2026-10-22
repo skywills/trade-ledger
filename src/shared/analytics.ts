@@ -22,7 +22,13 @@ const Fields = {
 };
 const Drill = {
   scope: z
-    .enum(["closed", "current-open", "unresolved", "undated-closed"])
+    .enum([
+      "closed",
+      "estimated-closed",
+      "current-open",
+      "unresolved",
+      "undated-closed",
+    ])
     .default("closed"),
   outcome: z.enum(["win", "loss", "breakeven", "unavailable"]).optional(),
   groupBy: z

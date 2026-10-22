@@ -56,6 +56,7 @@ export function ReviewPage() {
                   <tr>
                     <th>Severity</th>
                     <th>Code</th>
+                    <th>Affected lifecycles</th>
                     <th>Sources</th>
                   </tr>
                 </thead>
@@ -76,6 +77,36 @@ export function ReviewPage() {
                         {issue.code === "PENDING_CALL_ATTACHMENT"
                           ? reviewLabel([issue.code])
                           : issue.code}
+                        {issue.code === "EVENT_CASH_UNRESOLVED" && (
+                          <p>{reviewLabel([issue.code])}</p>
+                        )}
+                      </td>
+                      <td>
+                        {(currentConnections?.lifecycles?.lifecycles ?? [])
+                          .filter(
+                            (cycle) =>
+                              cycle.reasons.includes(issue.code) &&
+                              currentConnections?.lifecycles?.members.some(
+                                (member) =>
+                                  member.lifecycleId === cycle.id &&
+                                  member.sources.some((source) =>
+                                    issue.sources.some(
+                                      (ref) =>
+                                        ref.importId === source.importId &&
+                                        ref.rowNumber === source.rowNumber,
+                                    ),
+                                  ),
+                              ),
+                          )
+                          .map((cycle) => (
+                            <p key={cycle.id}>
+                              <Link
+                                to={`/lifecycles/${encodeURIComponent(cycle.id)}?expectedBuildId=${encodeURIComponent(remote.data?.buildId ?? "")}`}
+                              >
+                                {cycle.description}
+                              </Link>
+                            </p>
+                          ))}
                       </td>
                       <td>
                         {issue.sources.length === 0

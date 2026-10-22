@@ -57,6 +57,11 @@ export function selectAnalyticsDetails(
       invalid("Group is not present in this snapshot.");
   }
   if (query.kind === "strategies") {
+    const estimatedIds = new Set(
+      (scope.snapshot.projection?.allocations ?? [])
+        .filter((a) => a.pnlEstimated)
+        .map((a) => a.strategyId),
+    );
     if (query.groupBy === "strategyType")
       validGroup(scope.options.strategyTypes.map((t) => `value:${t}`));
     if (query.groupBy === "underlying")
@@ -72,6 +77,11 @@ export function selectAnalyticsDetails(
             ? scope.undatedClosed
             : scope.closed;
     rows = rows.filter((s) => {
+      if (
+        query.scope === "estimated-closed" &&
+        (!estimatedIds.has(s.id) || selectedPnl(s, query) === null)
+      )
+        return false;
       if (query.date && s.closeDate !== query.date) return false;
       if (query.group) {
         const key =

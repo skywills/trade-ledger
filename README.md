@@ -23,6 +23,12 @@ Choose one currency and either broker-reported or reconstructed P&L. Closed-trad
 
 Filters are preserved in the URL. CSV exports cover the full selected scope rather than the visible page and retain exact decimal values and build/ledger provenance. If the active build changes during a drill-down/export, refresh analytics before continuing. Reports default to the current month unless an explicit period is supplied. Review notes are local to the report view, unsaved, and included in print.
 
+The estimated broker-P&L count links to the affected completed lifecycles or
+strategy components. Lifecycle timelines show allocated broker amounts and their
+source rows. Settlement review findings link to affected lifecycles; see
+[SPXW Flex evidence fields](docs/SPXW-FLEX.md) for the required companion exports
+and the current cash-settlement import limitation.
+
 ## Reviewing covered-call connections
 
 **Review** and **Lifecycles** group related call fills into one connection review.
