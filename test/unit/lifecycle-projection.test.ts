@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { accountLifecycles } from "../../src/server/lifecycles/accounting.js";
+import { partition } from "../../src/server/lifecycles/membership.js";
 import {
   projectLifecycles,
   validateMembership,
@@ -22,6 +23,31 @@ const ids = ({
   openingExecutionKey: string;
 }) => `${account}:${openingExecutionKey}`;
 describe("trade lifecycles", () => {
+  it("marks further proportional partitions as estimated even when their source was basis-reconciled", () => {
+    const members = partition(
+      {
+        strategyId: "source",
+        executionKey: "sale",
+        quantity: "-2",
+        netCash: "50",
+        brokerPnl: "20",
+        pnlEstimated: false,
+        pnlAttribution: "basis-reconciled",
+        role: "close",
+      },
+      [
+        { lifecycleId: "one", quantity: "-1" },
+        { lifecycleId: "two", quantity: "-1" },
+      ],
+      [],
+    );
+    expect(
+      members.map((m) => [m.brokerPnl, m.estimated, m.pnlAttribution]),
+    ).toEqual([
+      ["10", true, "estimated"],
+      ["10", true, "estimated"],
+    ]);
+  });
   it("keeps assignment open and combines a later stock close once", () => {
     const held = assigned();
     const p = projectLifecycles(held.ledger, held.projection, [], ids);

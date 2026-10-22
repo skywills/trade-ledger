@@ -59,6 +59,11 @@ export function partition(
     netCash: cash.get(t.lifecycleId) ?? "0",
     brokerPnl: pnl?.get(t.lifecycleId) ?? null,
     estimated: a.pnlEstimated || targets.length > 1,
+    ...(targets.length > 1
+      ? { pnlAttribution: "estimated" as const }
+      : a.pnlAttribution === undefined
+        ? {}
+        : { pnlAttribution: a.pnlAttribution }),
     sources,
   }));
 }

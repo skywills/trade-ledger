@@ -9,12 +9,14 @@ export function AnalyticsChart({
   variant = "line",
   onSelect,
   valueType = "money",
+  pointUnit = "periods",
 }: {
   title: string;
   currency: string;
   points: readonly ChartPoint[];
   variant?: "line" | "bar";
   valueType?: "money" | "count";
+  pointUnit?: "periods" | "categories";
   onSelect?: ((key: string) => void) | undefined;
 }) {
   const id = useId();
@@ -45,7 +47,7 @@ export function AnalyticsChart({
       </div>
       <p className="dashboard-chart-summary">
         {points.length
-          ? `${known} of ${points.length} periods with available values`
+          ? `${known} of ${points.length} ${pointUnit} with available values`
           : `No activity in this period`}
       </p>
       {points.length && known ? (
@@ -125,8 +127,12 @@ export function AnalyticsChart({
           </svg>
           <div className="dashboard-chart-legend">
             <span className="chart-legend-line" />{" "}
-            {variant === "line" ? "Realized P&L" : "Signed period value"} · zero
-            baseline
+            {variant === "line"
+              ? "Realized P&L"
+              : pointUnit === "categories"
+                ? "Signed category value"
+                : "Signed period value"}{" "}
+            · zero baseline
           </div>
           <fieldset
             className="dashboard-chart-navigator"
@@ -182,7 +188,7 @@ export function AnalyticsChart({
             <table aria-label={`${title} data`}>
               <thead>
                 <tr>
-                  <th>Period</th>
+                  <th>{pointUnit === "categories" ? "Category" : "Period"}</th>
                   <th>Value ({currency})</th>
                   {onSelect && <th>Details</th>}
                 </tr>

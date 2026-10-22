@@ -37,6 +37,9 @@ export function lifecycleSnapshot(
         netCash: member.netCash,
         brokerPnl: member.brokerPnl,
         pnlEstimated: member.estimated,
+        ...(member.pnlAttribution === undefined
+          ? {}
+          : { pnlAttribution: member.pnlAttribution }),
       })),
     },
   };

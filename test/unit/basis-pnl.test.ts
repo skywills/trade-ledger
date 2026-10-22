@@ -69,10 +69,15 @@ describe("broker P&L allocated using matched opening basis", () => {
       (a) => a.executionKey === "close-mixed",
     );
     expect(
-      mixed.map((a) => [a.strategyId, a.brokerPnl, a.pnlEstimated]),
+      mixed.map((a) => [
+        a.strategyId,
+        a.brokerPnl,
+        a.pnlEstimated,
+        a.pnlAttribution,
+      ]),
     ).toEqual([
-      ["a", "62.2005076", true],
-      ["b+c", "77.2305084", true],
+      ["a", "62.2005076", false, "basis-reconciled"],
+      ["b+c", "77.2305084", false, "basis-reconciled"],
     ]);
     expect(
       mixed
@@ -86,7 +91,8 @@ describe("broker P&L allocated using matched opening basis", () => {
           .abs()
           .lt("0.01"),
       ).toBe(true);
-      expect(s.reasons).toContain("ESTIMATED_PNL");
+      expect(s.reasons).toContain("BASIS_RECONCILED_PNL");
+      expect(s.reasons).not.toContain("ESTIMATED_PNL");
     }
     expect(project([...rows].reverse())).toEqual(result);
   });

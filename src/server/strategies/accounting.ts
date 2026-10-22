@@ -78,6 +78,7 @@ function apportionBrokerPnl(
         ...entry.allocation,
         brokerPnl: share.amount,
         pnlEstimated: true,
+        pnlAttribution: "estimated",
       };
     });
   }
@@ -283,8 +284,17 @@ export function accountProjection(
       }
     }
 
-    const reasons = new Set(strategy.reasons);
+    const reasons = new Set(
+      strategy.reasons.filter(
+        (reason) =>
+          reason !== "ESTIMATED_PNL" && reason !== "BASIS_RECONCILED_PNL",
+      ),
+    );
     if (amounts.estimated) reasons.add("ESTIMATED_PNL");
+    if (
+      strategyAllocations.some((a) => a.pnlAttribution === "basis-reconciled")
+    )
+      reasons.add("BASIS_RECONCILED_PNL");
 
     return {
       ...strategy,

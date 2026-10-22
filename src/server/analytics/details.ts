@@ -10,6 +10,10 @@ import {
 import { strategyResult } from "./aggregate.js";
 import { Money } from "./performance.js";
 import { invalid } from "./query.js";
+import {
+  realizedLifecycleRows,
+  unresolvedRealizedExecutions,
+} from "./realized.js";
 import { resolveScope, selectedPnl } from "./scope.js";
 import type { AnalyticsSnapshot } from "./snapshot.js";
 export function checkBuild(
@@ -62,6 +66,14 @@ export function selectAnalyticsDetails(
         .filter((a) => a.pnlEstimated)
         .map((a) => a.strategyId),
     );
+    const reconciledIds = new Set(
+      (scope.snapshot.projection?.allocations ?? [])
+        .filter(
+          (a) =>
+            a.brokerPnl !== null && a.pnlAttribution === "basis-reconciled",
+        )
+        .map((a) => a.strategyId),
+    );
     if (query.groupBy === "strategyType")
       validGroup(scope.options.strategyTypes.map((t) => `value:${t}`));
     if (query.groupBy === "underlying")
@@ -69,17 +81,27 @@ export function selectAnalyticsDetails(
     if (query.groupBy === "assetClass")
       validGroup([...scope.attribution.values()].map((x) => x.assetClass));
     let rows =
-      query.scope === "current-open"
-        ? scope.currentOpen
-        : query.scope === "unresolved"
-          ? scope.unresolved
-          : query.scope === "undated-closed"
-            ? scope.undatedClosed
-            : scope.closed;
+      query.scope === "realized-open" || query.scope === "realized-completed"
+        ? realizedLifecycleRows(
+            scope,
+            query.scope === "realized-open" ? "open" : "completed",
+          )
+        : query.scope === "current-open"
+          ? scope.currentOpen
+          : query.scope === "unresolved"
+            ? scope.unresolved
+            : query.scope === "undated-closed"
+              ? scope.undatedClosed
+              : scope.closed;
     rows = rows.filter((s) => {
       if (
         query.scope === "estimated-closed" &&
         (!estimatedIds.has(s.id) || selectedPnl(s, query) === null)
+      )
+        return false;
+      if (
+        query.scope === "basis-reconciled-closed" &&
+        (!reconciledIds.has(s.id) || selectedPnl(s, query) === null)
       )
         return false;
       if (query.date && s.closeDate !== query.date) return false;
@@ -138,7 +160,11 @@ export function selectAnalyticsDetails(
   if (query.groupBy === "assetClass") validGroup(scope.options.assetClasses);
   if (query.groupBy === "underlying")
     validGroup(scope.options.underlyings.map((x) => x.key));
-  const rows = scope.executions.filter(
+  const rows = (
+    query.scope === "realized-unresolved"
+      ? unresolvedRealizedExecutions(scope)
+      : scope.executions
+  ).filter(
     (e) =>
       (!query.date || e.date === query.date) &&
       (!query.group ||

@@ -1,5 +1,11 @@
 import { z } from "zod";
-import type { Id, Issue, SourceRef, Strategy } from "./domain.js";
+import type {
+  Id,
+  Issue,
+  PnlAttribution,
+  SourceRef,
+  Strategy,
+} from "./domain.js";
 export const DecimalTextSchema = z
   .string()
   .regex(/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/);
@@ -16,6 +22,7 @@ export interface LifecycleMember {
   netCash: string;
   brokerPnl: string | null;
   estimated: boolean;
+  pnlAttribution?: PnlAttribution | undefined;
   sources: SourceRef[];
 }
 export interface Lifecycle extends Strategy {

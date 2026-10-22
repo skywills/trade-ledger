@@ -60,6 +60,9 @@ test("quality notices lead to the exact allocations and settlement evidence", as
               "50",
               "C",
             ),
+            row("fallback-first", "XYZ FALLBACK CALL", "2026-09-01", "1", "-20", "20", "0", "O"),
+            row("fallback-second", "XYZ FALLBACK CALL", "2026-09-02", "1", "-30", "30", "0", "O"),
+            row("fallback-close", "XYZ FALLBACK CALL", "2026-09-03", "-2", "100", "-50", "80", "C"),
             row(
               "short",
               "INDEX CALL",
@@ -102,6 +105,8 @@ test("quality notices lead to the exact allocations and settlement evidence", as
     )
     .toBe("complete");
   await page.goto("/dashboard?currency=USD&basis=broker&preset=all");
+  await expect(page.getByLabel("Data quality", { exact: true })).not.toContainText("basis-reconciled");
+  await expect(page.getByLabel("P&L attribution", { exact: true })).toContainText("basis-reconciled");
   await page
     .getByRole("link", {
       name: "2 completed lifecycles include estimated broker P&L",
@@ -131,6 +136,15 @@ test("quality notices lead to the exact allocations and settlement evidence", as
       { exact: false },
     ),
   ).toBeVisible();
+  await page.goto("/dashboard?currency=USD&basis=broker&preset=all");
+  await page.getByRole("link", { name: "2 completed lifecycles include basis-reconciled broker P&L", exact: true }).click();
+  await expect(page).toHaveURL(/scope=basis-reconciled-closed/);
+  const reconciled = page.getByRole("table", { name: "Completed lifecycles with basis-reconciled broker P&L", exact: true });
+  await expect(reconciled.locator("tbody tr")).toHaveCount(2);
+  await reconciled.getByRole("link").first().click();
+  await expect(page.getByRole("table", { name: "Lifecycle timeline", exact: true }).getByText("Basis-reconciled", { exact: true })).toBeVisible();
+  await expect(page.getByText("Small rounding adjustments are retained", { exact: false })).toBeVisible();
+  await expect(page.getByText("Allocated (estimated)", { exact: true })).toHaveCount(0);
   await page.goto("/review");
   const review = page.getByRole("table", { name: "Review items", exact: true });
   await expect(

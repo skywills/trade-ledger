@@ -5,6 +5,7 @@ import type {
   Id,
   Instrument,
   Issue,
+  PnlAttribution,
   SourceRef,
   Strategy,
 } from "../../shared/domain.js";
@@ -22,6 +23,7 @@ export interface LegRecord {
   netCash: string;
   brokerPnl: string | null;
   pnlEstimated?: boolean;
+  pnlAttribution?: PnlAttribution;
   sources: SourceRef[];
   /** In-build provenance for basis-supported closes spanning opening fills. */
   basisLots?: Array<{ executionKey: string; quantity: string }>;
@@ -90,6 +92,7 @@ export interface LegOverrides {
   netCash?: string;
   brokerPnl?: string | null;
   pnlEstimated?: boolean;
+  pnlAttribution?: PnlAttribution;
   basisLots?: Array<{ executionKey: string; quantity: string }>;
 }
 
@@ -112,6 +115,9 @@ export function legOf(
         ? overrides.brokerPnl
         : execution.brokerPnl,
     pnlEstimated: overrides.pnlEstimated ?? false,
+    ...(overrides.pnlAttribution === undefined
+      ? {}
+      : { pnlAttribution: overrides.pnlAttribution }),
     sources: execution.sources,
     ...(overrides.basisLots === undefined
       ? {}
@@ -135,6 +141,9 @@ export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
     netCash: leg.netCash,
     brokerPnl: leg.brokerPnl,
     pnlEstimated: leg.pnlEstimated ?? false,
+    ...(leg.pnlAttribution === undefined
+      ? {}
+      : { pnlAttribution: leg.pnlAttribution }),
     role: leg.role,
   });
   if (leg.multiplier === null && isDerivative(leg.instrument)) {

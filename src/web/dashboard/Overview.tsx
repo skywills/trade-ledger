@@ -6,12 +6,14 @@ import { BreakdownTable } from "./BreakdownTable.js";
 import { AnalyticsChart } from "./Charts.js";
 import { KpiCards } from "./KpiCards.js";
 import { detailHref } from "./query.js";
+import { RealizedPnl } from "./RealizedPnl.js";
 export function Overview({ data }: { data: AnalyticsResponse }) {
   const lifecycle = data.filters.unit !== "strategy";
   const currency = data.filters.currency ?? "";
   return (
     <>
       <KpiCards data={data} />
+      <RealizedPnl data={data} />
       <div className="dashboard-charts-grid">
         <AnalyticsChart
           title={

@@ -47,6 +47,7 @@ export interface AnalyticsScope {
   snapshot: AnalyticsSnapshot;
   query: AnalyticsQuery & { unit: "lifecycle" | "strategy" };
   options: AnalyticsOptions;
+  selected: Strategy[];
   closed: Strategy[];
   currentOpen: Strategy[];
   unresolved: Strategy[];
@@ -200,6 +201,7 @@ export function resolveScope(
     query,
     options,
     attribution,
+    selected,
     closed: selected.filter(
       (s) => s.status === "closed" && inPeriod(s.closeDate, query),
     ),

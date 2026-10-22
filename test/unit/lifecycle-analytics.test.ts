@@ -101,6 +101,70 @@ function cycle(s: ReturnType<typeof fixture>) {
 
 describe("lifecycle analytics", () => {
   it.each(["lifecycle", "strategy"] as const)(
+    "keeps basis-reconciled results separate from estimates in %s summaries, details and exports",
+    (unit) => {
+      const s = fixture();
+      const member = data(s).members[0];
+      const allocation = s.projection.allocations[0];
+      if (!member || !allocation) throw Error("Missing allocation");
+      member.pnlAttribution = "basis-reconciled";
+      allocation.pnlAttribution = "basis-reconciled";
+      const query = { unit, basis: "broker", currency: "USD" };
+      const summary = aggregateAnalytics(s, parseAnalyticsQuery(query));
+      expect(summary.quality).toMatchObject({
+        estimatedClosed: 0,
+        basisReconciledClosed: 1,
+      });
+      const detailQuery = {
+        ...query,
+        kind: "strategies",
+        scope: "basis-reconciled-closed",
+      };
+      const detail = selectAnalyticsDetails(s, parseDetailQuery(detailQuery));
+      expect(detail.total).toBe(1);
+      if (detail.kind !== "strategies")
+        throw Error("Expected lifecycle details");
+      expect(detail.items[0]?.id).toBe(
+        unit === "lifecycle" ? "cycle" : "spread",
+      );
+      expect(
+        selectAnalyticsDetails(
+          s,
+          parseDetailQuery({ ...detailQuery, scope: "estimated-closed" }),
+        ).total,
+      ).toBe(0);
+      const exported = parse(
+        serializeAnalyticsCsv(
+          s,
+          parseExportQuery({
+            ...query,
+            dataset: "strategies",
+            scope: "basis-reconciled-closed",
+          }),
+        ).csv,
+        { columns: true },
+      ) as Record<string, string>[];
+      expect(exported).toHaveLength(1);
+      expect(exported[0]?.id).toBe(unit === "lifecycle" ? "cycle" : "spread");
+      expect(() =>
+        parseDetailQuery({ ...detailQuery, basis: "reconstructed" }),
+      ).toThrow();
+      expect(
+        aggregateAnalytics(
+          s,
+          parseAnalyticsQuery({ ...query, basis: "reconstructed" }),
+        ).quality.basisReconciledClosed,
+      ).toBe(0);
+      expect(
+        selectAnalyticsDetails(
+          s,
+          parseDetailQuery({ ...detailQuery, from: "2026-10-01" }),
+        ).total,
+      ).toBe(0);
+    },
+  );
+
+  it.each(["lifecycle", "strategy"] as const)(
     "drills into only eligible estimated broker results in %s mode and exports the same rows",
     (unit) => {
       const s = fixture();
