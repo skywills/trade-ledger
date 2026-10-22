@@ -246,6 +246,53 @@ describe("optional Statement of Funds settlement evidence", () => {
     }
   });
 
+  it("recognizes legacy funds header aliases during a full rebuild", async () => {
+    const t = await setup(
+      `${fundsCsv(bothSettlements())}\n${settlementTrades()}`,
+    );
+    try {
+      const aliases: Record<string, string> = {
+        ClientAccountID: "Account ID",
+        ActivityCode: "Activity Code",
+        ActivityDescription: "Activity Description",
+        SettleDate: "Settle Date",
+        TransactionID: "Transaction ID",
+      };
+      const rows = t.store.db
+        .prepare(
+          "SELECT id, raw_fields_json FROM import_rows WHERE import_id=? AND row_number<4",
+        )
+        .all(t.importId) as { id: string; raw_fields_json: string }[];
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        const fields = JSON.parse(row.raw_fields_json) as Record<
+          string,
+          string
+        >;
+        const legacy = Object.fromEntries(
+          Object.entries(fields).map(([key, value]) => [
+            aliases[key] ?? key,
+            value,
+          ]),
+        );
+        t.store.db
+          .prepare(
+            "UPDATE import_rows SET row_kind='quarantine', raw_fields_json=? WHERE id=?",
+          )
+          .run(JSON.stringify(legacy), row.id);
+      }
+      const { ledger, cycles } = await t.build();
+      expect(ledger.issues).toEqual([]);
+      expect(ledger.executions).toHaveLength(4);
+      expect(cycles.map((c) => c.reconstructedPnl).sort()).toEqual([
+        "-200",
+        "80",
+      ]);
+    } finally {
+      await t.dispose();
+    }
+  });
+
   it("corroborates cash already present on an explicit cash-settlement close without adding it twice", async () => {
     // Build the replacement by column names rather than depending on CSV offsets.
     const { parse } = await import("csv-parse/sync");

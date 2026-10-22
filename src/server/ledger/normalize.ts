@@ -7,6 +7,7 @@ import type {
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { isStatementOfFunds } from "../imports/classification.js";
+import { canonicalizeHeader } from "../imports/headers.js";
 import {
   canonicalDecimal,
   normalizeExecution,
@@ -269,8 +270,14 @@ export async function normalizeLedger(
     if (!includedIds.has(row.importId)) continue;
     // Reclassify retained raw fields too, so a full rebuild repairs reports
     // uploaded before Statement of Funds classification was supported.
-    if (isStatementOfFunds(row.fields)) {
-      cashRows.push(row);
+    const cashFields = Object.fromEntries(
+      Object.entries(row.fields).map(([key, value]) => [
+        canonicalizeHeader(key),
+        value,
+      ]),
+    );
+    if (isStatementOfFunds(cashFields)) {
+      cashRows.push({ ...row, fields: cashFields });
       continue;
     }
     if (row.kind === "execution") {
