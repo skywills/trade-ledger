@@ -26,8 +26,8 @@ Filters are preserved in the URL. CSV exports cover the full selected scope rath
 The estimated broker-P&L count links to the affected completed lifecycles or
 strategy components. Lifecycle timelines show allocated broker amounts and their
 source rows. Settlement review findings link to affected lifecycles; see
-[SPXW Flex evidence fields](docs/SPXW-FLEX.md) for the required companion exports
-and the current cash-settlement import limitation.
+[SPXW Flex evidence fields](docs/SPXW-FLEX.md) for optional Statement of Funds
+settlement support, required cash currency, and conservative matching rules.
 
 ## Reviewing covered-call connections
 

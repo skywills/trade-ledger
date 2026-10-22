@@ -6,6 +6,7 @@ import type {
   SourceRef,
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
+import { isStatementOfFunds } from "../imports/classification.js";
 import {
   canonicalDecimal,
   normalizeExecution,
@@ -25,6 +26,7 @@ import {
   resolveIdentities,
 } from "./identity.js";
 import { applyRevisions } from "./revisions.js";
+import { applyCashSettlements, type CashEvidenceRow } from "./settlements.js";
 
 export const LEDGER_PARSER_VERSION = "flex-v1";
 
@@ -261,9 +263,16 @@ export async function normalizeLedger(
   const candidates: Candidate[] = [];
   const issues: Issue[] = [];
   const lots: LedgerBuildDraft["lots"] = [];
+  const cashRows: CashEvidenceRow[] = [];
 
   for (const row of readCommittedRows(store.db)) {
     if (!includedIds.has(row.importId)) continue;
+    // Reclassify retained raw fields too, so a full rebuild repairs reports
+    // uploaded before Statement of Funds classification was supported.
+    if (isStatementOfFunds(row.fields)) {
+      cashRows.push(row);
+      continue;
+    }
     if (row.kind === "execution") {
       const source: SourceRef = {
         importId: row.importId,
@@ -306,6 +315,7 @@ export async function normalizeLedger(
     identity.transactions.filter((transaction) => !transaction.conflicted),
   );
   issues.push(...revisionOutcome.issues);
+  issues.push(...applyCashSettlements(revisionOutcome.revisions, cashRows));
   resolveContractMultipliers(
     revisionOutcome.revisions
       .filter((revision) => revision.state === "active")

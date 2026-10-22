@@ -194,7 +194,9 @@ export function reviewLabel(reasons: string[]): string {
         ? "Confirm whether these calls belong to your shares"
         : reason === "EVENT_CASH_UNRESOLVED"
           ? "Assignment/exercise settlement or delivery evidence is missing; reconstructed P&L is unavailable"
-          : reason.replaceAll("_", " ").toLowerCase(),
+          : reason === "cash_settlement_currency_missing"
+            ? "Settlement cash has no currency. Include Currency in the Statement of Funds export; no cash was applied."
+            : reason.replaceAll("_", " ").toLowerCase(),
     )
     .join(" · ");
 }

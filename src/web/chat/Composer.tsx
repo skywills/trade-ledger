@@ -5,6 +5,7 @@ import { PaperclipIcon, SendIcon, StopIcon, XIcon } from "./icons.js";
 
 interface Staged extends AttachmentDto {
   executions: number;
+  cashTransactions: number;
   quarantined: number;
 }
 
@@ -21,6 +22,7 @@ async function previewCsvs(csvs: File[]): Promise<Staged[]> {
     previewId: p.id,
     filename: csvs[i]?.name ?? p.id,
     executions: p.counts.executions,
+    cashTransactions: p.counts.cashTransactions,
     quarantined: p.counts.quarantined,
   }));
 }
@@ -39,6 +41,9 @@ function AttachmentChips({
         <li key={a.previewId} data-testid="attachment-chip">
           <span>
             {a.filename} · {a.executions} executions
+            {a.cashTransactions > 0
+              ? ` · ${a.cashTransactions} cash evidence rows`
+              : ""}
             {a.quarantined > 0 ? ` · ${a.quarantined} quarantined` : ""}
           </span>
           <button

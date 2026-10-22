@@ -27,6 +27,7 @@ export interface ImportPreviewInput {
 export interface ImportPreviewCounts {
   total: number;
   executions: number;
+  cashTransactions: number;
   lots: number;
   summaries: number;
   markers: number;
@@ -228,6 +229,7 @@ const COUNT_KEY_BY_KIND: Record<
   Exclude<keyof ImportPreviewCounts, "total">
 > = {
   execution: "executions",
+  cash: "cashTransactions",
   lot: "lots",
   summary: "summaries",
   marker: "markers",
@@ -238,6 +240,7 @@ function countRows(parsed: ParsedImport): ImportPreviewCounts {
   const counts: ImportPreviewCounts = {
     total: parsed.rows.length,
     executions: 0,
+    cashTransactions: 0,
     lots: 0,
     summaries: 0,
     markers: 0,

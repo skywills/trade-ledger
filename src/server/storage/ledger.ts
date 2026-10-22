@@ -94,7 +94,7 @@ export function manifestHash(
   const manifest = {
     // Re-normalize originals after correcting broker event code definitions,
     // while preserving the public Flex parser API version.
-    normalizationRevision: "contract-lifecycle-v4",
+    normalizationRevision: "contract-lifecycle-v5-cash-settlements",
     parserVersion,
     decisionWatermark,
     imports: [...imports]

@@ -77,7 +77,8 @@ export function ReviewPage() {
                         {issue.code === "PENDING_CALL_ATTACHMENT"
                           ? reviewLabel([issue.code])
                           : issue.code}
-                        {issue.code === "EVENT_CASH_UNRESOLVED" && (
+                        {(issue.code === "EVENT_CASH_UNRESOLVED" ||
+                          issue.code.startsWith("cash_settlement_")) && (
                           <p>{reviewLabel([issue.code])}</p>
                         )}
                       </td>

@@ -146,7 +146,13 @@ export function parseFlex(
       rowIssues.push(issue);
       issues.push(issue);
     }
-    rows.push({ rowNumber, section: null, fields, kind, issues: rowIssues });
+    rows.push({
+      rowNumber,
+      section: kind === "cash" ? "StatementOfFunds" : null,
+      fields,
+      kind,
+      issues: rowIssues,
+    });
   }
 
   if (headerNames === null) {

@@ -33,6 +33,15 @@ export const CANONICAL_FIELDS = [
   "RelatedTradeID",
   "ClosePrice",
   "Open/CloseIndicator",
+  "Date",
+  "SettleDate",
+  "ActivityCode",
+  "ActivityDescription",
+  "Debit",
+  "Credit",
+  "Amount",
+  "TransactionID",
+  "TradeQuantity",
 ] as const;
 
 export type CanonicalField = (typeof CANONICAL_FIELDS)[number];
@@ -47,6 +56,12 @@ export const HEADER_ALIASES: Readonly<Record<string, CanonicalField>> = {
   OrderID: "IBOrderID",
   ExecID: "IBExecID",
   OpenCloseIndicator: "Open/CloseIndicator",
+  Currency: "CurrencyPrimary",
+  "Account ID": "ClientAccountID",
+  "Activity Code": "ActivityCode",
+  "Activity Description": "ActivityDescription",
+  "Settle Date": "SettleDate",
+  "Transaction ID": "TransactionID",
 };
 
 const MIN_HEADER_MATCHES = 3;

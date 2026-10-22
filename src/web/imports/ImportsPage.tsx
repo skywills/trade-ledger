@@ -262,6 +262,11 @@ export function ImportsPage() {
                   {preview.counts.executions} executions
                 </span>{" "}
                 <span className="badge">{preview.counts.lots} lots</span>{" "}
+                {preview.counts.cashTransactions > 0 && (
+                  <span className="badge">
+                    {preview.counts.cashTransactions} cash evidence rows
+                  </span>
+                )}{" "}
                 <span
                   className={`badge ${preview.counts.quarantined > 0 ? "badge-warn" : ""}`}
                 >

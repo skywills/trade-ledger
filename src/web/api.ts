@@ -136,6 +136,7 @@ export const ImportPreviewSchema = z.object({
   counts: z.object({
     total: z.number(),
     executions: z.number(),
+    cashTransactions: z.number().default(0),
     lots: z.number(),
     summaries: z.number(),
     markers: z.number(),
