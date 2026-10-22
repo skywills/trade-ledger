@@ -104,6 +104,7 @@ describe("import preview, original storage, and commit", () => {
       expect(p.counts).toEqual({
         total: 3,
         executions: 1,
+        cashTransactions: 0,
         lots: 0,
         summaries: 0,
         markers: 0,

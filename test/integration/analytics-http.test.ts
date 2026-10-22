@@ -145,6 +145,16 @@ describe("analytics HTTP", () => {
           (await t.app.inject(`/api/analytics?unit=strategy&${q}`)).statusCode,
         ).toBe(400);
       }
+      for (const query of [
+        "kind=strategies&scope=estimated-closed&basis=reconstructed",
+        "kind=transactions&scope=estimated-closed",
+      ]) {
+        const response = await t.app.inject(
+          `/api/analytics/details?unit=strategy&${query}`,
+        );
+        expect(response.statusCode).toBe(400);
+        expect(response.json().code).toBe("INVALID_ANALYTICS_QUERY");
+      }
       expect(
         (
           await t.app.inject(

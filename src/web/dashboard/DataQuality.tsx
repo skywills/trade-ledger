@@ -54,7 +54,14 @@ export function DataQuality({ data }: { data: AnalyticsResponse }) {
       )}
       {q.estimatedClosed > 0 && (
         <p>
-          {q.estimatedClosed} {closed} include estimated broker P&amp;L
+          <Link
+            to={detailHref(data, {
+              kind: "strategies",
+              scope: "estimated-closed",
+            })}
+          >
+            {q.estimatedClosed} {closed} include estimated broker P&amp;L
+          </Link>
         </p>
       )}
       {q.excludedUnallocated > 0 && (

@@ -100,6 +100,78 @@ function cycle(s: ReturnType<typeof fixture>) {
 }
 
 describe("lifecycle analytics", () => {
+  it.each(["lifecycle", "strategy"] as const)(
+    "drills into only eligible estimated broker results in %s mode and exports the same rows",
+    (unit) => {
+      const s = fixture();
+      const member = data(s).members[0];
+      const allocation = s.projection.allocations[0];
+      if (!member || !allocation) throw Error("Missing fixture allocation");
+      member.estimated = true;
+      allocation.pnlEstimated = true;
+      // A reason alone is not proof of an estimated broker allocation.
+      data(s).lifecycles.push({
+        ...cycle(s),
+        id: "ordinary",
+        reasons: ["ESTIMATED_PNL"],
+      });
+      const query = { unit, basis: "broker", currency: "USD" };
+      const summary = aggregateAnalytics(s, parseAnalyticsQuery(query));
+      const detail = selectAnalyticsDetails(
+        s,
+        parseDetailQuery({
+          ...query,
+          kind: "strategies",
+          scope: "estimated-closed",
+          pageSize: 1,
+        }),
+      );
+      expect(detail.total).toBe(1);
+      expect(detail.total).toBe(summary.quality.estimatedClosed);
+      if (detail.kind !== "strategies")
+        throw Error("Expected strategy details");
+      expect(detail.items[0]?.id).toBe(
+        unit === "lifecycle" ? "cycle" : "spread",
+      );
+      const exported = parse(
+        serializeAnalyticsCsv(
+          s,
+          parseExportQuery({
+            ...query,
+            dataset: "strategies",
+            scope: "estimated-closed",
+          }),
+        ).csv,
+        { columns: true },
+      ) as Record<string, string>[];
+      expect(exported).toHaveLength(1);
+      expect(exported[0]?.id).toBe(unit === "lifecycle" ? "cycle" : "spread");
+      expect(
+        selectAnalyticsDetails(
+          s,
+          parseDetailQuery({
+            ...query,
+            kind: "strategies",
+            scope: "estimated-closed",
+            from: "2026-10-01",
+          }),
+        ).total,
+      ).toBe(0);
+      cycle(s).complete = false;
+      if (unit === "lifecycle")
+        expect(
+          selectAnalyticsDetails(
+            s,
+            parseDetailQuery({
+              ...query,
+              kind: "strategies",
+              scope: "estimated-closed",
+            }),
+          ).total,
+        ).toBe(0);
+    },
+  );
+
   it("defaults to one complete lifecycle and preserves explicit component results", () => {
     const s = fixture();
     const r = aggregateAnalytics(s, parseAnalyticsQuery({}));

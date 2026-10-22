@@ -59,7 +59,7 @@ export interface RawRow {
   rowNumber: number;
   section: string | null;
   fields: Record<string, string>;
-  kind: "execution" | "lot" | "summary" | "marker" | "quarantine";
+  kind: "execution" | "cash" | "lot" | "summary" | "marker" | "quarantine";
   issues: Issue[];
 }
 

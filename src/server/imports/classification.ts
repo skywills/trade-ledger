@@ -30,13 +30,20 @@ export function hasBrokerIdentity(raw: string | undefined): boolean {
   return value !== "" && value.toUpperCase() !== "N/A";
 }
 
-/**
- * Classifies a mapped data row. LevelOfDetail wins when supplied. Without it,
- * rows carrying execution identities (TradeID/IBExecID) are executions even
- * when ST/LT codes are present; no-identity rows with ST/LT codes are the
- * inspected layouts' supporting lots. Everything else is quarantined.
- */
+/** Statement of Funds has cash columns and may repeat ordinary trade IDs. */
+export function isStatementOfFunds(fields: Record<string, string>): boolean {
+  return (
+    "ActivityCode" in fields &&
+    "ActivityDescription" in fields &&
+    ("Amount" in fields || "Debit" in fields || "Credit" in fields)
+  );
+}
+
+/** Classify cash evidence before applying the existing trade/lot rules. */
 export function classifyFields(fields: Record<string, string>): Classification {
+  // A funds row may carry the same TradeID as a trade. It is supporting cash
+  // evidence, never a second execution, irrespective of LevelOfDetail.
+  if (isStatementOfFunds(fields)) return { kind: "cash", quarantineCode: null };
   const levelOfDetail = (fields["LevelOfDetail"] ?? "").trim().toUpperCase();
   if (levelOfDetail !== "") {
     const kind = LEVEL_OF_DETAIL_KINDS[levelOfDetail];

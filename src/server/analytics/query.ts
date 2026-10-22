@@ -22,12 +22,15 @@ export function parseAnalyticsQuery(raw: unknown): AnalyticsQuery {
 function validateDrill(
   q: {
     scope: string;
+    basis?: string | undefined;
     outcome?: string | undefined;
     group?: string | undefined;
     groupBy?: string | undefined;
   },
   kind: string,
 ) {
+  if (q.scope === "estimated-closed" && q.basis !== "broker")
+    invalid("Estimated broker allocations require the broker P&L basis.");
   if (
     kind === "transactions" &&
     (q.scope !== "closed" || q.outcome || q.groupBy === "strategyType")

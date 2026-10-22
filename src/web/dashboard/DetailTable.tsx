@@ -35,6 +35,9 @@ export function DetailTable({
   const lifecycle = query.unit !== "strategy";
   const titles = {
     closed: lifecycle ? "Completed lifecycles" : "Closed strategy components",
+    "estimated-closed": lifecycle
+      ? "Completed lifecycles with estimated broker P&L"
+      : "Closed strategy components with estimated broker P&L",
     "current-open": lifecycle
       ? "Current open lifecycles"
       : "Current open strategy components",
@@ -110,9 +113,15 @@ export function DetailTable({
           {data.total} records · {currency}
         </span>
       </div>
-      {query.scope !== "closed" && (
+      {query.scope !== "closed" && query.scope !== "estimated-closed" && (
         <p className="dashboard-muted">
           Current build scope; period bounds do not filter this list.
+        </p>
+      )}
+      {query.scope === "estimated-closed" && (
+        <p className="dashboard-muted">
+          Broker P&amp;L includes amounts allocated from shared executions. Open
+          a trade to inspect its source evidence.
         </p>
       )}
       {query.group && (

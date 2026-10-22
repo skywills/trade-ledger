@@ -231,7 +231,8 @@ export function LifecycleDetail({ id }: { id: string }) {
             <dd>
               {l.reasons.includes("PENDING_CALL_ATTACHMENT")
                 ? "Connection pending"
-                : l.status === "unresolved"
+                : l.status === "unresolved" ||
+                    l.reasons.includes("EVENT_CASH_UNRESOLVED")
                   ? "Needs review"
                   : "Complete"}
             </dd>
@@ -242,6 +243,14 @@ export function LifecycleDetail({ id }: { id: string }) {
             <dt>Completed</dt>
             <dd>{l.status === "closed" && l.complete ? "Yes" : "No"}</dd>
           </dl>
+          {d.members.some((m) => m.estimated) && (
+            <p>
+              A shared closing execution was allocated across opening groups.
+              The broker reported the execution total; the amounts attributed to
+              this lifecycle are estimated. The timeline identifies each
+              allocation and links to the original source row.
+            </p>
+          )}
           <ul aria-label="Remaining holdings">
             {l.positions.map((p) => (
               <li key={p.instrumentKey}>
@@ -304,6 +313,8 @@ export function LifecycleDetail({ id }: { id: string }) {
               <th>Role</th>
               <th>Quantity</th>
               <th>Net cash</th>
+              <th>Broker P&amp;L</th>
+              <th>P&amp;L evidence</th>
               <th>Component</th>
               <th>Source</th>
             </tr>
@@ -333,6 +344,14 @@ export function LifecycleDetail({ id }: { id: string }) {
                     <td>{m.allocation.role}</td>
                     <td>{m.quantity}</td>
                     <td>{formatMoney(m.netCash, l.currency)}</td>
+                    <td>{formatMoney(m.brokerPnl, l.currency)}</td>
+                    <td>
+                      {m.brokerPnl === null
+                        ? "Unavailable"
+                        : m.estimated
+                          ? "Allocated (estimated)"
+                          : "Broker reported"}
+                    </td>
                     <td>
                       <Link
                         to={`/strategies/${encodeURIComponent(m.allocation.strategyId)}`}
