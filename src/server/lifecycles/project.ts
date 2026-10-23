@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { Decimal } from "decimal.js";
 import type {
+  Allocation,
   Decision,
   Execution,
   LedgerSnapshot,
   Projection,
 } from "../../shared/domain.js";
 import type {
+  AllocationRef,
   LifecycleAnchor,
   LifecycleProjection,
   RetainedLifecycleAnchor,
@@ -22,7 +24,12 @@ import {
 } from "./aliases.js";
 import { compareLifecycleTime } from "./chronology.js";
 import { applyMembershipChanges } from "./decisions.js";
-import { partition, refKey, sum } from "./membership.js";
+import {
+  indexMembersByAllocation,
+  partition,
+  refKey,
+  sum,
+} from "./membership.js";
 
 export { validateMembership } from "./membership.js";
 export const lifecycleId = (a: LifecycleAnchor) =>
@@ -30,6 +37,26 @@ export const lifecycleId = (a: LifecycleAnchor) =>
     .update(JSON.stringify([a.account, a.openingExecutionKey]))
     .digest("hex")
     .slice(0, 24)}`;
+
+/** Keep exact identity and the existing unique execution/role fallback. */
+function allocationResolver(allocations: readonly Allocation[]) {
+  const exact = new Map<string, Allocation>();
+  const byExecution = new Map<string, Allocation[]>();
+  for (const a of allocations) {
+    const key = refKey(a);
+    if (!exact.has(key)) exact.set(key, a);
+    const fallback = JSON.stringify([a.executionKey, a.role]);
+    const rows = byExecution.get(fallback) ?? [];
+    rows.push(a);
+    byExecution.set(fallback, rows);
+  }
+  return (ref: AllocationRef) => {
+    const match = exact.get(refKey(ref));
+    if (match) return match;
+    const rows = byExecution.get(JSON.stringify([ref.executionKey, ref.role]));
+    return rows?.length === 1 ? rows[0] : undefined;
+  };
+}
 export function projectLifecycles(
   ledger: LedgerSnapshot,
   projection: Projection,
@@ -46,14 +73,11 @@ export function projectLifecycles(
   );
   const finalProjection = projection;
   projection = originProjection ?? projection;
+  const resolveSource = allocationResolver(projection.allocations);
   const sourceRef = (
     ref: import("../../shared/lifecycles.js").AllocationRef,
   ) => {
-    const exact = projection.allocations.find((a) => refKey(a) === refKey(ref));
-    const rows = projection.allocations.filter(
-      (a) => a.executionKey === ref.executionKey && a.role === ref.role,
-    );
-    const a = exact ?? (rows.length === 1 ? rows[0] : undefined);
+    const a = resolveSource(ref);
     return a
       ? { strategyId: a.strategyId, executionKey: a.executionKey, role: a.role }
       : ref;
@@ -516,6 +540,8 @@ export function projectLifecycles(
   );
   // Suggestions carry no ownership until confirmed. Existing positions at call
   // opening are measured chronologically, including reservations by attached calls.
+  const membersByAllocation = indexMembersByAllocation(draft.members);
+  const available = shareAvailability(ledger, draft);
   for (const a of projection.allocations) {
     const e = exec.get(a.executionKey);
     if (
@@ -526,9 +552,9 @@ export function projectLifecycles(
     )
       continue;
     if (confirmedOpenings.has(refKey(a))) continue;
-    const owners = draft.members
-      .filter((m) => refKey(m.allocation) === refKey(a))
-      .map((m) => m.lifecycleId);
+    const owners = (membersByAllocation.get(refKey(a)) ?? []).map(
+      (m) => m.lifecycleId,
+    );
     const rejected = decisions.some(
       (d) =>
         d.kind === "lifecycle_attachment_rejection" &&
@@ -552,13 +578,22 @@ export function projectLifecycles(
         .map((row) => row.instrument.conid ?? row.instrument.key),
     );
     if (stockContracts.size > 1) continue;
+    const capacities = new Map<string, Decimal>();
+    const sharesAtOpening = (id: string) => {
+      let shares = capacities.get(id);
+      if (shares === undefined) {
+        shares = available(id, e);
+        capacities.set(id, shares);
+      }
+      return shares;
+    };
     const candidates = draft.lifecycles.filter(
       (l) =>
         !owners.includes(l.id) &&
         l.account === e.account &&
         l.currency === e.currency &&
         l.underlyingKey === `value:${underlyingSymbol(e.instrument)}` &&
-        availableShares(ledger, draft, l.id, e).gte(
+        sharesAtOpening(l.id).gte(
           new Decimal(e.instrument.multiplier ?? "0"),
         ) &&
         new Decimal(e.instrument.multiplier ?? "0").gt(0),
@@ -569,7 +604,7 @@ export function projectLifecycles(
         .reduce(
           (total, l) =>
             total.plus(
-              availableShares(ledger, draft, l.id, e)
+              sharesAtOpening(l.id)
                 .div(e.instrument.multiplier ?? "1")
                 .floor(),
             ),
@@ -606,16 +641,11 @@ export function projectLifecycles(
     }
   }
   if (originProjection) {
+    const resolveFinal = allocationResolver(finalProjection.allocations);
     const finalRef = (
       ref: import("../../shared/lifecycles.js").AllocationRef,
     ) => {
-      const exact = finalProjection.allocations.find(
-        (a) => refKey(a) === refKey(ref),
-      );
-      const rows = finalProjection.allocations.filter(
-        (a) => a.executionKey === ref.executionKey && a.role === ref.role,
-      );
-      const a = exact ?? (rows.length === 1 ? rows[0] : undefined);
+      const a = resolveFinal(ref);
       if (!a)
         throw new Error(
           "Cannot resolve lifecycle source allocation after presentation grouping.",
@@ -636,10 +666,9 @@ export function projectLifecycles(
     }));
     // Presentation merges may combine two source slices. Repartition final
     // authoritative allocation amounts and coalesce identical owner references.
+    const finalMembers = indexMembersByAllocation(draft.members);
     draft.members = finalProjection.allocations.flatMap((a) => {
-      const rows = draft.members.filter(
-        (m) => refKey(m.allocation) === refKey(a),
-      );
+      const rows = finalMembers.get(refKey(a)) ?? [];
       const owners = new Map<string, Decimal>();
       for (const m of rows)
         owners.set(
@@ -672,35 +701,52 @@ export function availableShares(
   id: string,
   before?: Execution,
 ): Decimal {
+  return shareAvailability(ledger, p)(id, before);
+}
+
+/** Reuse only while memberships are unchanged; each call site owns its snapshot. */
+export function shareAvailability(
+  ledger: LedgerSnapshot,
+  p: LifecycleProjection,
+) {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
-  let shares = new Decimal(0);
-  const calls = new Map<string, { quantity: Decimal; multiplier: string }>();
-  for (const m of p.members.filter((m) => m.lifecycleId === id)) {
-    const e = exec.get(m.allocation.executionKey);
-    if (!e || (before && e.key === before.key)) continue;
-    if (before) {
-      const order = compareLifecycleTime(e, before);
-      if (
-        order === 0 ||
-        order === 1 ||
-        (order === null && !new Decimal(m.quantity).lt(0))
-      )
-        continue;
-    }
-    if (e.instrument.assetClass === "STK") shares = shares.plus(m.quantity);
-    else if (e.instrument.putCall === "C") {
-      const old = calls.get(e.instrument.key);
-      calls.set(e.instrument.key, {
-        quantity: (old?.quantity ?? new Decimal(0)).plus(m.quantity),
-        multiplier: e.instrument.multiplier ?? "0",
-      });
-    }
+  const members = new Map<string, LifecycleProjection["members"]>();
+  for (const m of p.members) {
+    const rows = members.get(m.lifecycleId) ?? [];
+    rows.push(m);
+    members.set(m.lifecycleId, rows);
   }
-  const reserved = [...calls.values()].reduce(
-    (s, c) => s.plus(Decimal.max(0, c.quantity.negated()).times(c.multiplier)),
-    new Decimal(0),
-  );
-  return Decimal.max(0, shares.minus(reserved));
+  return (id: string, before?: Execution): Decimal => {
+    let shares = new Decimal(0);
+    const calls = new Map<string, { quantity: Decimal; multiplier: string }>();
+    for (const m of members.get(id) ?? []) {
+      const e = exec.get(m.allocation.executionKey);
+      if (!e || (before && e.key === before.key)) continue;
+      if (before) {
+        const order = compareLifecycleTime(e, before);
+        if (
+          order === 0 ||
+          order === 1 ||
+          (order === null && !new Decimal(m.quantity).lt(0))
+        )
+          continue;
+      }
+      if (e.instrument.assetClass === "STK") shares = shares.plus(m.quantity);
+      else if (e.instrument.putCall === "C") {
+        const old = calls.get(e.instrument.key);
+        calls.set(e.instrument.key, {
+          quantity: (old?.quantity ?? new Decimal(0)).plus(m.quantity),
+          multiplier: e.instrument.multiplier ?? "0",
+        });
+      }
+    }
+    const reserved = [...calls.values()].reduce(
+      (s, c) =>
+        s.plus(Decimal.max(0, c.quantity.negated()).times(c.multiplier)),
+      new Decimal(0),
+    );
+    return Decimal.max(0, shares.minus(reserved));
+  };
 }
 export function recomputeLifecycles(
   ledger: LedgerSnapshot,

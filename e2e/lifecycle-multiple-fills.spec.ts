@@ -132,6 +132,7 @@ test("confirms all WFC opening fills with their explicit closing source partitio
     .click();
   await page.setViewportSize({ width: 375, height: 812 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await expect(panel.getByRole("region", { name: "Connection preview" })).toBeVisible();
   expect(
     await panel.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);

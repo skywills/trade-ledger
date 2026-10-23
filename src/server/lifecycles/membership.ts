@@ -15,6 +15,17 @@ export const refKey = (a: AllocationRef) =>
   JSON.stringify([a.strategyId, a.executionKey, a.role]);
 export const sum = (v: readonly string[]) =>
   v.reduce((s, n) => s.plus(n), new Decimal(0)).toFixed();
+/** Build once for a membership snapshot; rebuild after changing allocations. */
+export function indexMembersByAllocation(members: readonly LifecycleMember[]) {
+  const index = new Map<string, LifecycleMember[]>();
+  for (const member of members) {
+    const key = refKey(member.allocation);
+    const rows = index.get(key) ?? [];
+    rows.push(member);
+    index.set(key, rows);
+  }
+  return index;
+}
 export function partition(
   a: Allocation,
   targets: readonly { lifecycleId: string; quantity: string }[],
@@ -74,8 +85,9 @@ export function validateMembership(
 ): Issue[] {
   const issues: Issue[] = [];
   const valid = new Set(projection.allocations.map(refKey));
+  const byAllocation = indexMembersByAllocation(members);
   for (const a of projection.allocations) {
-    const m = members.filter((m) => refKey(m.allocation) === refKey(a));
+    const m = byAllocation.get(refKey(a)) ?? [];
     if (
       !new Decimal(sum(m.map((t) => t.quantity))).eq(a.quantity) ||
       !new Decimal(sum(m.map((t) => t.netCash))).eq(a.netCash) ||

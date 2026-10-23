@@ -239,3 +239,29 @@
   overflow-y: auto;
   scroll-padding-block: var(--space-4);
 }
+.connection-impact {
+  margin-block: var(--space-6);
+}
+.connection-impact table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.connection-impact th,
+.connection-impact td {
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: end;
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+.connection-impact th:first-child {
+  width: 44%;
+  text-align: start;
+}
+.connection-impact td small {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
