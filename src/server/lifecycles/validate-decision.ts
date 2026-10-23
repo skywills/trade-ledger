@@ -10,6 +10,10 @@ import {
   LifecycleRejectionPayloadSchema,
   ValuationSnapshotSchema,
 } from "../../shared/lifecycles.js";
+import {
+  assertConnectionOrder,
+  coveredConnectionAssignments,
+} from "./connection-order.js";
 import { refKey, validateMembership } from "./membership.js";
 import { projectLifecycles } from "./project.js";
 import { latestExecutionBound } from "./valuation.js";
@@ -21,6 +25,18 @@ export function validateLifecycleDecision(
   origins?: Projection,
   retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
 ): void {
+  const connections = coveredConnectionAssignments(candidate);
+  if (connections.length) {
+    const current = projectLifecycles(
+      ledger,
+      projection,
+      decisions,
+      undefined,
+      origins,
+      retainedAnchors,
+    );
+    assertConnectionOrder(ledger, current, connections);
+  }
   if (candidate.kind === "wheel_campaign") {
     const payload = CampaignPayloadSchema.parse(candidate.payload);
     const previous = projection.lifecycles?.campaigns.find(

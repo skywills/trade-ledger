@@ -19,6 +19,7 @@ import {
   commitImport,
   previewImport,
 } from "../../src/server/imports/service.js";
+import { LEDGER_PARSER_VERSION } from "../../src/server/ledger/normalize.js";
 import type { Store } from "../../src/server/storage/database.js";
 import { fixtures } from "../fixtures/scenarios.js";
 import { seedLedger } from "../helpers/chat.js";
@@ -270,4 +271,90 @@ it("changes after simulation finishes invalidate the result", async () => {
     previewProposal(store, proposal, expected),
   ).rejects.toMatchObject({ code: "STALE_INPUT" });
   expect(await readdir(root)).toEqual([]);
+});
+
+it("blocks a later connection in preview and direct saves, then unlocks it after reviewing the earlier call", async () => {
+  const { buildExecutionTable, executionRow } = await import(
+    "../fixtures/scenarios.js"
+  );
+  const { connectionGroups, connectionProposal } = await import(
+    "../../src/web/lifecycles/connections.js"
+  );
+  const { previewProposal } = await import(
+    "../../src/server/ai/proposal-preview.js"
+  );
+  const bytes = buildExecutionTable(
+    (
+      [
+        ["shares", "STK", "1", "100", "-10000", "O", "1"],
+        ["early", "OPT", "2", "-1", "100", "O", "2"],
+        ["early-close", "OPT", "3", "1", "-50", "C", "2"],
+        ["late", "OPT", "4", "-1", "100", "O", "3"],
+      ] as const
+    ).map(([id, asset, day, quantity, cash, action, conid]) =>
+      executionRow({
+        ClientAccountID: "A",
+        CurrencyPrimary: "USD",
+        AssetClass: asset,
+        Symbol: asset === "OPT" ? `XYZ CALL ${conid}` : "XYZ",
+        UnderlyingSymbol: "XYZ",
+        Conid: conid,
+        TradeDate: `2024-06-0${day}`,
+        DateTime: `2024-06-0${day} 12:00:00`,
+        Quantity: quantity,
+        NetCash: cash,
+        IBExecID: id,
+        IBOrderID: id,
+        "Notes/Codes": action,
+        Multiplier: asset === "OPT" ? "100" : "1",
+        Expiry: asset === "OPT" ? "2024-06-21" : "",
+        Strike: asset === "OPT" ? (conid === "2" ? "105" : "110") : "",
+        "Put/Call": asset === "OPT" ? "C" : "",
+      }),
+    ),
+  );
+  const { store, ledger, expected } = await setup(bytes);
+  const p = activeProjection(store).projection?.lifecycles;
+  if (!p) throw new Error("Missing lifecycle projection");
+  const [early, late] = connectionGroups(
+    p.suggestions,
+    p.members,
+    ledger.executions,
+  );
+  const target = late?.candidateIds[0];
+  if (!early || !late || !target) throw new Error("Missing connections");
+  const proposal = parseProposal(connectionProposal(late, target));
+  const blocked = await previewProposal(store, proposal, expected);
+  expect(blocked).toMatchObject({
+    valid: false,
+    impact: null,
+    issues: [{ code: "EARLIER_CONNECTION_UNRESOLVED", severity: "error" }],
+    blockingConnection: {
+      date: "2024-06-02",
+      lifecycleId: early.members[0]?.lifecycleId,
+    },
+  });
+  await expect(
+    appendDecision(store, proposalDecisionInput(proposal), 0),
+  ).rejects.toMatchObject({
+    code: "EARLIER_CONNECTION_UNRESOLVED",
+    statusCode: 409,
+  });
+  expect(decisionWatermark(store)).toBe(0);
+  await appendDecision(
+    store,
+    proposalDecisionInput(parseProposal(connectionProposal(early, "", true))),
+    0,
+  );
+  await rebuild(store, {
+    mode: "full",
+    parserVersion: LEDGER_PARSER_VERSION,
+    algorithmVersion: ALGORITHM_VERSION,
+    signal: new AbortController().signal,
+  });
+  const buildId = activeProjection(store).buildId;
+  if (!buildId) throw new Error("Missing rebuilt projection");
+  expect(
+    (await previewProposal(store, proposal, { buildId, watermark: 1 })).valid,
+  ).toBe(true);
 });

@@ -80,7 +80,14 @@ export function connectionGroups(
 ): ConnectionGroup[] {
   const exec = new Map(executions.map((e) => [e.key, e]));
   const groups = new Map<string, AttachmentSuggestion[]>();
-  for (const suggestion of suggestions) {
+  // Review older call transactions first, including the earliest fill of a
+  // contract whose suggestions arrived in a different order.
+  const ordered = [...suggestions].sort((a, b) =>
+    (exec.get(a.callOpening.executionKey)?.date ?? "9999-12-31").localeCompare(
+      exec.get(b.callOpening.executionKey)?.date ?? "9999-12-31",
+    ),
+  );
+  for (const suggestion of ordered) {
     const e = exec.get(suggestion.callOpening.executionKey);
     if (!e) continue;
     const key = JSON.stringify([

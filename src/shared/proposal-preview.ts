@@ -29,6 +29,9 @@ export const ProposalPreviewSchema = z.object({
   issues: z.array(
     z.object({ code: z.string(), severity: z.enum(["warning", "error"]) }),
   ),
+  blockingConnection: z
+    .object({ date: z.string(), lifecycleId: z.string() })
+    .optional(),
   impact: z
     .object({ before: PreviewTotalsSchema, after: PreviewTotalsSchema })
     .nullable(),
