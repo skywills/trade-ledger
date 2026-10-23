@@ -15,6 +15,7 @@ import {
 } from "../api.js";
 import { Link } from "../navigation.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
+import { ConnectionImpact } from "./ConnectionImpact.js";
 import {
   type ConnectionGroup,
   connectionProposal,
@@ -427,6 +428,9 @@ export function ConnectionDialog({
                 );
               })}
             </ol>
+            {preview?.valid && preview.impact && (
+              <ConnectionImpact impact={preview.impact} />
+            )}
             <section className="connection-after">
               <h3>After confirmation</h3>
               <p>

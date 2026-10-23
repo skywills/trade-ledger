@@ -151,11 +151,15 @@ export async function computeProjection(
     return key;
   };
   const provisional = groupStrategies(ledger, decisions, resolveId);
-  const origins = groupStrategies(
-    ledger,
-    decisions.filter((d) => d.kind !== "group_merge"),
-    resolveId,
-  );
+  // Only presentation merges change the origin grouping inputs. Reuse the
+  // pure result otherwise; remapping/accounting create separate projections.
+  const origins = decisions.some((d) => d.kind === "group_merge")
+    ? groupStrategies(
+        ledger,
+        decisions.filter((d) => d.kind !== "group_merge"),
+        resolveId,
+      )
+    : provisional;
   const remap = new Map<Id, Id>();
   for (const [key, anchor] of anchors) {
     remap.set(key, await strategyId(store, anchor));

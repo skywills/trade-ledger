@@ -90,6 +90,13 @@ test("closing an uncertain save refreshes the journal and exposes its rebuild ac
   await expect(
     panel.getByRole("button", { name: "Confirm connection", exact: true }),
   ).toBeEnabled();
+  const impact = panel.getByRole("region", { name: "Connection preview" });
+  await expect(impact).toBeVisible();
+  await expect(impact.getByRole("columnheader", { name: "Before", exact: true })).toBeVisible();
+  await expect(impact.getByRole("columnheader", { name: "After", exact: true })).toBeVisible();
+  await expect(impact.getByRole("row", { name: "Lifecycles 2 1", exact: true })).toBeVisible();
+  // Previewing must not save a decision.
+  expect((await (await request.get("/api/lifecycles")).json()).watermark).toBe(0);
   await panel
     .getByRole("button", { name: "Confirm connection", exact: true })
     .click();

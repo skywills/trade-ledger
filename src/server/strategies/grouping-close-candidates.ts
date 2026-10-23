@@ -206,10 +206,11 @@ export function closeCandidates(
   close: Execution,
   closeQuantity: string,
 ): StrategyDraft[] {
-  return [...context.drafts.values()].filter((draft) =>
-    remainingCompatible(
-      closingExposure(context, draft, close).toFixed(),
-      closeQuantity,
-    ),
-  );
+  return [...context.drafts.values()].filter((draft) => {
+    const exposure = closingExposure(context, draft, close);
+    return (
+      !exposure.isZero() &&
+      remainingCompatible(exposure.toFixed(), closeQuantity)
+    );
+  });
 }

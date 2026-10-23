@@ -16,7 +16,7 @@ import {
 import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
 import { partition, refKey } from "./membership.js";
-import { availableShares } from "./project.js";
+import { availableShares, shareAvailability } from "./project.js";
 
 function invalid(message: string): never {
   throw new AppError("INVALID_LIFECYCLE_MEMBERSHIP", message, 409);
@@ -99,6 +99,7 @@ export function applyMembershipChanges(
   };
   // Recheck covered owners so decisions saved out of order cannot overbook shares.
   const validateCallCoverage = () => {
+    const available = shareAvailability(ledger, draft);
     const ownerIds = new Set(
       decisions.flatMap((d) => {
         if (d.kind === "lifecycle_attachment") {
@@ -144,7 +145,7 @@ export function applyMembershipChanges(
               ),
             new Decimal(0),
           );
-        if (availableShares(ledger, draft, id, opening).lt(demand))
+        if (available(id, opening).lt(demand))
           invalid(
             "These calls overlap an existing reservation of the selected shares.",
           );
