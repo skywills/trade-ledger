@@ -251,6 +251,14 @@ export function LifecycleDetail({ id }: { id: string }) {
               allocation and links to the original source row.
             </p>
           )}
+          {d.members.some((m) => m.pnlAttribution === "basis-reconciled") && (
+            <p>
+              Shared closing P&amp;L was allocated using matched opening costs
+              and reconciled to the broker total. Small rounding adjustments are
+              retained; these allocations are basis-reconciled rather than
+              directly reported for each opening group.
+            </p>
+          )}
           <ul aria-label="Remaining holdings">
             {l.positions.map((p) => (
               <li key={p.instrumentKey}>
@@ -350,7 +358,9 @@ export function LifecycleDetail({ id }: { id: string }) {
                         ? "Unavailable"
                         : m.estimated
                           ? "Allocated (estimated)"
-                          : "Broker reported"}
+                          : m.pnlAttribution === "basis-reconciled"
+                            ? "Basis-reconciled"
+                            : "Broker reported"}
                     </td>
                     <td>
                       <Link

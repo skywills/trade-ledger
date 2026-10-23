@@ -201,8 +201,8 @@ export async function persistProjection(
     const insertAllocation = db.prepare(
       `INSERT INTO strategy_allocations (
          build_id, ledger_build_id, strategy_id, revision_id, allocation_role,
-         allocated_quantity, allocated_cash, broker_pnl, pnl_estimated
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         allocated_quantity, allocated_cash, broker_pnl, pnl_estimated, pnl_attribution
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     // The allocation primary key is (build, strategy, revision, role). A second
     // row for the same key must never hard-fail the build via a SQL constraint;
@@ -234,6 +234,7 @@ export async function persistProjection(
         allocation.netCash,
         allocation.brokerPnl,
         allocation.pnlEstimated ? 1 : 0,
+        allocation.pnlAttribution ?? null,
       );
     }
 
@@ -370,7 +371,7 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
     .prepare(
       `SELECT sa.strategy_id, tr.logical_transaction_key AS execution_key,
               sa.allocation_role, sa.allocated_quantity, sa.allocated_cash,
-              sa.broker_pnl, sa.pnl_estimated
+              sa.broker_pnl, sa.pnl_estimated, sa.pnl_attribution
        FROM strategy_allocations sa
        JOIN transaction_revisions tr
          ON tr.id = sa.revision_id AND tr.ledger_build_id = sa.ledger_build_id
@@ -385,6 +386,7 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
     allocated_cash: string | null;
     broker_pnl: string | null;
     pnl_estimated: number;
+    pnl_attribution: NonNullable<Allocation["pnlAttribution"]> | null;
   }>;
   const allocations: Allocation[] = allocationRows.map((row) => ({
     strategyId: row.strategy_id,
@@ -393,6 +395,9 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
     netCash: row.allocated_cash ?? "",
     brokerPnl: row.broker_pnl,
     pnlEstimated: row.pnl_estimated === 1,
+    ...(row.pnl_attribution === null
+      ? {}
+      : { pnlAttribution: row.pnl_attribution }),
     role: row.allocation_role as Allocation["role"],
   }));
 

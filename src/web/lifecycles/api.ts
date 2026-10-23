@@ -27,6 +27,9 @@ export const MemberSchema = z.object({
   netCash: z.string(),
   brokerPnl: z.string().nullable(),
   estimated: z.boolean(),
+  pnlAttribution: z
+    .enum(["broker-reported", "basis-reconciled", "estimated"])
+    .optional(),
   sources: z.array(SourceRefSchema),
 });
 export const SuggestionSchema = z.object({

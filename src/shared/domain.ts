@@ -89,6 +89,11 @@ export interface Decision {
   supersedesId: Id | null;
 }
 
+export type PnlAttribution =
+  | "broker-reported"
+  | "basis-reconciled"
+  | "estimated";
+
 export interface Allocation {
   strategyId: Id;
   executionKey: string;
@@ -96,6 +101,7 @@ export interface Allocation {
   netCash: DecimalText;
   brokerPnl: DecimalText | null;
   pnlEstimated: boolean;
+  pnlAttribution?: PnlAttribution | undefined;
   role: "open" | "close";
 }
 

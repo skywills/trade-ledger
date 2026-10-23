@@ -22,15 +22,37 @@ export function parseAnalyticsQuery(raw: unknown): AnalyticsQuery {
 function validateDrill(
   q: {
     scope: string;
+    unit?: string | undefined;
     basis?: string | undefined;
     outcome?: string | undefined;
     group?: string | undefined;
     groupBy?: string | undefined;
+    date?: string | undefined;
   },
   kind: string,
 ) {
-  if (q.scope === "estimated-closed" && q.basis !== "broker")
-    invalid("Estimated broker allocations require the broker P&L basis.");
+  if (q.scope.startsWith("realized-")) {
+    if (
+      q.unit === "strategy" ||
+      q.basis !== "broker" ||
+      q.outcome ||
+      q.groupBy ||
+      q.group ||
+      q.date ||
+      (q.scope === "realized-unresolved"
+        ? kind !== "transactions"
+        : kind !== "strategies")
+    )
+      invalid(
+        "Realized P&L details require lifecycle mode, broker basis and the matching dataset.",
+      );
+    return;
+  }
+  if (
+    (q.scope === "estimated-closed" || q.scope === "basis-reconciled-closed") &&
+    q.basis !== "broker"
+  )
+    invalid("Broker allocation quality details require the broker P&L basis.");
   if (
     kind === "transactions" &&
     (q.scope !== "closed" || q.outcome || q.groupBy === "strategyType")

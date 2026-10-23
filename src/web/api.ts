@@ -89,6 +89,9 @@ export const AllocationSchema = z.object({
   netCash: z.string(),
   brokerPnl: z.string().nullable(),
   pnlEstimated: z.boolean(),
+  pnlAttribution: z
+    .enum(["broker-reported", "basis-reconciled", "estimated"])
+    .optional(),
   role: z.enum(["open", "close"]),
 });
 

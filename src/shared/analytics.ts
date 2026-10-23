@@ -25,6 +25,10 @@ const Drill = {
     .enum([
       "closed",
       "estimated-closed",
+      "basis-reconciled-closed",
+      "realized-open",
+      "realized-completed",
+      "realized-unresolved",
       "current-open",
       "unresolved",
       "undated-closed",
@@ -107,6 +111,14 @@ export const PerformanceSummarySchema = z.object({
 });
 export type PerformanceSummary = z.infer<typeof PerformanceSummarySchema>;
 const CoveredAmount = z.object({ value: Amount, known: Count, total: Count });
+const RealizedAmount = CoveredAmount.extend({ knownValue: Amount });
+export const RealizedPnlSummarySchema = z.object({
+  completed: RealizedAmount,
+  open: RealizedAmount,
+  unresolved: RealizedAmount,
+  total: RealizedAmount,
+});
+export type RealizedPnlSummary = z.infer<typeof RealizedPnlSummarySchema>;
 const CountGroup = z.object({
   key: z.string(),
   label: z.string(),
@@ -241,6 +253,7 @@ export const AnalyticsResponseSchema = ProvenanceSchema.extend({
     assetClasses: z.array(z.string()),
   }),
   performance: PerformanceSummarySchema,
+  realizedPnl: RealizedPnlSummarySchema.optional(),
   transactions: TransactionSummarySchema,
   daily: z.array(DailyPointSchema),
   monthly: z.array(MonthlyRowSchema),
@@ -253,6 +266,7 @@ export const AnalyticsResponseSchema = ProvenanceSchema.extend({
     undatedClosed: Count,
     unresolved: Count,
     estimatedClosed: Count,
+    basisReconciledClosed: Count.default(0),
     excludedUnallocated: Count,
   }),
 });

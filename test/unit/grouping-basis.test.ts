@@ -99,7 +99,9 @@ describe("basis-supported close allocation", () => {
     expect(
       accounted.allocations
         .filter((a) => a.role === "close")
-        .every((a) => a.pnlEstimated),
+        .every(
+          (a) => !a.pnlEstimated && a.pnlAttribution === "basis-reconciled",
+        ),
     ).toBe(true);
     expect(groupStrategies(ledger([...rows].reverse()), [], resolveId)).toEqual(
       result,

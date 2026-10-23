@@ -163,6 +163,14 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
             include estimated broker allocations.
           </li>
           <li>
+            {data.quality.basisReconciledClosed}{" "}
+            {data.filters.unit === "strategy"
+              ? "closed strategy components"
+              : "completed lifecycles"}{" "}
+            include basis-reconciled broker allocations. Matched opening costs
+            reconcile to the broker total; rounding adjustments are retained.
+          </li>
+          <li>
             {data.quality.excludedUnallocated} unallocated executions excluded
             by strategy-specific filters.
           </li>

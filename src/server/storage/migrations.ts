@@ -30,6 +30,10 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
     version: 7,
     url: new URL("./migrations/007_chat_thinking.sql", import.meta.url),
   },
+  {
+    version: 8,
+    url: new URL("./migrations/008_pnl_attribution.sql", import.meta.url),
+  },
 ];
 
 export const CURRENT_SCHEMA_VERSION =

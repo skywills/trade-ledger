@@ -65,6 +65,9 @@ export function serializeAnalyticsCsv(
     from: filters.from ?? "",
     to: filters.to ?? "",
     basis: filters.basis,
+    ...(query.scope.startsWith("realized-")
+      ? { pnlDateBasis: "execution" }
+      : {}),
     buildId: snapshot.buildId,
     ledgerId: snapshot.ledgerId,
     generatedAt: snapshot.generatedAt,
@@ -149,6 +152,16 @@ export function serializeAnalyticsCsv(
     }
     for (const [metric, value] of Object.entries(result.quality))
       add("quality", "all", metric, value);
+    if (result.realizedPnl)
+      for (const [key, amount] of Object.entries(result.realizedPnl))
+        add(
+          "realizedPnl",
+          key,
+          "brokerPnl",
+          amount.value,
+          amount.known,
+          amount.total,
+        );
   } else {
     const { dataset, ...rest } = query;
     const detail = parseDetailQuery({ ...rest, kind: dataset });

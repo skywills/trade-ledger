@@ -8,6 +8,7 @@ import type { Strategy } from "../../shared/domain.js";
 import { normalizeStrategyDescription } from "../../shared/symbols.js";
 import { dailySeries, Money, summarizePerformance } from "./performance.js";
 import { invalid } from "./query.js";
+import { summarizeRealizedPnl } from "./realized.js";
 import {
   type AnalyticsScope,
   bucketLabel,
@@ -165,6 +166,9 @@ export function aggregateAnalytics(
     filters: scope.query,
     options: scope.options,
     performance,
+    ...(scope.query.unit === "lifecycle" && scope.query.basis === "broker"
+      ? { realizedPnl: summarizeRealizedPnl(scope) }
+      : {}),
     transactions,
     daily: dailySeries(scope),
     monthly,
@@ -195,6 +199,19 @@ export function aggregateAnalytics(
           ? new Set(
               (snapshot.projection?.allocations ?? [])
                 .filter((a) => a.pnlEstimated && eligibleIds.has(a.strategyId))
+                .map((a) => a.strategyId),
+            ).size
+          : 0,
+      basisReconciledClosed:
+        query.basis === "broker"
+          ? new Set(
+              (snapshot.projection?.allocations ?? [])
+                .filter(
+                  (a) =>
+                    a.brokerPnl !== null &&
+                    a.pnlAttribution === "basis-reconciled" &&
+                    eligibleIds.has(a.strategyId),
+                )
                 .map((a) => a.strategyId),
             ).size
           : 0,

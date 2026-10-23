@@ -46,9 +46,15 @@ export function accountLifecycles(
         : null;
     l.reasons = [
       ...new Set([
-        ...l.reasons,
+        ...l.reasons.filter(
+          (reason) =>
+            reason !== "ESTIMATED_PNL" && reason !== "BASIS_RECONCILED_PNL",
+        ),
         ...broker.reasons,
         ...(members.some((m) => m.estimated) ? ["ESTIMATED_PNL"] : []),
+        ...(members.some((m) => m.pnlAttribution === "basis-reconciled")
+          ? ["BASIS_RECONCILED_PNL"]
+          : []),
         ...(quarantined ? ["QUARANTINED_EVIDENCE"] : []),
         ...(unresolvedEvents.length ? ["EVENT_CASH_UNRESOLVED"] : []),
       ]),

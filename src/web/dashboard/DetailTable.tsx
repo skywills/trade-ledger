@@ -34,10 +34,17 @@ export function DetailTable({
   const openPositions = view === "open-positions";
   const lifecycle = query.unit !== "strategy";
   const titles = {
+    "realized-open": "Realized P&L in open lifecycles",
+    "realized-completed": "Recorded realized P&L in completed lifecycles",
+    "realized-unresolved":
+      "Recorded P&L in unresolved or unallocated transactions",
     closed: lifecycle ? "Completed lifecycles" : "Closed strategy components",
     "estimated-closed": lifecycle
       ? "Completed lifecycles with estimated broker P&L"
       : "Closed strategy components with estimated broker P&L",
+    "basis-reconciled-closed": lifecycle
+      ? "Completed lifecycles with basis-reconciled broker P&L"
+      : "Closed strategy components with basis-reconciled broker P&L",
     "current-open": lifecycle
       ? "Current open lifecycles"
       : "Current open strategy components",
@@ -50,9 +57,11 @@ export function DetailTable({
   };
   const title = openPositions
     ? "Open positions"
-    : query.kind === "transactions"
-      ? "Transaction details"
-      : titles[query.scope];
+    : query.scope === "realized-unresolved"
+      ? titles[query.scope]
+      : query.kind === "transactions"
+        ? "Transaction details"
+        : titles[query.scope];
   if (remote.status === "loading")
     return <Loading label="Loading matching records…" />;
   if (remote.status === "error")
@@ -113,7 +122,15 @@ export function DetailTable({
           {data.total} records · {currency}
         </span>
       </div>
-      {query.scope !== "closed" && query.scope !== "estimated-closed" && (
+      {query.scope.startsWith("realized-") && (
+        <p className="dashboard-muted">
+          Broker realized P&amp;L recorded within the selected execution dates,
+          grouped by current lifecycle status. Unrealized P&amp;L is excluded.
+        </p>
+      )}
+      {["current-open", "unresolved", "undated-closed"].includes(
+        query.scope,
+      ) && (
         <p className="dashboard-muted">
           Current build scope; period bounds do not filter this list.
         </p>
@@ -204,7 +221,13 @@ export function DetailTable({
                         <td>{s.expiry ?? "—"}</td>
                       </>
                     ) : (
-                      <td>{s.closeDate ?? "Unknown"}</td>
+                      <td>
+                        {s.closeDate ??
+                          (s.status === "open" ||
+                          s.status === "partially_closed"
+                            ? "Open"
+                            : "Unknown")}
+                      </td>
                     )}
                     <td>{s.status.replaceAll("_", " ")}</td>
                     {!openPositions && (

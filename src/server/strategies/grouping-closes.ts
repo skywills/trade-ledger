@@ -116,13 +116,16 @@ export function matchCloses(context: GroupingContext): Execution[] {
             quantity: part.quantity,
             netCash: cash.amount,
             ...(part.lots === undefined ? {} : { basisLots: part.lots }),
-            // Proven lot costs improve attribution, but derived amounts remain
-            // estimated. Accounting retains the proportional fallback otherwise.
+            // Distinguish basis-supported attribution from the proportional
+            // fallback. Both preserve the broker's execution total.
             brokerPnl:
               basisAllocation.length === 1
                 ? brokerPnl
                 : (pnlShares?.get(part.draft.id) ?? null),
-            pnlEstimated: pnlShares !== null,
+            pnlEstimated: false,
+            ...(pnlShares === null
+              ? {}
+              : { pnlAttribution: "basis-reconciled" as const }),
           }),
         );
       }
