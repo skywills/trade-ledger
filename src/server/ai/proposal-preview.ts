@@ -15,6 +15,7 @@ import {
 } from "../builds/service.js";
 import { appendDecision } from "../decisions/service.js";
 import { LEDGER_PARSER_VERSION } from "../ledger/normalize.js";
+import { ConnectionDependencyError } from "../lifecycles/connection-order.js";
 import { closeStore, openStore, type Store } from "../storage/database.js";
 import { assertProposalState, type ProposalState } from "./proposal-state.js";
 import {
@@ -147,6 +148,9 @@ export async function previewProposal(
           ...base,
           valid: false,
           issues: [{ code: error.code, severity: "error" }],
+          ...(error instanceof ConnectionDependencyError
+            ? { blockingConnection: error.blockingConnection }
+            : {}),
           impact: null,
         };
       else throw error;

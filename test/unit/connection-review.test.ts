@@ -134,3 +134,35 @@ it("distinguishes assignment from buying an option back in the review timeline",
     ),
   ).toBe("Bought back calls");
 });
+
+it("reviews connections by their earliest call transaction date regardless of input order", () => {
+  const laterCall = { ...call, key: "later-call", conid: "4" };
+  const earliestCall = { ...call, key: "earliest-call", conid: "5" };
+  const { ledger, projection } = fixture([
+    ["shares", execution("shares", stock, "400", "-40000", 1, "open")],
+    ["later", execution("later", laterCall, "-1", "70", 9, "open")],
+    ["fills", execution("second-fill", call, "-1", "70", 7, "open")],
+    ["earliest", execution("earliest", earliestCall, "-1", "70", 2, "open")],
+    ["fills", execution("first-fill", call, "-1", "70", 3, "open")],
+  ]);
+  const p = projectLifecycles(ledger, projection, []);
+  const suggestions = ["later", "second-fill", "earliest", "first-fill"].map(
+    (key) => {
+      const suggestion = p.suggestions.find(
+        (s) => s.callOpening.executionKey === key,
+      );
+      if (!suggestion) throw new Error(`Missing suggestion ${key}`);
+      return suggestion;
+    },
+  );
+  const groups = connectionGroups(suggestions, p.members, ledger.executions);
+  expect(groups.map((g) => g.instrument.key)).toEqual([
+    "earliest-call",
+    "call",
+    "later-call",
+  ]);
+  expect(groups[1]?.suggestions.map((s) => s.callOpening.executionKey)).toEqual(
+    ["first-fill", "second-fill"],
+  );
+  expect(suggestions[0]?.callOpening.executionKey).toBe("later");
+});

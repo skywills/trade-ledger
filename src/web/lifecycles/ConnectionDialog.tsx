@@ -168,7 +168,9 @@ export function ConnectionDialog({
           setPreview(p);
           if (!p.valid)
             setError(
-              "These trades cannot be connected as selected. Check the available shares and quantities, or use Advanced adjustments.",
+              p.blockingConnection
+                ? `Resolve the earlier connection dated ${p.blockingConnection.date} first.`
+                : "These trades cannot be connected as selected. Check the available shares and quantities, or use Advanced adjustments.",
             );
         }
       })
@@ -474,6 +476,17 @@ export function ConnectionDialog({
                 : ""}
               {error}
             </p>
+            {preview?.blockingConnection && (
+              <Link
+                to={`/lifecycles/${encodeURIComponent(preview.blockingConnection.lifecycleId)}`}
+                onClick={() => {
+                  dialog.current?.close();
+                  onDismiss(preview.blockingConnection?.lifecycleId);
+                }}
+              >
+                Review earlier connection
+              </Link>
+            )}
             {!preview && !receipt && (
               <button
                 type="button"
