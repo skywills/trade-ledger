@@ -118,7 +118,8 @@ export const LifecycleMembershipPayloadSchema = z.object({
 });
 export const LifecycleRejectionPayloadSchema = z.object({
   callOpening: AllocationRefSchema,
-  candidateLifecycleIds: z.array(z.string()).min(1),
+  // Blocked calls have no eligible candidates; validation checks the current suggestion.
+  candidateLifecycleIds: z.array(z.string()),
   reason: z.string().min(1),
 });
 export const CampaignPayloadSchema = z.object({

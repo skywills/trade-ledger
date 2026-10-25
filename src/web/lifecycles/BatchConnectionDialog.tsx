@@ -3,6 +3,7 @@ import { ApiError } from "../api.js";
 import {
   type ConnectionBatch,
   type ConnectionData,
+  ConnectionSelectionError,
   commonConnectionTargets,
   connectionDate,
   createConnectionBatch,
@@ -32,6 +33,7 @@ export function BatchConnectionDialog({
   );
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
+  const [retryable, setRetryable] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const batch = useRef<ConnectionBatch | null>(null);
   const inFlight = useRef(false);
@@ -70,6 +72,7 @@ export function BatchConnectionDialog({
     inFlight.current = true;
     setBusy(true);
     setError(null);
+    setRetryable(true);
     try {
       batch.current ??= createConnectionBatch(
         data,
@@ -86,6 +89,8 @@ export function BatchConnectionDialog({
         lifetime.current?.signal,
       );
     } catch (e) {
+      if (!lifetime.current?.signal.aborted)
+        setRetryable(!(e instanceof ConnectionSelectionError));
       if (!lifetime.current?.signal.aborted)
         setError(
           e instanceof ApiError &&
@@ -226,10 +231,12 @@ export function BatchConnectionDialog({
         {error && (
           <div className="connection-error" role="alert" id={errorId}>
             <p>{error}</p>
-            <p>
-              Completed decisions remain saved. Retry continues from the stopped
-              connection without saving a decision twice.
-            </p>
+            {retryable && (
+              <p>
+                Completed decisions remain saved. Retry continues from the
+                stopped connection without saving a decision twice.
+              </p>
+            )}
           </div>
         )}
         <div
@@ -252,7 +259,7 @@ export function BatchConnectionDialog({
         >
           {done ? "Done" : "Cancel"}
         </button>
-        {!done && (
+        {!done && retryable && (
           <button
             type="button"
             className="primary"
