@@ -542,6 +542,7 @@ export function projectLifecycles(
   // opening are measured chronologically, including reservations by attached calls.
   const membersByAllocation = indexMembersByAllocation(draft.members);
   const available = shareAvailability(ledger, draft);
+  const unreserved = shareAvailability(ledger, draft, false);
   for (const a of projection.allocations) {
     const e = exec.get(a.executionKey);
     if (
@@ -587,18 +588,19 @@ export function projectLifecycles(
       }
       return shares;
     };
-    const candidates = draft.lifecycles.filter(
+    const matchingLifecycles = draft.lifecycles.filter(
       (l) =>
         !owners.includes(l.id) &&
         l.account === e.account &&
         l.currency === e.currency &&
-        l.underlyingKey === `value:${underlyingSymbol(e.instrument)}` &&
-        sharesAtOpening(l.id).gte(
-          new Decimal(e.instrument.multiplier ?? "0"),
-        ) &&
-        new Decimal(e.instrument.multiplier ?? "0").gt(0),
+        l.underlyingKey === `value:${underlyingSymbol(e.instrument)}`,
     );
-    if (
+    const multiplier = new Decimal(e.instrument.multiplier ?? "0");
+    if (!multiplier.gt(0)) continue;
+    const candidates = matchingLifecycles.filter((l) =>
+      sharesAtOpening(l.id).gte(multiplier),
+    );
+    const insufficientCoverage =
       !candidates.length ||
       candidates
         .reduce(
@@ -610,9 +612,18 @@ export function projectLifecycles(
             ),
           new Decimal(0),
         )
-        .lt(new Decimal(a.quantity).abs())
-    )
-      continue;
+        .lt(new Decimal(a.quantity).abs());
+    // A confirmed call can reserve shares that previously made another call
+    // reviewable. Keep that call pending until the user explicitly resolves it.
+    const blockedByReservations =
+      insufficientCoverage &&
+      matchingLifecycles
+        .reduce(
+          (total, l) => total.plus(unreserved(l.id, e).div(multiplier).floor()),
+          new Decimal(0),
+        )
+        .gte(new Decimal(a.quantity).abs());
+    if (insufficientCoverage && !blockedByReservations) continue;
     draft.suggestions.push({
       id: `call:${a.strategyId}:${e.key}`,
       callOpening: {
@@ -621,9 +632,13 @@ export function projectLifecycles(
         role: a.role,
       },
       quantity: a.quantity,
-      candidateLifecycleIds: candidates.map((l) => l.id).sort(),
+      candidateLifecycleIds: insufficientCoverage
+        ? []
+        : candidates.map((l) => l.id).sort(),
       sources: e.sources,
-      reasons: ["CONFIRM_COVERED_CALL"],
+      reasons: blockedByReservations
+        ? ["CONFIRM_COVERED_CALL", "SHARES_RESERVED_BY_OTHER_CALLS"]
+        : ["CONFIRM_COVERED_CALL"],
     });
     draft.issues.push({
       key: `lifecycle:call:${a.strategyId}:${e.key}`,
@@ -708,6 +723,7 @@ export function availableShares(
 export function shareAvailability(
   ledger: LedgerSnapshot,
   p: LifecycleProjection,
+  reserveCalls = true,
 ) {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
   const members = new Map<string, LifecycleProjection["members"]>();
@@ -732,7 +748,7 @@ export function shareAvailability(
           continue;
       }
       if (e.instrument.assetClass === "STK") shares = shares.plus(m.quantity);
-      else if (e.instrument.putCall === "C") {
+      else if (reserveCalls && e.instrument.putCall === "C") {
         const old = calls.get(e.instrument.key);
         calls.set(e.instrument.key, {
           quantity: (old?.quantity ?? new Decimal(0)).plus(m.quantity),

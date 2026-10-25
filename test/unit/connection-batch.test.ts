@@ -10,22 +10,25 @@ import {
 } from "../../src/web/lifecycles/connection-batch.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
 
-function setup() {
+function setup(overlapping = false, sameContract = false) {
   const { ledger, projection } = fixture([
     ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
     [
       "late",
       execution(
         "late",
-        { ...call, key: "late", conid: "4" },
+        sameContract ? call : { ...call, key: "late", conid: "4" },
         "-1",
         "80",
-        4,
+        overlapping ? 3 : 4,
         "open",
       ),
     ],
     ["early", execution("early", call, "-1", "70", 2, "open")],
-    ["early", execution("early-close", call, "1", "-30", 3, "close")],
+    [
+      "early",
+      execution("early-close", call, "1", "-30", overlapping ? 4 : 3, "close"),
+    ],
   ]);
   const decisions: Decision[] = [];
   let built = 0;
@@ -51,7 +54,7 @@ function setup() {
     preview: async (proposal, current) => {
       validateLifecycleDecision(ledger, projection, decisions, {
         ...proposal,
-        id: "preview",
+        id: "__validate__",
         sequence: decisions.length + 1,
         sources: [],
         strategyIds: [],
@@ -299,10 +302,9 @@ it("stops after partial success when a later connection is invalid", async () =>
   const f = setup();
   const batch = f.batch();
   const preview = f.io.preview;
-  let checks = 0;
   f.io.preview = async (...args) => {
     const result = await preview(...args);
-    return { ...result, valid: ++checks === 1 };
+    return { ...result, valid: args[1].watermark === 0 };
   };
   await expect(runConnectionBatch(batch, f.io)).rejects.toThrow(
     "cannot be resolved",
@@ -371,7 +373,7 @@ it("resolves interleaved opening fills together without bypassing earlier-depend
     preview: async (proposal, current) => {
       validateLifecycleDecision(ledger, projection, decisions, {
         ...proposal,
-        id: "preview",
+        id: "__validate__",
         sequence: decisions.length + 1,
         sources: [],
         strategyIds: [],
@@ -421,4 +423,91 @@ it("resolves interleaved opening fills together without bypassing earlier-depend
   expect(data().lifecycles.members.every((m) => m.lifecycleId === target)).toBe(
     true,
   );
+});
+
+it.each([false, true])(
+  "rejects overlapping connections before saving (same contract: %s)",
+  async (sameContract) => {
+    const f = setup(true, sameContract);
+    const batch = f.batch();
+    expect(batch.items).toHaveLength(2);
+    await expect(runConnectionBatch(batch, f.io)).rejects.toThrow();
+    expect(f.decisions).toHaveLength(0);
+    expect(batch.items.map((i) => i.status)).toEqual(["pending", "pending"]);
+    expect((await f.io.load()).lifecycles?.suggestions).toHaveLength(2);
+  },
+);
+
+it.each([false, true])(
+  "keeps competing calls reviewable after one connection (same contract: %s)",
+  async (sameContract) => {
+    const f = setup(true, sameContract);
+    const first = f.section.groups[0];
+    if (!first) throw Error("Missing first connection");
+    await runConnectionBatch(
+      createConnectionBatch(f.initial, [first.key], f.target, false),
+      f.io,
+    );
+    const fresh = await f.io.load();
+    const remaining = connectionSections(fresh)[0]?.groups[0];
+    expect(remaining?.instrument.key).toBe(sameContract ? "call" : "late");
+    expect(remaining?.candidateIds).toEqual([]);
+    expect(remaining?.canReviewWhole).toBe(true);
+    expect(remaining?.suggestions[0]?.reasons).toContain(
+      "SHARES_RESERVED_BY_OTHER_CALLS",
+    );
+    if (!remaining) throw Error("Missing blocked connection");
+    await runConnectionBatch(
+      createConnectionBatch(fresh, [remaining.key], "", true),
+      f.io,
+    );
+    expect(f.decisions).toHaveLength(2);
+    expect((await f.io.load()).lifecycles?.suggestions).toHaveLength(0);
+  },
+);
+
+it("retains a blocked review whose original share coverage spans multiple lifecycles", () => {
+  const { ledger, projection } = fixture([
+    ["shares-a", execution("shares-a", stock, "100", "-10000", 1, "open")],
+    ["shares-b", execution("shares-b", stock, "100", "-10000", 1, "open")],
+    ["first", execution("first", call, "-1", "70", 2, "open")],
+    [
+      "remaining",
+      execution(
+        "remaining",
+        { ...call, key: "other-call", conid: "4" },
+        "-2",
+        "140",
+        3,
+        "open",
+      ),
+    ],
+  ]);
+  const initial = projectLifecycles(ledger, projection, []);
+  const opening = initial.suggestions.find(
+    (s) => s.callOpening.executionKey === "first",
+  );
+  const target = opening?.candidateLifecycleIds[0];
+  if (!opening || !target) throw Error("Missing initial connection");
+  expect(initial.suggestions).toHaveLength(2);
+  const confirmed: Decision = {
+    id: "__validate__",
+    sequence: 1,
+    sources: [],
+    strategyIds: [],
+    supersedesId: null,
+    kind: "lifecycle_attachment",
+    payload: {
+      opening: opening.callOpening,
+      targets: [{ lifecycleId: target, quantity: "-1" }],
+    },
+  };
+  validateLifecycleDecision(ledger, projection, [], confirmed);
+  const after = projectLifecycles(ledger, projection, [confirmed]);
+  expect(after.suggestions).toHaveLength(1);
+  expect(after.suggestions[0]).toMatchObject({
+    callOpening: { executionKey: "remaining" },
+    candidateLifecycleIds: [],
+    reasons: ["CONFIRM_COVERED_CALL", "SHARES_RESERVED_BY_OTHER_CALLS"],
+  });
 });

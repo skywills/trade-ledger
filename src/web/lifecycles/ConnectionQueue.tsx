@@ -95,6 +95,15 @@ function UnderlyingConnections({
                   )
                   .join(" / ")}
               </p>
+              {group.suggestions.some((s) =>
+                s.reasons.includes("SHARES_RESERVED_BY_OTHER_CALLS"),
+              ) && (
+                <p className="muted">
+                  Still unconnected: other confirmed calls reserve the available
+                  shares at this call’s opening. Keep these trades separate, or
+                  review the existing connections.
+                </p>
+              )}
               {!group.canReviewWhole && (
                 <p className="muted">
                   Some fills already have a decision. Use individual review for

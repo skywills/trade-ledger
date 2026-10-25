@@ -68,8 +68,11 @@ export function ConnectionReview({
       )}
       {!group.candidateIds.length && (
         <p>
-          Choose individual source quantities in Advanced adjustments; these
-          fills do not share one eligible share lifecycle.
+          {group.suggestions.some((s) =>
+            s.reasons.includes("SHARES_RESERVED_BY_OTHER_CALLS"),
+          )
+            ? "Still unconnected: other confirmed calls reserve the available shares at this call’s opening. Keep these trades separate, or review the existing connections."
+            : "Choose individual source quantities in Advanced adjustments; these fills do not share one eligible share lifecycle."}
         </p>
       )}
       <details>

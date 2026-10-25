@@ -99,6 +99,8 @@ export function commonConnectionTargets(groups: ConnectionGroup[]): string[] {
   );
 }
 
+export class ConnectionSelectionError extends Error {}
+
 export interface BatchItem {
   group: ConnectionGroup;
   status: "pending" | "saved" | "complete";
@@ -292,6 +294,32 @@ export async function runConnectionBatch(
         throw new Error(
           "The selected trades changed. Close this review and review the latest connections.",
         );
+      // Check combined coverage before the first save: individual suggestions
+      // can compete for the same shares even when each is eligible on its own.
+      if (!batch.separate && batch.items.length > 1 && index === 0) {
+        onProgress("Checking available shares for all selected connections…");
+        const selection = await io.preview(
+          batchProposal(
+            batch.items.map((i) => i.group),
+            batch.target,
+            false,
+          ),
+          fresh,
+        );
+        if (
+          selection.buildId !== fresh.buildId ||
+          selection.watermark !== fresh.watermark
+        )
+          throw new Error(
+            "Your journal changed. Close this review and review the latest connections.",
+          );
+        if (!selection.valid)
+          throw new ConnectionSelectionError(
+            selection.blockingConnection
+              ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. No decisions were saved. Close this review and include it in your selection.`
+              : "The selected calls cannot all be connected with the available shares. No decisions were saved. Close this review and select fewer connections, or review them individually.",
+          );
+      }
       const preview = await io.preview(proposal, fresh);
       if (!preview.valid)
         throw new Error(

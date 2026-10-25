@@ -112,6 +112,8 @@ export function validateLifecycleDecision(
     );
     if (
       !suggestion ||
+      (p.candidateLifecycleIds.length === 0 &&
+        suggestion.candidateLifecycleIds.length > 0) ||
       p.candidateLifecycleIds.some(
         (id) => !suggestion.candidateLifecycleIds.includes(id),
       )
