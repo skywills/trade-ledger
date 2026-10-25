@@ -39,7 +39,15 @@ export function ReviewPage() {
         buildId={remote.data?.buildId ?? null}
         stale={remote.data?.stale ?? false}
       />
-      {currentConnections && <ConnectionQueue data={currentConnections} />}
+      {currentConnections && (
+        <ConnectionQueue
+          data={currentConnections}
+          onChanged={() => {
+            connections.reload();
+            remote.reload();
+          }}
+        />
+      )}
       {remote.status === "loading" ? (
         <Loading label="Loading review items…" />
       ) : remote.status === "error" ? (

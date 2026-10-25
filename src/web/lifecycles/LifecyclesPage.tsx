@@ -39,7 +39,7 @@ export function LifecyclesPage() {
           <BuildAction onBuilt={remote.reload} />
         </div>
       )}
-      <ConnectionQueue data={data} />
+      <ConnectionQueue data={data} onChanged={remote.reload} />
       {projection && (
         <>
           <TableScroll label="Trade lifecycles">
