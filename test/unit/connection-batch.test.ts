@@ -11,9 +11,19 @@ import {
 } from "../../src/web/lifecycles/connection-batch.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
 
-function setup(overlapping = false, sameContract = false) {
-  const { ledger, projection } = fixture([
-    ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+function setup(overlapping = false, sameContract = false, third = false) {
+  const rows: Parameters<typeof fixture>[0] = [
+    [
+      "shares",
+      execution(
+        "shares",
+        stock,
+        third ? "200" : "100",
+        third ? "-20000" : "-10000",
+        1,
+        "open",
+      ),
+    ],
     [
       "late",
       execution(
@@ -30,7 +40,20 @@ function setup(overlapping = false, sameContract = false) {
       "early",
       execution("early-close", call, "1", "-30", overlapping ? 4 : 3, "close"),
     ],
-  ]);
+  ];
+  if (third)
+    rows.push([
+      "third",
+      execution(
+        "third",
+        { ...call, key: "third", conid: "5" },
+        "-1",
+        "70",
+        5,
+        "open",
+      ),
+    ]);
+  const { ledger, projection } = fixture(rows);
   const decisions: Decision[] = [];
   let built = 0;
   const data = () => ({
@@ -222,6 +245,28 @@ it("does not abort when equivalent assignments arrive in a different order", asy
   const batch = f.batch();
   await runConnectionBatch(batch, f.io);
   expect(batch.items.every((i) => i.status === "complete")).toBe(true);
+});
+
+it("re-runs combined coverage for all remaining items after a partial-save retry", async () => {
+  const f = setup(false, false, true);
+  const batch = f.batch();
+  f.failRebuild();
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow("Build failed");
+  expect(batch.items.map((i) => i.status)).toEqual([
+    "saved",
+    "pending",
+    "pending",
+  ]);
+  const preview = f.io.preview;
+  const assignmentCounts: number[] = [];
+  f.io.preview = async (proposal, data) => {
+    assignmentCounts.push(proposal.payload.assignments.length);
+    return preview(proposal, data);
+  };
+  await runConnectionBatch(batch, f.io);
+  expect(assignmentCounts[0]).toBe(2);
+  expect(batch.items.every((i) => i.status === "complete")).toBe(true);
+  expect(f.decisions).toHaveLength(3);
 });
 
 it("groups contracts by underlying and keeps oldest first regardless of input selection", () => {

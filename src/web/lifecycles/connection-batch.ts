@@ -327,13 +327,21 @@ export async function runConnectionBatch(
         throw new Error(
           "The selected trades changed. Close this review and review the latest connections.",
         );
-      // Check combined coverage before the first save: individual suggestions
+      // Check combined coverage before any fresh save: individual suggestions
       // can compete for the same shares even when each is eligible on its own.
-      if (!batch.separate && batch.items.length > 1 && index === 0) {
+      // Repeat this for all non-complete items on every fresh-preview attempt
+      // so a retry cannot save one remaining item before a later one fails.
+      const remaining = batch.items.filter((i) => i.status !== "complete");
+      const firstFresh = remaining.find((i) => !i.request);
+      if (
+        !batch.separate &&
+        remaining.length > 1 &&
+        item === firstFresh
+      ) {
         onProgress("Checking available shares for all selected connections…");
         const selection = await io.preview(
           batchProposal(
-            batch.items.map((i) => i.group),
+            remaining.map((i) => i.group),
             batch.target,
             false,
           ),
