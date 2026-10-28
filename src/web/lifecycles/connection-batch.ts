@@ -4,7 +4,12 @@ import {
   type ProposalPreview,
   ProposalPreviewSchema,
 } from "../../shared/proposal-preview.js";
-import { DecisionResponseSchema, request, requestJson } from "../api.js";
+import {
+  DecisionResponseSchema,
+  type RequestOptions,
+  request,
+  requestJson,
+} from "../api.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
 import {
   type ConnectionGroup,
@@ -23,6 +28,34 @@ type SaveRequest = {
   kind: Proposal["kind"];
   payload: Proposal["payload"];
 };
+
+function assignmentKey(
+  assignment: Proposal["payload"]["assignments"][number],
+): string {
+  return [
+    assignment.allocation.strategyId,
+    assignment.allocation.executionKey,
+    assignment.allocation.role,
+    assignment.lifecycleId,
+  ].join("\u0000");
+}
+
+export function canonicalProposalPayload(payload: Proposal["payload"]): string {
+  return JSON.stringify({
+    requireCallCoverage: payload.requireCallCoverage,
+    assignments: [...payload.assignments]
+      .sort((a, b) => assignmentKey(a).localeCompare(assignmentKey(b)))
+      .map((assignment) => ({
+        allocation: {
+          strategyId: assignment.allocation.strategyId,
+          executionKey: assignment.allocation.executionKey,
+          role: assignment.allocation.role,
+        },
+        lifecycleId: assignment.lifecycleId,
+        quantity: assignment.quantity,
+      })),
+  });
+}
 
 export interface ConnectionSection {
   key: string;
@@ -149,15 +182,31 @@ export function createConnectionBatch(
 }
 
 export interface BatchIO {
-  load(): Promise<ConnectionData>;
-  preview(proposal: Proposal, data: ConnectionData): Promise<ProposalPreview>;
-  save(payload: SaveRequest): Promise<Receipt>;
-  rebuild(): Promise<void>;
+  load(signal?: AbortSignal): Promise<ConnectionData>;
+  preview(
+    proposal: Proposal,
+    data: ConnectionData,
+    signal?: AbortSignal,
+  ): Promise<ProposalPreview>;
+  save(payload: SaveRequest, signal?: AbortSignal): Promise<Receipt>;
+  rebuild(signal?: AbortSignal): Promise<void>;
 }
 
+const CONNECTION_REQUEST_TIMEOUT_MS = 30_000;
+
+const connectionRequestOptions = (signal?: AbortSignal): RequestOptions => ({
+  ...(signal ? { signal } : {}),
+  timeoutMs: CONNECTION_REQUEST_TIMEOUT_MS,
+});
+
 const batchIO: BatchIO = {
-  load: () => request("/api/lifecycles", LifecycleListSchema),
-  preview: (proposal, data) =>
+  load: (signal) =>
+    request(
+      "/api/lifecycles",
+      LifecycleListSchema,
+      connectionRequestOptions(signal),
+    ),
+  preview: (proposal, data, signal) =>
     requestJson(
       "/api/lifecycles/connection-preview",
       ProposalPreviewSchema,
@@ -167,17 +216,24 @@ const batchIO: BatchIO = {
         expectedBuildId: data.buildId,
         expectedWatermark: data.watermark,
       },
+      connectionRequestOptions(signal),
     ),
-  save: async (payload) =>
+  save: async (payload, signal) =>
     (
-      await requestJson("/api/decisions", DecisionResponseSchema, "POST", {
-        ...payload,
-        sources: [],
-        strategyIds: [],
-        supersedesId: null,
-      })
+      await requestJson(
+        "/api/decisions",
+        DecisionResponseSchema,
+        "POST",
+        {
+          ...payload,
+          sources: [],
+          strategyIds: [],
+          supersedesId: null,
+        },
+        connectionRequestOptions(signal),
+      )
     ).decision,
-  rebuild: () => rebuildLifecycles(),
+  rebuild: (signal) => rebuildLifecycles(signal),
 };
 
 function assertFresh(data: ConnectionData) {
@@ -258,7 +314,7 @@ export async function runConnectionBatch(
     const label = `${step.length > 1 ? `${index + 1}–${index + step.length}` : index + 1} of ${batch.items.length}`;
     if (!item.request) {
       onProgress(`Checking connection ${label}…`);
-      const fresh = await io.load();
+      const fresh = await io.load(signal);
       assertFresh(fresh);
       if (
         fresh.buildId !== batch.data.buildId ||
@@ -290,21 +346,29 @@ export async function runConnectionBatch(
         batch.target,
         batch.separate,
       );
-      if (JSON.stringify(proposal.payload) !== JSON.stringify(original.payload))
+      if (
+        canonicalProposalPayload(proposal.payload) !==
+        canonicalProposalPayload(original.payload)
+      )
         throw new Error(
           "The selected trades changed. Close this review and review the latest connections.",
         );
-      // Check combined coverage before the first save: individual suggestions
+      // Check combined coverage before any fresh save: individual suggestions
       // can compete for the same shares even when each is eligible on its own.
-      if (!batch.separate && batch.items.length > 1 && index === 0) {
+      // Repeat this for all non-complete items on every fresh-preview attempt
+      // so a retry cannot save one remaining item before a later one fails.
+      const remaining = batch.items.filter((i) => i.status !== "complete");
+      const firstFresh = remaining.find((i) => !i.request);
+      if (!batch.separate && remaining.length > 1 && item === firstFresh) {
         onProgress("Checking available shares for all selected connections…");
         const selection = await io.preview(
           batchProposal(
-            batch.items.map((i) => i.group),
+            remaining.map((i) => i.group),
             batch.target,
             false,
           ),
           fresh,
+          signal,
         );
         if (
           selection.buildId !== fresh.buildId ||
@@ -313,14 +377,18 @@ export async function runConnectionBatch(
           throw new Error(
             "Your journal changed. Close this review and review the latest connections.",
           );
-        if (!selection.valid)
+        if (!selection.valid) {
+          const savedNote = batch.items.some((i) => i.receipt !== undefined)
+            ? "No further decisions were saved."
+            : "No decisions were saved.";
           throw new ConnectionSelectionError(
             selection.blockingConnection
-              ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. No decisions were saved. Close this review and include it in your selection.`
-              : "The selected calls cannot all be connected with the available shares. No decisions were saved. Close this review and select fewer connections, or review them individually.",
+              ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. ${savedNote} Close this review and include it in your selection.`
+              : `The selected calls cannot all be connected with the available shares. ${savedNote} Close this review and select fewer connections, or review them individually.`,
           );
+        }
       }
-      const preview = await io.preview(proposal, fresh);
+      const preview = await io.preview(proposal, fresh, signal);
       if (!preview.valid)
         throw new Error(
           preview.blockingConnection
@@ -347,7 +415,7 @@ export async function runConnectionBatch(
     if (!item.receipt) {
       signal?.throwIfAborted();
       onProgress(`Saving connection ${label}…`);
-      item.receipt = await io.save(item.request);
+      item.receipt = await io.save(item.request, signal);
       for (const member of step) {
         member.receipt = item.receipt;
         member.status = "saved";
@@ -355,8 +423,8 @@ export async function runConnectionBatch(
     }
     // A saved decision must be rebuilt even if the user navigates away.
     onProgress(`Updating journal for connection ${label}…`);
-    await io.rebuild();
-    const fresh = await io.load();
+    await io.rebuild(signal);
+    const fresh = await io.load(signal);
     assertFresh(fresh);
     if (
       fresh.ledgerId !== batch.data.ledgerId ||

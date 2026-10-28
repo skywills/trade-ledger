@@ -93,6 +93,7 @@ export const LifecycleDetailSchema = z.object({
 });
 export type LifecycleDetailData = z.infer<typeof LifecycleDetailSchema>;
 export type SaveDecision = (kind: string, payload: unknown) => Promise<void>;
+const JOB_REQUEST_TIMEOUT_MS = 30_000;
 export async function rebuildLifecycles(signal?: AbortSignal) {
   // A confirmed mutation must still schedule its rebuild after navigation.
   // The signal controls observation of the resulting job only.
@@ -101,6 +102,7 @@ export async function rebuildLifecycles(signal?: AbortSignal) {
     BuildResponseSchema,
     "POST",
     { mode: "projection" },
+    { timeoutMs: JOB_REQUEST_TIMEOUT_MS },
   );
   const job = await pollJob(jobId, undefined, signal ? { signal } : {});
   signal?.throwIfAborted();

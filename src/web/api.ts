@@ -253,18 +253,44 @@ export function errorFrom(response: Response, body: unknown): ApiError {
   return new ApiError(code, message, response.status, record.issues);
 }
 
+export interface RequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
 /** Validated JSON request. Never converts strings to numbers. */
 export async function request<T>(
   path: string,
   schema: z.ZodType<T>,
-  options: RequestInit = {},
+  options: RequestOptions = {},
 ): Promise<T> {
-  const headers = new Headers(options.headers);
+  const { timeoutMs, signal: callerSignal, ...init } = options;
+  const timeout =
+    timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+  const signal =
+    timeout === undefined
+      ? callerSignal
+      : callerSignal
+        ? AbortSignal.any([callerSignal, timeout])
+        : timeout;
+  const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
-  if (typeof options.body === "string" && !headers.has("content-type")) {
+  if (typeof init.body === "string" && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(path, { ...options, headers });
+  const fetchOptions: RequestInit = { ...init, headers };
+  if (signal !== undefined) fetchOptions.signal = signal;
+  let response: Response;
+  try {
+    response = await fetch(path, fetchOptions);
+  } catch (error) {
+    if (timeout?.aborted)
+      throw new ApiError(
+        "REQUEST_TIMEOUT",
+        "The request timed out. Please retry.",
+        0,
+      );
+    throw error;
+  }
   const body = await readBody(response);
   if (!response.ok) throw errorFrom(response, body);
   const parsed = schema.safeParse(body);
@@ -284,8 +310,10 @@ export function requestJson<T>(
   schema: z.ZodType<T>,
   method: string,
   payload?: unknown,
+  options: RequestOptions = {},
 ): Promise<T> {
   return request(path, schema, {
+    ...options,
     method,
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
   });
@@ -392,6 +420,7 @@ export function useJobSignal(resource?: string): () => AbortSignal {
 }
 
 /** Observe a persisted job until terminal or aborted; abort never cancels the job. */
+const JOB_REQUEST_TIMEOUT_MS = 30_000;
 export async function pollJob(
   jobId: string,
   onProgress?: (job: Job) => void,
@@ -403,7 +432,10 @@ export async function pollJob(
     const { job } = await request(
       `/api/jobs/${encodeURIComponent(jobId)}`,
       JobEnvelopeSchema,
-      signal ? { signal } : {},
+      {
+        ...(signal ? { signal } : {}),
+        timeoutMs: JOB_REQUEST_TIMEOUT_MS,
+      },
     );
     signal?.throwIfAborted();
     onProgress?.(job);

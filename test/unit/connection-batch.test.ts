@@ -4,15 +4,26 @@ import { validateLifecycleDecision } from "../../src/server/lifecycles/validate-
 import type { Decision } from "../../src/shared/domain.js";
 import {
   type BatchIO,
+  canonicalProposalPayload,
   connectionSections,
   createConnectionBatch,
   runConnectionBatch,
 } from "../../src/web/lifecycles/connection-batch.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
 
-function setup(overlapping = false, sameContract = false) {
-  const { ledger, projection } = fixture([
-    ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+function setup(overlapping = false, sameContract = false, third = false) {
+  const rows: Parameters<typeof fixture>[0] = [
+    [
+      "shares",
+      execution(
+        "shares",
+        stock,
+        third ? "200" : "100",
+        third ? "-20000" : "-10000",
+        1,
+        "open",
+      ),
+    ],
     [
       "late",
       execution(
@@ -29,7 +40,20 @@ function setup(overlapping = false, sameContract = false) {
       "early",
       execution("early-close", call, "1", "-30", overlapping ? 4 : 3, "close"),
     ],
-  ]);
+  ];
+  if (third)
+    rows.push([
+      "third",
+      execution(
+        "third",
+        { ...call, key: "third", conid: "5" },
+        "-1",
+        "70",
+        5,
+        "open",
+      ),
+    ]);
+  const { ledger, projection } = fixture(rows);
   const decisions: Decision[] = [];
   let built = 0;
   const data = () => ({
@@ -128,6 +152,141 @@ function setup(overlapping = false, sameContract = false) {
     },
   };
 }
+
+it("compares proposals canonically by assignment identity and quantity", () => {
+  const assignment = (executionKey: string) => ({
+    allocation: {
+      strategyId: "calls",
+      executionKey,
+      role: "open" as const,
+    },
+    lifecycleId: "shares",
+    quantity: "-1",
+  });
+  const a = assignment("a");
+  const b = assignment("b");
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, b],
+    }),
+  ).toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [b, a],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, b],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, { ...b, quantity: "-2" }],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [{ ...a, lifecycleId: "other" }],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: false,
+      assignments: [a],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [
+        {
+          ...a,
+          allocation: { ...a.allocation, role: "close" as const },
+        },
+      ],
+    }),
+  );
+});
+
+it("does not abort when equivalent assignments arrive in a different order", async () => {
+  const f = setup();
+  const load = f.io.load;
+  f.io.load = async () => {
+    const current = await load();
+    return current.lifecycles === null
+      ? current
+      : {
+          ...current,
+          lifecycles: {
+            ...current.lifecycles,
+            members: [...current.lifecycles.members].reverse(),
+          },
+        };
+  };
+  const batch = f.batch();
+  await runConnectionBatch(batch, f.io);
+  expect(batch.items.every((i) => i.status === "complete")).toBe(true);
+});
+
+it("re-runs combined coverage for all remaining items after a partial-save retry", async () => {
+  const f = setup(false, false, true);
+  const batch = f.batch();
+  f.failRebuild();
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow("Build failed");
+  expect(batch.items.map((i) => i.status)).toEqual([
+    "saved",
+    "pending",
+    "pending",
+  ]);
+  const preview = f.io.preview;
+  const assignmentCounts: number[] = [];
+  f.io.preview = async (proposal, data) => {
+    assignmentCounts.push(proposal.payload.assignments.length);
+    return preview(proposal, data);
+  };
+  await runConnectionBatch(batch, f.io);
+  expect(assignmentCounts[0]).toBe(2);
+  expect(batch.items.every((i) => i.status === "complete")).toBe(true);
+  expect(f.decisions).toHaveLength(3);
+});
+
+it("reports partial saves and stops before another save when remaining coverage fails on retry", async () => {
+  const f = setup(false, false, true);
+  const batch = f.batch();
+  f.failRebuild();
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow("Build failed");
+  const preview = f.io.preview;
+  f.io.preview = async (proposal, data) => {
+    const result = await preview(proposal, data);
+    return proposal.payload.assignments.length === 2
+      ? { ...result, valid: false }
+      : result;
+  };
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow(
+    "No further decisions were saved",
+  );
+  expect(f.decisions).toHaveLength(1);
+  expect(f.savedRequests).toHaveLength(1);
+});
 
 it("groups contracts by underlying and keeps oldest first regardless of input selection", () => {
   const f = setup();
