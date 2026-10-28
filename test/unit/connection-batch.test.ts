@@ -4,6 +4,7 @@ import { validateLifecycleDecision } from "../../src/server/lifecycles/validate-
 import type { Decision } from "../../src/shared/domain.js";
 import {
   type BatchIO,
+  canonicalProposalPayload,
   connectionSections,
   createConnectionBatch,
   runConnectionBatch,
@@ -128,6 +129,100 @@ function setup(overlapping = false, sameContract = false) {
     },
   };
 }
+
+it("compares proposals canonically by assignment identity and quantity", () => {
+  const assignment = (executionKey: string) => ({
+    allocation: {
+      strategyId: "calls",
+      executionKey,
+      role: "open" as const,
+    },
+    lifecycleId: "shares",
+    quantity: "-1",
+  });
+  const a = assignment("a");
+  const b = assignment("b");
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, b],
+    }),
+  ).toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [b, a],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, b],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a, { ...b, quantity: "-2" }],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [{ ...a, lifecycleId: "other" }],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: false,
+      assignments: [a],
+    }),
+  );
+  expect(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [a],
+    }),
+  ).not.toBe(
+    canonicalProposalPayload({
+      requireCallCoverage: true,
+      assignments: [
+        {
+          ...a,
+          allocation: { ...a.allocation, role: "close" as const },
+        },
+      ],
+    }),
+  );
+});
+
+it("does not abort when equivalent assignments arrive in a different order", async () => {
+  const f = setup();
+  const load = f.io.load;
+  f.io.load = async () => {
+    const current = await load();
+    return current.lifecycles === null
+      ? current
+      : {
+          ...current,
+          lifecycles: {
+            ...current.lifecycles,
+            members: [...current.lifecycles.members].reverse(),
+          },
+        };
+  };
+  const batch = f.batch();
+  await runConnectionBatch(batch, f.io);
+  expect(batch.items.every((i) => i.status === "complete")).toBe(true);
+});
 
 it("groups contracts by underlying and keeps oldest first regardless of input selection", () => {
   const f = setup();

@@ -24,6 +24,36 @@ type SaveRequest = {
   payload: Proposal["payload"];
 };
 
+function assignmentKey(
+  assignment: Proposal["payload"]["assignments"][number],
+): string {
+  return [
+    assignment.allocation.strategyId,
+    assignment.allocation.executionKey,
+    assignment.allocation.role,
+    assignment.lifecycleId,
+  ].join("\u0000");
+}
+
+export function canonicalProposalPayload(
+  payload: Proposal["payload"],
+): string {
+  return JSON.stringify({
+    requireCallCoverage: payload.requireCallCoverage,
+    assignments: [...payload.assignments]
+      .sort((a, b) => assignmentKey(a).localeCompare(assignmentKey(b)))
+      .map((assignment) => ({
+        allocation: {
+          strategyId: assignment.allocation.strategyId,
+          executionKey: assignment.allocation.executionKey,
+          role: assignment.allocation.role,
+        },
+        lifecycleId: assignment.lifecycleId,
+        quantity: assignment.quantity,
+      })),
+  });
+}
+
 export interface ConnectionSection {
   key: string;
   underlying: string;
@@ -290,7 +320,10 @@ export async function runConnectionBatch(
         batch.target,
         batch.separate,
       );
-      if (JSON.stringify(proposal.payload) !== JSON.stringify(original.payload))
+      if (
+        canonicalProposalPayload(proposal.payload) !==
+        canonicalProposalPayload(original.payload)
+      )
         throw new Error(
           "The selected trades changed. Close this review and review the latest connections.",
         );
