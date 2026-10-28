@@ -4,7 +4,12 @@ import {
   type ProposalPreview,
   ProposalPreviewSchema,
 } from "../../shared/proposal-preview.js";
-import { DecisionResponseSchema, request, requestJson } from "../api.js";
+import {
+  DecisionResponseSchema,
+  request,
+  requestJson,
+  type RequestOptions,
+} from "../api.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
 import {
   type ConnectionGroup,
@@ -179,15 +184,31 @@ export function createConnectionBatch(
 }
 
 export interface BatchIO {
-  load(): Promise<ConnectionData>;
-  preview(proposal: Proposal, data: ConnectionData): Promise<ProposalPreview>;
-  save(payload: SaveRequest): Promise<Receipt>;
-  rebuild(): Promise<void>;
+  load(signal?: AbortSignal): Promise<ConnectionData>;
+  preview(
+    proposal: Proposal,
+    data: ConnectionData,
+    signal?: AbortSignal,
+  ): Promise<ProposalPreview>;
+  save(payload: SaveRequest, signal?: AbortSignal): Promise<Receipt>;
+  rebuild(signal?: AbortSignal): Promise<void>;
 }
 
+const CONNECTION_REQUEST_TIMEOUT_MS = 30_000;
+
+const connectionRequestOptions = (signal?: AbortSignal): RequestOptions => ({
+  ...(signal ? { signal } : {}),
+  timeoutMs: CONNECTION_REQUEST_TIMEOUT_MS,
+});
+
 const batchIO: BatchIO = {
-  load: () => request("/api/lifecycles", LifecycleListSchema),
-  preview: (proposal, data) =>
+  load: (signal) =>
+    request(
+      "/api/lifecycles",
+      LifecycleListSchema,
+      connectionRequestOptions(signal),
+    ),
+  preview: (proposal, data, signal) =>
     requestJson(
       "/api/lifecycles/connection-preview",
       ProposalPreviewSchema,
@@ -197,17 +218,24 @@ const batchIO: BatchIO = {
         expectedBuildId: data.buildId,
         expectedWatermark: data.watermark,
       },
+      connectionRequestOptions(signal),
     ),
-  save: async (payload) =>
+  save: async (payload, signal) =>
     (
-      await requestJson("/api/decisions", DecisionResponseSchema, "POST", {
-        ...payload,
-        sources: [],
-        strategyIds: [],
-        supersedesId: null,
-      })
+      await requestJson(
+        "/api/decisions",
+        DecisionResponseSchema,
+        "POST",
+        {
+          ...payload,
+          sources: [],
+          strategyIds: [],
+          supersedesId: null,
+        },
+        connectionRequestOptions(signal),
+      )
     ).decision,
-  rebuild: () => rebuildLifecycles(),
+  rebuild: (signal) => rebuildLifecycles(signal),
 };
 
 function assertFresh(data: ConnectionData) {
@@ -288,7 +316,7 @@ export async function runConnectionBatch(
     const label = `${step.length > 1 ? `${index + 1}–${index + step.length}` : index + 1} of ${batch.items.length}`;
     if (!item.request) {
       onProgress(`Checking connection ${label}…`);
-      const fresh = await io.load();
+      const fresh = await io.load(signal);
       assertFresh(fresh);
       if (
         fresh.buildId !== batch.data.buildId ||
@@ -346,6 +374,7 @@ export async function runConnectionBatch(
             false,
           ),
           fresh,
+          signal,
         );
         if (
           selection.buildId !== fresh.buildId ||
@@ -361,7 +390,7 @@ export async function runConnectionBatch(
               : "The selected calls cannot all be connected with the available shares. No decisions were saved. Close this review and select fewer connections, or review them individually.",
           );
       }
-      const preview = await io.preview(proposal, fresh);
+      const preview = await io.preview(proposal, fresh, signal);
       if (!preview.valid)
         throw new Error(
           preview.blockingConnection
@@ -388,7 +417,7 @@ export async function runConnectionBatch(
     if (!item.receipt) {
       signal?.throwIfAborted();
       onProgress(`Saving connection ${label}…`);
-      item.receipt = await io.save(item.request);
+      item.receipt = await io.save(item.request, signal);
       for (const member of step) {
         member.receipt = item.receipt;
         member.status = "saved";
@@ -396,8 +425,8 @@ export async function runConnectionBatch(
     }
     // A saved decision must be rebuilt even if the user navigates away.
     onProgress(`Updating journal for connection ${label}…`);
-    await io.rebuild();
-    const fresh = await io.load();
+    await io.rebuild(signal);
+    const fresh = await io.load(signal);
     assertFresh(fresh);
     if (
       fresh.ledgerId !== batch.data.ledgerId ||
