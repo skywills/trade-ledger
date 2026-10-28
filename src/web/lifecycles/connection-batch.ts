@@ -6,9 +6,9 @@ import {
 } from "../../shared/proposal-preview.js";
 import {
   DecisionResponseSchema,
+  type RequestOptions,
   request,
   requestJson,
-  type RequestOptions,
 } from "../api.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
 import {
@@ -40,9 +40,7 @@ function assignmentKey(
   ].join("\u0000");
 }
 
-export function canonicalProposalPayload(
-  payload: Proposal["payload"],
-): string {
+export function canonicalProposalPayload(payload: Proposal["payload"]): string {
   return JSON.stringify({
     requireCallCoverage: payload.requireCallCoverage,
     assignments: [...payload.assignments]
@@ -361,11 +359,7 @@ export async function runConnectionBatch(
       // so a retry cannot save one remaining item before a later one fails.
       const remaining = batch.items.filter((i) => i.status !== "complete");
       const firstFresh = remaining.find((i) => !i.request);
-      if (
-        !batch.separate &&
-        remaining.length > 1 &&
-        item === firstFresh
-      ) {
+      if (!batch.separate && remaining.length > 1 && item === firstFresh) {
         onProgress("Checking available shares for all selected connections…");
         const selection = await io.preview(
           batchProposal(
