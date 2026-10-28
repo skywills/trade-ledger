@@ -29,6 +29,10 @@ source rows. Settlement review findings link to affected lifecycles; see
 [SPXW Flex evidence fields](docs/SPXW-FLEX.md) for optional Statement of Funds
 settlement support, required cash currency, and conservative matching rules.
 
+Basis-reconciled broker P&L is disclosed separately from estimated P&L: matched
+opening costs reconcile to the broker total, so those lifecycles are not counted
+in the estimated warning tier.
+
 ## Reviewing covered-call connections
 
 **Review** and **Lifecycles** group related call fills into one connection review.

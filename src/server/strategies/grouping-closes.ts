@@ -116,8 +116,11 @@ export function matchCloses(context: GroupingContext): Execution[] {
             quantity: part.quantity,
             netCash: cash.amount,
             ...(part.lots === undefined ? {} : { basisLots: part.lots }),
-            // Distinguish basis-supported attribution from the proportional
-            // fallback. Both preserve the broker's execution total.
+            // Basis-reconciled amounts are intentionally reported in the
+            // separate "basis-reconciled" tier, not the estimated-P&L warning
+            // tier. Distinguish basis-supported attribution from the
+            // proportional fallback; both preserve the broker's execution
+            // total.
             brokerPnl:
               basisAllocation.length === 1
                 ? brokerPnl
