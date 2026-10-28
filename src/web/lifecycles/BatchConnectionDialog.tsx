@@ -44,6 +44,8 @@ export function BatchConnectionDialog({
   const underlying = groups[0]?.underlying ?? "";
   const complete =
     batch.current?.items.filter((i) => i.status === "complete").length ?? 0;
+  const saved =
+    batch.current?.items.some((item) => item.receipt !== undefined) ?? false;
   const done = complete === groups.length;
   const executions = new Map(data.connectionExecutions.map((e) => [e.key, e]));
   const timeline = connectionTimeline(
@@ -61,8 +63,14 @@ export function BatchConnectionDialog({
     };
   }, []);
 
+  function hasReceipt() {
+    return (
+      batch.current?.items.some((item) => item.receipt !== undefined) ?? false
+    );
+  }
+
   function dismiss() {
-    if (inFlight.current) return;
+    if (inFlight.current && !hasReceipt()) return;
     dialog.current?.close();
     onDismiss();
   }
@@ -121,7 +129,7 @@ export function BatchConnectionDialog({
         <button
           type="button"
           className="secondary"
-          disabled={busy}
+          disabled={busy && !saved}
           onClick={dismiss}
         >
           Close review
@@ -247,6 +255,12 @@ export function BatchConnectionDialog({
             {complete} of {groups.length} connections resolved.
           </p>
           {busy && <p>{progress}</p>}
+          {busy && saved && (
+            <p>
+              A decision was saved. Closing stops watching; the journal rebuild
+              continues in the background.
+            </p>
+          )}
           {done && <p>The trade history is updated.</p>}
         </div>
       </div>
@@ -254,7 +268,7 @@ export function BatchConnectionDialog({
         <button
           type="button"
           className="secondary"
-          disabled={busy}
+          disabled={busy && !saved}
           onClick={dismiss}
         >
           {done ? "Done" : "Cancel"}

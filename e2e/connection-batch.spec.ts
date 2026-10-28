@@ -181,3 +181,41 @@ test("Advanced adjustments can reject a blocked connection without changing its 
   expect(after.lifecycles.suggestions.some((s: { callOpening: { executionKey: string } }) => s.callOpening.executionKey === "txn:A:exec:ADVANCED-late")).toBe(false);
   expect(after.lifecycles.members).toEqual(blocked.lifecycles.members);
 });
+
+test("closing after a confirmed save leaves the decision saved and the background rebuild running", async ({ page, request, baseURL }) => {
+  const before = await importConnections(request, baseURL, "CLOSE");
+  await page.goto("/lifecycles");
+  const section = page.getByRole("region", { name: "CLOSE connection reviews", exact: true });
+  await section.getByRole("checkbox", { name: "Select all CLOSE connections", exact: true }).check();
+  await section.getByRole("button", { name: "Connect selected", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect CLOSE connections" });
+
+  let releaseBuild = () => {};
+  const buildGate = new Promise<void>((resolve) => {
+    releaseBuild = resolve;
+  });
+  await page.route("**/api/builds", async (route) => {
+    if (route.request().method() === "POST") await buildGate;
+    await route.fallback();
+  });
+
+  await dialog.getByRole("button", { name: "Confirm connections", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("Updating journal");
+  await expect(dialog.getByRole("button", { name: "Close review", exact: true })).toBeEnabled();
+  await expect(dialog).toContainText("journal rebuild continues in the background");
+
+  await dialog.getByRole("button", { name: "Close review", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  releaseBuild();
+
+  await expect.poll(async () => {
+    const after = await (await request.get("/api/lifecycles")).json();
+    return {
+      watermark: after.watermark,
+      suggestions: after.lifecycles.suggestions.length,
+    };
+  }).toEqual({
+    watermark: before.watermark + 1,
+    suggestions: before.lifecycles.suggestions.length - 1,
+  });
+});
