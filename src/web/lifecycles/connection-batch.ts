@@ -377,12 +377,16 @@ export async function runConnectionBatch(
           throw new Error(
             "Your journal changed. Close this review and review the latest connections.",
           );
-        if (!selection.valid)
+        if (!selection.valid) {
+          const savedNote = batch.items.some((i) => i.receipt !== undefined)
+            ? "No further decisions were saved."
+            : "No decisions were saved.";
           throw new ConnectionSelectionError(
             selection.blockingConnection
-              ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. No decisions were saved. Close this review and include it in your selection.`
-              : "The selected calls cannot all be connected with the available shares. No decisions were saved. Close this review and select fewer connections, or review them individually.",
+              ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. ${savedNote} Close this review and include it in your selection.`
+              : `The selected calls cannot all be connected with the available shares. ${savedNote} Close this review and select fewer connections, or review them individually.`,
           );
+        }
       }
       const preview = await io.preview(proposal, fresh, signal);
       if (!preview.valid)

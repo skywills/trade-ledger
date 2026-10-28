@@ -269,6 +269,25 @@ it("re-runs combined coverage for all remaining items after a partial-save retry
   expect(f.decisions).toHaveLength(3);
 });
 
+it("reports partial saves and stops before another save when remaining coverage fails on retry", async () => {
+  const f = setup(false, false, true);
+  const batch = f.batch();
+  f.failRebuild();
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow("Build failed");
+  const preview = f.io.preview;
+  f.io.preview = async (proposal, data) => {
+    const result = await preview(proposal, data);
+    return proposal.payload.assignments.length === 2
+      ? { ...result, valid: false }
+      : result;
+  };
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow(
+    "No further decisions were saved",
+  );
+  expect(f.decisions).toHaveLength(1);
+  expect(f.savedRequests).toHaveLength(1);
+});
+
 it("groups contracts by underlying and keeps oldest first regardless of input selection", () => {
   const f = setup();
   expect(f.section.underlying).toBe("XYZ");

@@ -46,6 +46,11 @@ export function BatchConnectionDialog({
     batch.current?.items.filter((i) => i.status === "complete").length ?? 0;
   const saved =
     batch.current?.items.some((item) => item.receipt !== undefined) ?? false;
+  const pendingSave =
+    batch.current?.items.some(
+      (item) => item.request !== undefined && item.receipt === undefined,
+    ) ?? false;
+  const canCloseWhileBusy = saved && !pendingSave;
   const done = complete === groups.length;
   const executions = new Map(data.connectionExecutions.map((e) => [e.key, e]));
   const timeline = connectionTimeline(
@@ -69,8 +74,16 @@ export function BatchConnectionDialog({
     );
   }
 
+  function hasPendingSave() {
+    return (
+      batch.current?.items.some(
+        (item) => item.request !== undefined && item.receipt === undefined,
+      ) ?? false
+    );
+  }
+
   function dismiss() {
-    if (inFlight.current && !hasReceipt()) return;
+    if (inFlight.current && (!hasReceipt() || hasPendingSave())) return;
     dialog.current?.close();
     onDismiss();
   }
@@ -129,7 +142,7 @@ export function BatchConnectionDialog({
         <button
           type="button"
           className="secondary"
-          disabled={busy && !saved}
+          disabled={busy && !canCloseWhileBusy}
           onClick={dismiss}
         >
           Close review
@@ -245,6 +258,12 @@ export function BatchConnectionDialog({
                 stopped connection without saving a decision twice.
               </p>
             )}
+            {!retryable && saved && (
+              <p>
+                Completed decisions remain saved. Close this review and review
+                the remaining connections.
+              </p>
+            )}
           </div>
         )}
         <div
@@ -255,7 +274,7 @@ export function BatchConnectionDialog({
             {complete} of {groups.length} connections resolved.
           </p>
           {busy && <p>{progress}</p>}
-          {busy && saved && (
+          {busy && canCloseWhileBusy && (
             <p>
               A decision was saved. Closing stops watching; the journal rebuild
               continues in the background.
@@ -268,7 +287,7 @@ export function BatchConnectionDialog({
         <button
           type="button"
           className="secondary"
-          disabled={busy && !saved}
+          disabled={busy && !canCloseWhileBusy}
           onClick={dismiss}
         >
           {done ? "Done" : "Cancel"}

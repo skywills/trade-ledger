@@ -219,3 +219,32 @@ test("closing after a confirmed save leaves the decision saved and the backgroun
     suggestions: before.lifecycles.suggestions.length - 1,
   });
 });
+
+test("closing stays blocked while a later save is unconfirmed", async ({ page, request, baseURL }) => {
+  await importConnections(request, baseURL, "PENDING");
+  await page.goto("/lifecycles");
+  const section = page.getByRole("region", { name: "PENDING connection reviews", exact: true });
+  await section.getByRole("checkbox", { name: "Select all PENDING connections", exact: true }).check();
+  await section.getByRole("button", { name: "Connect selected", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect PENDING connections" });
+
+  let decisions = 0;
+  let releaseSave = () => {};
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/api/decisions", async (route) => {
+    decisions++;
+    if (decisions === 2) await saveGate;
+    await route.fallback();
+  });
+
+  await dialog.getByRole("button", { name: "Confirm connections", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("Saving connection 2 of 2");
+  await expect(dialog.getByRole("button", { name: "Close review", exact: true })).toBeDisabled();
+
+  releaseSave();
+  await expect(dialog.getByRole("status")).toContainText("2 of 2 connections resolved");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+});
