@@ -9,8 +9,8 @@
   "dependencies": {
     "@fastify/multipart": "10.1.3",
     "@fastify/static": "10.1.6",
-    "@nathapp/nax-agent": "0.87.1",
-    "@nathapp/nax-ai": "0.87.1",
+    "@nathapp/nax-agent": "0.91.7",
+    "@nathapp/nax-ai": "0.91.7",
     "better-sqlite3": "13.0.3",
     "csv-parse": "7.0.3",
     "decimal.js": "10.6.0",
@@ -18,7 +18,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tar": "7.5.22",
-    "zod": "4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
@@ -27,12 +27,18 @@
     "@types/react": "19.2.9",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.1.2",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "4.1.12",
     "playwright": "1.64.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.3.4",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "glob": "14.0.3",
+    "@anthropic-ai/sandbox-runtime": {
+      "zod": "$zod"
+    }
   },
   "scripts": {
     "dev": "tsx watch src/server/main.ts",
