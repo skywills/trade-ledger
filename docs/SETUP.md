@@ -374,6 +374,37 @@ npm run test:build-smoke   # build then smoke the compiled server + SIGTERM
 `.github/workflows/trade-ledger.yml` runs the same gates on Node 22.19.0 for
 changes to the app, packaging, docs and specs. No release tooling is required.
 
+### Dependency pins and overrides
+
+Every runtime and dev dependency is pinned to an exact version, and the
+committed `package-lock.json` records the resolved tree. `npm ci` is the
+supported install command — it is what CI and the image build run. With the
+settings below, `npm audit` reports no advisories.
+
+`package.json` carries two `overrides` that keep fixed advisories out of the
+resolved tree:
+
+- `glob` → `14.0.3`. `@fastify/static` declares `glob ^13`, and the 13 line has
+  no patched release: the traversal advisory is fixed only in 14.0.2+, which also
+  brings the patched `minimatch`. This runs at runtime, not just on paper —
+  static routes are registered with `wildcard: false`, so `glob` enumerates every
+  asset in each root once per startup. `npm run test:e2e` and the compiled-server
+  smoke cover the built assets, `/`, a deep SPA route, a missing asset and an
+  unknown `/api/*` path.
+- `@anthropic-ai/sandbox-runtime` → `zod: $zod`, meaning "the app's own `zod`".
+  `@nathapp/nax-agent` pins that package, which declares `zod ^3.25`, and no zod
+  3 release is patched for the oversized-collection memory advisory. The package
+  loads only behind a lazy dynamic import for sandboxed command execution, and
+  this app has no shell tool: replacing the module with a throwing stub leaves
+  every vitest test, every browser test and the compiled-server smoke passing, and
+  its own schemas (only `z.string/object/number/enum/array` with
+  `.describe/.optional/.min/.max/.safeParse`) validate correctly under zod 4.
+
+The committed lockfile was resolved with npm 11, because npm 10 aborts with an
+internal `edgesOut` error while re-resolving `vitest` 4.1.12's optional peer set.
+npm 10 consumes the committed lockfile normally — verified with `npm ci` and
+`npm install` locally and by the image build on Node 22.19.0.
+
 
 ## Reset data or transfer model configuration
 
