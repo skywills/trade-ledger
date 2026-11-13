@@ -32,31 +32,34 @@ export function persistLifecycleProjection(
       valuations: p.valuations,
     }),
   );
+  // Statements are prepared once; preparing per row dominated persistence.
+  const insertIdentity = db.prepare(
+    "INSERT OR IGNORE INTO lifecycle_identities(id,account,opening_execution_key) VALUES (?,?,?)",
+  );
+  const insertLifecycle = db.prepare(
+    "INSERT INTO lifecycle_views(build_id,lifecycle_id,view_json) VALUES (?,?,?)",
+  );
   for (const l of p.lifecycles) {
     const opening = l.originOpeningExecutionKey ?? l.id;
-    db.prepare(
-      "INSERT OR IGNORE INTO lifecycle_identities(id,account,opening_execution_key) VALUES (?,?,?)",
-    ).run(l.id, l.account, opening);
-    db.prepare(
-      "INSERT INTO lifecycle_views(build_id,lifecycle_id,view_json) VALUES (?,?,?)",
-    ).run(buildId, l.id, JSON.stringify(l));
+    insertIdentity.run(l.id, l.account, opening);
+    insertLifecycle.run(buildId, l.id, JSON.stringify(l));
   }
+  const sourceRevision = db.prepare(
+    `SELECT a.revision_id FROM strategy_allocations a JOIN transaction_revisions r ON r.id=a.revision_id AND r.ledger_build_id=a.ledger_build_id WHERE a.build_id=? AND a.strategy_id=? AND a.allocation_role=? AND r.logical_transaction_key=?`,
+  );
+  const insertMember = db.prepare(
+    "INSERT INTO lifecycle_member_views(build_id,lifecycle_id,strategy_id,revision_id,allocation_role,quantity,member_json) VALUES (?,?,?,?,?,?,?)",
+  );
   for (const m of p.members) {
-    const row = db
-      .prepare(
-        `SELECT a.revision_id FROM strategy_allocations a JOIN transaction_revisions r ON r.id=a.revision_id AND r.ledger_build_id=a.ledger_build_id WHERE a.build_id=? AND a.strategy_id=? AND a.allocation_role=? AND r.logical_transaction_key=?`,
-      )
-      .get(
-        buildId,
-        m.allocation.strategyId,
-        m.allocation.role,
-        m.allocation.executionKey,
-      ) as { revision_id: string } | undefined;
+    const row = sourceRevision.get(
+      buildId,
+      m.allocation.strategyId,
+      m.allocation.role,
+      m.allocation.executionKey,
+    ) as { revision_id: string } | undefined;
     if (!row)
       throw Error("Lifecycle source allocation is not present in this build.");
-    db.prepare(
-      "INSERT INTO lifecycle_member_views(build_id,lifecycle_id,strategy_id,revision_id,allocation_role,quantity,member_json) VALUES (?,?,?,?,?,?,?)",
-    ).run(
+    insertMember.run(
       buildId,
       m.lifecycleId,
       m.allocation.strategyId,
@@ -66,13 +69,15 @@ export function persistLifecycleProjection(
       JSON.stringify(m),
     );
   }
+  const insertCampaignIdentity = db.prepare(
+    "INSERT OR IGNORE INTO campaign_identities(id) VALUES (?)",
+  );
+  const insertCampaign = db.prepare(
+    "INSERT INTO campaign_views(build_id,campaign_id,view_json) VALUES (?,?,?)",
+  );
   for (const c of p.campaigns) {
-    db.prepare("INSERT OR IGNORE INTO campaign_identities(id) VALUES (?)").run(
-      c.id,
-    );
-    db.prepare(
-      "INSERT INTO campaign_views(build_id,campaign_id,view_json) VALUES (?,?,?)",
-    ).run(buildId, c.id, JSON.stringify(c));
+    insertCampaignIdentity.run(c.id);
+    insertCampaign.run(buildId, c.id, JSON.stringify(c));
   }
 }
 export function loadLifecycleProjection(
