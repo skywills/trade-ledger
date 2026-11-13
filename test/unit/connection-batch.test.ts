@@ -5,12 +5,18 @@ import type { Decision } from "../../src/shared/domain.js";
 import {
   applyRecommended,
   type BatchIO,
+  ConnectionSelectionError,
   canonicalProposalPayload,
+  connectionDate,
   connectionSections,
   createConnectionBatch,
   runConnectionBatch,
 } from "../../src/web/lifecycles/connection-batch.js";
-import type { PositionGroup } from "../../src/web/lifecycles/connection-guidance.js";
+import {
+  contractLabel,
+  explainPlan,
+  type PositionGroup,
+} from "../../src/web/lifecycles/connection-guidance.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
 
 function setup(overlapping = false, sameContract = false, third = false) {
@@ -743,4 +749,51 @@ it("runs only the separate batch when nothing is connected", async () => {
   const f = setup();
   await applyRecommended(f.initial, recommended(f, false, true), f.io);
   expect(coverage(f.savedRequests)).toEqual([false]);
+});
+
+function failCombined(f: ReturnType<typeof setup>) {
+  const preview = f.io.preview;
+  f.io.preview = async (proposal, data) => {
+    const result = await preview(proposal, data);
+    return proposal.payload.assignments.length > 1
+      ? { ...result, valid: false }
+      : result;
+  };
+}
+
+it("names the call that cannot be covered", async () => {
+  const f = setup();
+  const batch = f.batch();
+  const [first, second] = batch.items;
+  if (!first || !second) throw Error("Missing items");
+  for (const g of [first.group, second.group])
+    for (const s of g.suggestions)
+      s.plan =
+        g === first.group
+          ? { action: "connect", lifecycleId: f.target, reason: "COVERED" }
+          : {
+              action: "separate",
+              lifecycleId: f.target,
+              reason: "SHARES_SOLD",
+            };
+  const s = second.group.suggestions[0];
+  if (!s?.plan) throw Error("Missing suggestion");
+  failCombined(f);
+  const execution = batch.data.connectionExecutions.find(
+    (e) => e.key === s.callOpening.executionKey,
+  );
+  if (!execution) throw Error("Missing execution");
+  const expected = `${contractLabel(execution.instrument)} (${connectionDate(second.group, batch.data)}) can't be covered: ${explainPlan(s.plan, batch.data, second.group)} No decisions were saved. Close this review and select fewer connections, or review them individually.`;
+  await expect(runConnectionBatch(batch, f.io)).rejects.toThrow(
+    new ConnectionSelectionError(expected),
+  );
+  expect(f.decisions).toHaveLength(0);
+});
+
+it("keeps the generic message when no plans are present", async () => {
+  const f = setup();
+  failCombined(f);
+  await expect(runConnectionBatch(f.batch(), f.io)).rejects.toThrow(
+    "The selected calls cannot all be connected with the available shares. No decisions were saved.",
+  );
 });
