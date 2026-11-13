@@ -4,6 +4,7 @@ import { minorUnit } from "../../shared/money.js";
 import { compareExecutionTime } from "../ledger/chronology.js";
 import { closingExposure } from "./grouping-close-candidates.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { draftsHolding } from "./grouping-draft-index.js";
 import { sameInstrument } from "./matching.js";
 import type { StrategyDraft } from "./projection.js";
 
@@ -55,7 +56,7 @@ export function basisCloseAllocation(
     parts: Array<{ executionKey: string; capacity: number }>;
   }[] = [];
   const draftCapacity = new Map<StrategyDraft, number>();
-  for (const draft of context.drafts.values()) {
+  for (const draft of draftsHolding(context, close.instrument)) {
     const exposure = closingExposure(context, draft, close);
     if (exposure.isZero() || exposure.isNegative() === quantity.isNegative())
       continue;

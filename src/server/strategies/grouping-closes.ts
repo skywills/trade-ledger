@@ -10,6 +10,7 @@ import {
 import { orderByKnownChronology } from "./grouping-close-order.js";
 import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { draftsHolding } from "./grouping-draft-index.js";
 import { signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue } from "./projection.js";
 
@@ -62,7 +63,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
     const direction = signOf(closeQuantity);
     const exposureCandidates =
       lot === undefined
-        ? [...context.drafts.values()].filter((draft) => {
+        ? draftsHolding(context, close.instrument).filter((draft) => {
             const exposure = closingExposure(context, draft, close);
             return (
               !exposure.isZero() &&

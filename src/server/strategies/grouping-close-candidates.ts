@@ -2,6 +2,7 @@ import { Decimal } from "decimal.js";
 import type { Execution, Id } from "../../shared/domain.js";
 import { compareExecutionTime } from "../ledger/chronology.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { draftsHolding } from "./grouping-draft-index.js";
 import { remainingCompatible, sameInstrument } from "./matching.js";
 import type { StrategyDraft } from "./projection.js";
 
@@ -206,7 +207,7 @@ export function closeCandidates(
   close: Execution,
   closeQuantity: string,
 ): StrategyDraft[] {
-  return [...context.drafts.values()].filter((draft) => {
+  return draftsHolding(context, close.instrument).filter((draft) => {
     const exposure = closingExposure(context, draft, close);
     return (
       !exposure.isZero() &&
