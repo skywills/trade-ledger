@@ -34,6 +34,21 @@ export interface PlanInput {
   lifecycles: LifecycleProjection;
   origins?: Projection | undefined;
   retainedAnchors?: readonly RetainedLifecycleAnchor[];
+  /** Judge every hypothetical against the whole ledger; used to check that scoping changes nothing. */
+  unscoped?: boolean;
+  /** Receives an unexpected planning failure; defaults to a JSON line on stderr. */
+  onError?: (error: unknown, lifecycleId: string) => void;
+}
+
+function reportPlanError(error: unknown, lifecycleId: string): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      level: "error",
+      msg: "Connection planning failed; rows left without a recommendation.",
+      lifecycleId,
+      error: error instanceof Error ? error.stack : String(error),
+    })}\n`,
+  );
 }
 
 interface PlanRow {
@@ -425,7 +440,7 @@ function freeSharesAt(
   return shareAvailability(input.ledger, assumed)(
     target,
     row.opening,
-  ).toString();
+  ).toFixed();
 }
 
 function planPosition(
@@ -438,16 +453,17 @@ function planPosition(
   const plans = new Map<PlanRow, ConnectionPlan>();
   const first = rows[0];
   // Hypothetical checks run on this account's trades in this underlying only.
-  const input: PlanInput = first
-    ? {
-        ...whole,
-        ...scopeTo(
-          whole,
-          first.opening.account,
-          underlyingSymbol(first.opening.instrument),
-        ),
-      }
-    : whole;
+  const input: PlanInput =
+    first && !whole.unscoped
+      ? {
+          ...whole,
+          ...scopeTo(
+            whole,
+            first.opening.account,
+            underlyingSymbol(first.opening.instrument),
+          ),
+        }
+      : whole;
   const existing = existingRows(target, input.lifecycles, exec);
   const separates: PlanRow[] = [];
   const manuals: PlanRow[] = [];
@@ -535,8 +551,19 @@ export function planConnections(input: PlanInput): LifecycleProjection {
   const planned = new Map<AttachmentSuggestion, ConnectionPlan>();
   const { byPosition, multiple } = buildRows(input, exec);
   for (const [target, rows] of byPosition) {
-    for (const [row, plan] of planPosition(input, exec, target, rows, multiple))
-      for (const s of row.suggestions) planned.set(s, plan);
+    try {
+      for (const [row, plan] of planPosition(
+        input,
+        exec,
+        target,
+        rows,
+        multiple,
+      ))
+        for (const s of row.suggestions) planned.set(s, plan);
+    } catch (error) {
+      // A planning bug must never abort a rebuild: those rows simply get no plan.
+      (input.onError ?? reportPlanError)(error, target);
+    }
   }
   for (const { row } of multiple)
     for (const s of row.suggestions)
