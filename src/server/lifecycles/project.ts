@@ -28,6 +28,7 @@ import {
   connectedCallTargets,
 } from "./connected-lots.js";
 import { applyMembershipChanges } from "./decisions.js";
+import { fifoLotPnl } from "./fifo-pnl.js";
 import {
   indexMembersByAllocation,
   partition,
@@ -360,7 +361,13 @@ export function projectLifecycles(
           // order their current shares were acquired (emptied holders are
           // removed below), so the earliest lot is consumed first.
           ownedStockCloses.add(refKey(a));
-          pieces = partition(a, fifoTargets(book, a) ?? [], e.sources);
+          pieces = fifoLotPnl(
+            partition(a, fifoTargets(book, a) ?? [], e.sources),
+            a.brokerPnl,
+            draft.members,
+            exec,
+            e.instrument.key,
+          );
           draft.members = draft.members.filter(
             (m) => refKey(m.allocation) !== refKey(a),
           );
