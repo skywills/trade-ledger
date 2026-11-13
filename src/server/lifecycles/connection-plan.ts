@@ -15,6 +15,12 @@ import type {
   RetainedLifecycleAnchor,
 } from "../../shared/lifecycles.js";
 import { compareLifecycleTime } from "./chronology.js";
+import {
+  compareByTime,
+  isRollRelease,
+  sharesSoldAfter,
+  spreadLeg,
+} from "./connection-plan-reasons.js";
 import { refKey } from "./membership.js";
 import { validateLifecycleDecision } from "./validate-decision.js";
 
@@ -84,7 +90,7 @@ function buildRows(
 }
 
 function compareOpenings(a: Execution, b: Execution): number {
-  return a.date.localeCompare(b.date) || (compareLifecycleTime(a, b) ?? 0);
+  return compareByTime(a, b);
 }
 
 /** One assignment per member allocation, quantities summed, as `connectionProposal` builds them. */
@@ -180,8 +186,16 @@ function connectPlan(
   target: string,
   row: PlanRow,
   accepted: PlanRow[],
+  existing: PlanRow[],
   exec: Map<string, Execution>,
 ): ConnectionPlan {
+  if (
+    isRollRelease(
+      row.opening,
+      shortCallOpenings([...existing, ...accepted], exec),
+    )
+  )
+    return { action: "connect", lifecycleId: target, reason: "ROLL_RELEASE" };
   const earlier = accepted.filter((a) =>
     closesAtOrBefore(closeOf(a, exec), row.opening),
   );
@@ -218,13 +232,12 @@ function shortCallOpenings(
   );
 }
 
-function separatePlan(
+/** Rows for the short calls already in a position, rebuilt from its members. */
+function existingRows(
   target: string,
-  row: PlanRow,
-  holders: PlanRow[],
   lifecycles: LifecycleProjection,
   exec: Map<string, Execution>,
-): ConnectionPlan {
+): PlanRow[] {
   const existing = lifecycles.members.filter(
     (m) =>
       m.lifecycleId === target &&
@@ -232,7 +245,7 @@ function separatePlan(
       new Decimal(m.quantity).lt(0) &&
       exec.get(m.allocation.executionKey)?.instrument.putCall === "C",
   );
-  const existingRows: PlanRow[] = existing.flatMap((m) => {
+  return existing.flatMap((m) => {
     const e = exec.get(m.allocation.executionKey);
     if (!e) return [];
     const siblings = lifecycles.members.filter(
@@ -243,18 +256,35 @@ function separatePlan(
     );
     return [{ suggestions: [], members: siblings, opening: e }];
   });
-  const held = shortCallOpenings([...existingRows, ...holders], exec)
+}
+
+function separatePlan(
+  target: string,
+  row: PlanRow,
+  holders: PlanRow[],
+  existing: PlanRow[],
+  lifecycles: LifecycleProjection,
+  exec: Map<string, Execution>,
+): ConnectionPlan {
+  const held = shortCallOpenings([...existing, ...holders], exec)
     .filter(
       (c) =>
         compareOpenings(c.execution, row.opening) < 0 &&
         !closedBefore(c.close, row.opening),
     )
     .sort((a, b) => compareOpenings(a.execution, b.execution))[0];
+  const sharesSold = sharesSoldAfter(
+    row.opening,
+    held,
+    lifecycles.members.filter((m) => m.lifecycleId === target),
+    exec,
+  );
   return {
     action: "separate",
     lifecycleId: target,
-    reason: "HELD_BY_EARLIER_CALL",
+    reason: sharesSold ? "SHARES_SOLD" : "HELD_BY_EARLIER_CALL",
     ...(held ? { heldBy: held.ref } : {}),
+    ...(sharesSold ? { sharesSold } : {}),
   };
 }
 
@@ -265,6 +295,7 @@ function planPosition(
   rows: PlanRow[],
 ): Map<PlanRow, ConnectionPlan> {
   const plans = new Map<PlanRow, ConnectionPlan>();
+  const existing = existingRows(target, input.lifecycles, exec);
   const separates: PlanRow[] = [];
   const accepted: PlanRow[] = [];
   rows.forEach((row, n) => {
@@ -284,16 +315,17 @@ function planPosition(
       [...accepted, row],
       target,
     );
-    if (connects(input, kept, candidate)) {
-      plans.set(row, connectPlan(target, row, accepted, exec));
-      accepted.push(row);
-    } else {
-      plans.set(
-        row,
-        separatePlan(target, row, accepted, input.lifecycles, exec),
-      );
-      separates.push(row);
-    }
+    const verdict = connects(input, kept, candidate)
+      ? connectPlan(target, row, accepted, existing, exec)
+      : separatePlan(target, row, accepted, existing, input.lifecycles, exec);
+    const pairedWith = spreadLeg(
+      row.opening,
+      input.ledger.executions,
+      input.projection.allocations,
+    );
+    plans.set(row, pairedWith ? { ...verdict, pairedWith } : verdict);
+    if (verdict.action === "connect") accepted.push(row);
+    else separates.push(row);
   });
   return plans;
 }

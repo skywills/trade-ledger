@@ -158,6 +158,173 @@ describe("planConnections", () => {
     ).toThrow();
   });
 
+  it("explains a call left open after the shares were sold", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T10:20:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 3, "close"),
+          "2026-10-03T10:24:00Z",
+        ),
+      ],
+      [
+        "shares",
+        at(
+          execution("sale", stock, "-100", "10500", 3, "close"),
+          "2026-10-03T10:24:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "a-open")).toMatchObject({
+      action: "connect",
+      reason: "COVERED",
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "separate",
+      reason: "SHARES_SOLD",
+      sharesSold: { executionKey: "sale" },
+      heldBy: refOf(lifecycles, "a-open"),
+    });
+  });
+
+  it("explains an expiry-day roll", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T09:48:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-exp", call, "1", "0", 3, "close", "expiry"),
+          "2026-10-03T16:20:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "connect",
+      reason: "ROLL_RELEASE",
+    });
+  });
+
+  it("explains a same-day legged roll", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T09:48:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 3, "close"),
+          "2026-10-03T10:27:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "connect",
+      reason: "ROLL_RELEASE",
+    });
+  });
+
+  it("flags a call sold together with a long call as a spread leg", () => {
+    const longCall = { ...call, key: "call-d", conid: "7" };
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "d",
+        at(
+          execution("d-open", longCall, "1", "-20", 4, "open"),
+          "2026-10-04T10:00:00Z",
+        ),
+      ],
+      [
+        "c",
+        at(
+          execution("c-open", callC, "-1", "50", 4, "open"),
+          "2026-10-04T10:00:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "c-open")).toMatchObject({
+      action: "separate",
+      reason: "HELD_BY_EARLIER_CALL",
+      pairedWith: { strategyId: "d", executionKey: "d-open", role: "open" },
+    });
+  });
+
   it("does not mutate its input", () => {
     const c = chain();
     const planned = planConnections(c);
