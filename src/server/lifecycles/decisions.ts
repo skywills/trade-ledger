@@ -15,6 +15,10 @@ import {
 } from "../../shared/lifecycles.js";
 import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
+import {
+  restoreDecisionState,
+  snapshotDecisionState,
+} from "./decision-rollback.js";
 import { partition, refKey } from "./membership.js";
 import { availableShares, shareAvailability } from "./project.js";
 
@@ -168,12 +172,7 @@ export function applyMembershipChanges(
         Number(a.kind === "wheel_campaign") || a.sequence - b.sequence,
   );
   for (const d of orderedDecisions) {
-    const before = structuredClone({
-      members: draft.members,
-      lifecycles: draft.lifecycles,
-      campaigns: draft.campaigns,
-      issues: draft.issues,
-    });
+    const before = snapshotDecisionState(draft);
     try {
       if (d.kind === "lifecycle_attachment") {
         const p = LifecycleAttachmentPayloadSchema.parse(d.payload);
@@ -294,10 +293,7 @@ export function applyMembershipChanges(
         l.campaignId = p.campaignId;
       }
     } catch (error) {
-      draft.members = before.members;
-      draft.lifecycles = before.lifecycles;
-      draft.campaigns = before.campaigns;
-      draft.issues = before.issues;
+      restoreDecisionState(draft, before);
       if (d.id === "__validate__") throw error;
       draft.issues.push({
         key: `lifecycle:decision:${d.id}`,
