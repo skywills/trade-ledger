@@ -7,6 +7,7 @@ import type {
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import {
+  type AllocationRef,
   CampaignMembershipPayloadSchema,
   CampaignPayloadSchema,
   LifecycleAttachmentPayloadSchema,
@@ -183,6 +184,64 @@ export function applyMembershipChanges(
           : [];
       }),
   );
+  /**
+   * Closes of a connected call that arrived in a later import are not listed
+   * in the saved decision. They follow the call's opening (pro rata when the
+   * opening was split), as lifecycle_attachment already does, unless some
+   * decision places them explicitly. Non-integer contract slices are flagged.
+   */
+  const followLaterCloses = (
+    assignments: ReadonlyArray<{
+      allocation: AllocationRef;
+      lifecycleId: string;
+      quantity: string;
+    }>,
+    decided: ReadonlyArray<string>,
+  ) => {
+    const openings = new Map<
+      string,
+      { opening: AllocationRef; targets: (typeof assignments)[number][] }
+    >();
+    for (const t of assignments) {
+      if (t.allocation.role !== "open") continue;
+      const key = refKey(t.allocation);
+      const group = openings.get(key) ?? { opening: t.allocation, targets: [] };
+      group.targets.push(t);
+      openings.set(key, group);
+    }
+    for (const { opening, targets } of openings.values()) {
+      const source = projection.allocations.find(
+        (a) => refKey(a) === refKey(opening),
+      );
+      const e = source && exec.get(source.executionKey);
+      if (!source || !e || e.instrument.putCall !== "C") continue;
+      for (const b of projection.allocations) {
+        if (
+          b.strategyId !== source.strategyId ||
+          b.role !== "close" ||
+          decided.includes(refKey(b)) ||
+          explicitRefs.has(refKey(b)) ||
+          exec.get(b.executionKey)?.instrument.key !== e.instrument.key
+        )
+          continue;
+        const split = targets.map((t) => ({
+          lifecycleId: t.lifecycleId,
+          quantity: new Decimal(b.quantity)
+            .times(t.quantity)
+            .div(source.quantity)
+            .toFixed(),
+        }));
+        if (split.some((t) => !new Decimal(t.quantity).isInteger())) {
+          for (const t of targets)
+            draft.lifecycles
+              .find((l) => l.id === t.lifecycleId)
+              ?.reasons.push("LIFECYCLE_CALL_CLOSE_AMBIGUOUS");
+          continue;
+        }
+        replace(b, split);
+      }
+    }
+  };
   const orderedDecisions = [...decisions].sort(
     (a, b) =>
       Number(b.kind === "wheel_campaign") -
@@ -276,6 +335,7 @@ export function applyMembershipChanges(
             p.assignments.filter((t) => refKey(t.allocation) === key),
           );
         }
+        if (p.requireCallCoverage) followLaterCloses(p.assignments, keys);
         if (p.requireCallCoverage) validateCallCoverage();
       } else if (d.kind === "wheel_campaign") {
         const p = CampaignPayloadSchema.parse(d.payload);
