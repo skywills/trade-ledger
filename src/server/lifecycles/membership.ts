@@ -11,8 +11,18 @@ import type {
   LifecycleMember,
 } from "../../shared/lifecycles.js";
 import { splitAmount } from "../strategies/allocation.js";
-export const refKey = (a: AllocationRef) =>
-  JSON.stringify([a.strategyId, a.executionKey, a.role]);
+
+// Lifecycle projection compares allocation keys inside nested member scans.
+// Allocation key fields are never reassigned after creation, so the string is
+// memoised per object instead of re-serialised on every comparison.
+const refKeys = new WeakMap<AllocationRef, string>();
+export const refKey = (a: AllocationRef): string => {
+  const cached = refKeys.get(a);
+  if (cached !== undefined) return cached;
+  const key = JSON.stringify([a.strategyId, a.executionKey, a.role]);
+  refKeys.set(a, key);
+  return key;
+};
 export const sum = (v: readonly string[]) =>
   v.reduce((s, n) => s.plus(n), new Decimal(0)).toFixed();
 /** Build once for a membership snapshot; rebuild after changing allocations. */

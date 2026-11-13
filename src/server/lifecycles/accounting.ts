@@ -1,6 +1,7 @@
 import { Decimal } from "decimal.js";
 import { explainedByBrokerBasis } from "../../shared/broker-basis.js";
 import type { LedgerSnapshot, Projection } from "../../shared/domain.js";
+import { groupBy } from "../../shared/group-by.js";
 import type {
   Lifecycle,
   LifecycleMember,
@@ -28,9 +29,10 @@ export function accountLifecycles(
   strategies: Projection,
   p: LifecycleProjection,
 ): LifecycleProjection {
+  const membersByLifecycle = groupBy(p.members, (m) => m.lifecycleId);
   const executions = new Map(ledger.executions.map((e) => [e.key, e]));
   for (const l of p.lifecycles) {
-    const members = p.members.filter((m) => m.lifecycleId === l.id);
+    const members = membersByLifecycle.get(l.id) ?? [];
     const cash = sum(members.map((m) => m.netCash));
     const broker = brokerRealized(ledger, members);
     const unresolvedEvents = unresolvedEventCash(ledger, strategies, members);

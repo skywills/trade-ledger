@@ -2,24 +2,142 @@ import type { Execution } from "../../shared/domain.js";
 import { compareExecutionTime } from "../ledger/chronology.js";
 import { sortedByKey } from "./grouping-common.js";
 
+/** Above this many closes the n² edge bitset would exceed 8 MiB. */
+const MAX_BITSET_EXECUTIONS = 8192;
+
+function precedes(left: Execution, right: Execution): boolean {
+  const chronology = compareExecutionTime(left, right);
+  if (chronology === null) return false;
+  return chronology === 0 ? left.key < right.key : chronology < 0;
+}
+
+/** Min-heap of execution indexes ordered by key. */
+class KeyHeap {
+  private readonly items: number[] = [];
+  constructor(private readonly keyOf: (index: number) => string) {}
+  get size(): number {
+    return this.items.length;
+  }
+  private less(a: number, b: number): boolean {
+    return this.keyOf(a) < this.keyOf(b);
+  }
+  push(item: number): void {
+    const items = this.items;
+    let index = items.length;
+    items.push(item);
+    while (index > 0) {
+      const parentIndex = (index - 1) >> 1;
+      const parent = items[parentIndex] as number;
+      if (!this.less(item, parent)) break;
+      items[index] = parent;
+      index = parentIndex;
+    }
+    items[index] = item;
+  }
+  pop(): number | undefined {
+    const items = this.items;
+    const first = items[0];
+    const last = items.pop();
+    if (first === undefined || last === undefined || items.length === 0)
+      return first;
+    let index = 0;
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      if (leftIndex >= items.length) break;
+      const rightIndex = leftIndex + 1;
+      const childIndex =
+        rightIndex < items.length &&
+        this.less(items[rightIndex] as number, items[leftIndex] as number)
+          ? rightIndex
+          : leftIndex;
+      const child = items[childIndex] as number;
+      if (!this.less(child, last)) break;
+      items[index] = child;
+      index = childIndex;
+    }
+    items[index] = last;
+    return first;
+  }
+}
+
 /**
  * Orders known chronological constraints without treating uncertain pairs as
  * pairwise key comparisons. A stable topological ordering is transitive even
- * when some executions cannot be compared safely.
+ * when some executions cannot be compared safely. Ready executions leave in
+ * key order, so the result is the key-smallest valid order.
+ *
+ * Each pair is compared once and the resulting edges kept in an n² bitset;
+ * the pairwise scan below recomputes them and is kept for inputs too large
+ * for the bitset or with duplicate keys.
  */
 export function orderByKnownChronology(
+  executions: readonly Execution[],
+): Execution[] {
+  const n = executions.length;
+  if (
+    n > MAX_BITSET_EXECUTIONS ||
+    new Set(executions.map((e) => e.key)).size !== n
+  )
+    return orderByPairwiseScan(executions);
+  const words = Math.ceil(n / 32);
+  const edges = new Uint32Array(n * words);
+  const indegree = new Uint32Array(n);
+  const setEdge = (from: number, to: number): void => {
+    const word = from * words + (to >>> 5);
+    edges[word] = (edges[word] as number) | (1 << (to & 31));
+    indegree[to] = (indegree[to] as number) + 1;
+  };
+  for (let i = 0; i < n; i += 1) {
+    const left = executions[i] as Execution;
+    for (let j = i + 1; j < n; j += 1) {
+      const right = executions[j] as Execution;
+      // compareExecutionTime is antisymmetric, so one call settles both
+      // directions: exactly one of precedes(left,right)/(right,left) holds
+      // when the pair is comparable.
+      const chronology = compareExecutionTime(left, right);
+      if (chronology === null) continue;
+      const leftFirst =
+        chronology === 0 ? left.key < right.key : chronology < 0;
+      if (leftFirst) setEdge(i, j);
+      else setEdge(j, i);
+    }
+  }
+  const ready = new KeyHeap((index) => (executions[index] as Execution).key);
+  for (let i = 0; i < n; i += 1) if (indegree[i] === 0) ready.push(i);
+  const ordered: Execution[] = [];
+  while (ready.size > 0) {
+    const from = ready.pop() as number;
+    ordered.push(executions[from] as Execution);
+    const row = from * words;
+    for (let w = 0; w < words; w += 1) {
+      let bits = edges[row + w] as number;
+      while (bits !== 0) {
+        const low = bits & -bits;
+        const to = w * 32 + (31 - Math.clz32(low));
+        bits ^= low;
+        const remaining = (indegree[to] as number) - 1;
+        indegree[to] = remaining;
+        if (remaining === 0) ready.push(to);
+      }
+    }
+  }
+  // Pairwise time evidence should be acyclic. In case malformed provenance
+  // ever creates a cycle, keep the entire close set deterministic and let the
+  // exposure guard prevent a consumed opening from being reused.
+  return ordered.length === n ? ordered : sortedByKey(executions);
+}
+
+/**
+ * The original pairwise-scan ordering with linear auxiliary memory. Same
+ * result as `orderByKnownChronology`, recomputing each comparison twice.
+ */
+export function orderByPairwiseScan(
   executions: readonly Execution[],
 ): Execution[] {
   const indegree = new Map<string, number>();
   for (const execution of executions) {
     indegree.set(execution.key, 0);
   }
-
-  const precedes = (left: Execution, right: Execution): boolean => {
-    const chronology = compareExecutionTime(left, right);
-    if (chronology === null) return false;
-    return chronology === 0 ? left.key < right.key : chronology < 0;
-  };
 
   // Count incoming constraints without retaining the pairwise graph. The
   // quadratic comparison cost is bounded by the close count, while auxiliary

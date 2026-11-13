@@ -7,6 +7,7 @@ import type {
   LedgerSnapshot,
   Projection,
 } from "../../shared/domain.js";
+import { groupBy } from "../../shared/group-by.js";
 import type {
   AllocationRef,
   LifecycleAnchor,
@@ -144,8 +145,13 @@ export function projectLifecycles(
   };
   const roots = new Map<string, string>();
   const aliases = new Map<string, string>();
+  const allocationsByStrategy = groupBy(
+    projection.allocations,
+    (a) => a.strategyId,
+  );
+  const lifecycleIds = new Set<string>();
   for (const s of projection.strategies) {
-    const rows = projection.allocations.filter((a) => a.strategyId === s.id);
+    const rows = allocationsByStrategy.get(s.id) ?? [];
     const opening = [...rows].sort((a, b) => {
       const x = exec.get(a.executionKey),
         y = exec.get(b.executionKey);
@@ -174,7 +180,8 @@ export function projectLifecycles(
         .filter((e): e is Execution => !!e)
         .map((e) => underlyingSymbol(e.instrument)),
     );
-    if (!draft.lifecycles.some((l) => l.id === id))
+    if (!lifecycleIds.has(id)) {
+      lifecycleIds.add(id);
       draft.lifecycles.push({
         ...s,
         id,
@@ -195,6 +202,7 @@ export function projectLifecycles(
         brokerPnl: null,
         reconstructedPnl: null,
       });
+    }
     for (const a of rows)
       draft.members.push(
         ...partition(
@@ -760,12 +768,13 @@ export function projectLifecycles(
         exec.get(a.executionKey)?.sources ?? [],
       );
     });
+    const membersByLifecycle = groupBy(draft.members, (m) => m.lifecycleId);
     for (const l of draft.lifecycles)
       l.componentIds = [
         ...new Set(
-          draft.members
-            .filter((m) => m.lifecycleId === l.id)
-            .map((m) => m.allocation.strategyId),
+          (membersByLifecycle.get(l.id) ?? []).map(
+            (m) => m.allocation.strategyId,
+          ),
         ),
       ];
   }
@@ -896,8 +905,18 @@ export function recomputeLifecycles(
   correctedRefs: ReadonlySet<string> = new Set(),
 ): void {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
+  const membersByLifecycle = groupBy(p.members, (m) => m.lifecycleId);
+  const allocationsByStrategy = groupBy(
+    projection.allocations,
+    (a) => a.strategyId,
+  );
+  const strategiesById = groupBy(projection.strategies, (s) => s.id);
+  const firstByInstrument = new Map<string, Execution>();
+  for (const e of ledger.executions)
+    if (!firstByInstrument.has(e.instrument.key))
+      firstByInstrument.set(e.instrument.key, e);
   for (const l of p.lifecycles) {
-    const members = p.members.filter((m) => m.lifecycleId === l.id);
+    const members = membersByLifecycle.get(l.id) ?? [];
     if (!members.length) continue;
     l.componentIds = [
       ...new Set(members.map((m) => m.allocation.strategyId)),
@@ -964,9 +983,7 @@ export function recomputeLifecycles(
       .filter(([, q]) => !q.isZero())
       .map(([instrumentKey, q]) => ({ instrumentKey, quantity: q.toFixed() }));
     for (const pos of l.positions) {
-      const e = ledger.executions.find(
-        (e) => e.instrument.key === pos.instrumentKey,
-      );
+      const e = firstByInstrument.get(pos.instrumentKey);
       if (e?.instrument.assetClass === "STK")
         shares = shares.plus(pos.quantity);
       else if (e?.instrument.putCall === "C" && new Decimal(pos.quantity).lt(0))
@@ -979,14 +996,14 @@ export function recomputeLifecycles(
       0,
       calls.minus(Decimal.max(0, shares)),
     ).toFixed();
-    const components = projection.strategies.filter((s) =>
-      l.componentIds.includes(s.id),
+    const components = l.componentIds.flatMap(
+      (id) => strategiesById.get(id) ?? [],
     );
     const dates = members
       .map((m) => exec.get(m.allocation.executionKey)?.date ?? "")
       .sort();
     const correctedOrphan = (s: Projection["strategies"][number]) => {
-      const rows = projection.allocations.filter((a) => a.strategyId === s.id);
+      const rows = allocationsByStrategy.get(s.id) ?? [];
       return (
         rows.length > 0 &&
         rows.every(
@@ -1043,6 +1060,6 @@ export function recomputeLifecycles(
     l.cashflow = sum(members.map((m) => m.netCash));
   }
   p.lifecycles = p.lifecycles
-    .filter((l) => p.members.some((m) => m.lifecycleId === l.id))
+    .filter((l) => membersByLifecycle.has(l.id))
     .sort((a, b) => a.id.localeCompare(b.id));
 }

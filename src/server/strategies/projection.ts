@@ -125,7 +125,15 @@ export function legOf(
   };
 }
 
+let legWrites = 0;
+
+/** Count of legs added through `addLeg`, so indexes can tell nothing changed. */
+export function legWriteCount(): number {
+  return legWrites;
+}
+
 export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
+  legWrites += 1;
   draft.legs.push(leg);
   if (leg.role === "open") draft.openingLegs.push(leg);
   if (

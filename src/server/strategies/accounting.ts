@@ -11,6 +11,7 @@ import type {
   SourceRef,
   Strategy,
 } from "../../shared/domain.js";
+import { groupBy } from "../../shared/group-by.js";
 import { minorUnit, reconcilesWithin } from "../../shared/money.js";
 import { splitAmount } from "./allocation.js";
 import { signOf, yearOf } from "./matching.js";
@@ -249,6 +250,7 @@ export function accountProjection(
       .map(([strategyId]) => strategyId),
   );
 
+  const allocationsByStrategy = groupBy(allocations, (a) => a.strategyId);
   const strategies = projection.strategies.map((strategy) => {
     if (incompatibleStrategies.has(strategy.id)) {
       const issue = makeIssue(
@@ -276,9 +278,7 @@ export function accountProjection(
         ].sort(),
       };
     }
-    const strategyAllocations = allocations.filter(
-      (allocation) => allocation.strategyId === strategy.id,
-    );
+    const strategyAllocations = allocationsByStrategy.get(strategy.id) ?? [];
     const amounts = amountsFor(
       ledger,
       strategy,
@@ -352,10 +352,11 @@ export function validateProjection(
   const byExecution = indexByExecution(projection.allocations);
   const dimensionsByStrategy = new Map<Id, Set<string>>();
   const sourcesByStrategy = new Map<Id, SourceRef[]>();
+  const firstExecution = new Map<Id, Execution>();
+  for (const e of ledger.executions)
+    if (!firstExecution.has(e.key)) firstExecution.set(e.key, e);
   for (const allocation of projection.allocations) {
-    const execution = ledger.executions.find(
-      (candidate) => candidate.key === allocation.executionKey,
-    );
+    const execution = firstExecution.get(allocation.executionKey);
     if (execution === undefined) continue;
     const dimensions =
       dimensionsByStrategy.get(allocation.strategyId) ?? new Set<string>();
