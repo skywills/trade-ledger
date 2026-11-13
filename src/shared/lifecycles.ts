@@ -43,6 +43,28 @@ export interface AttachmentSuggestion {
   quantity: string;
   sources: SourceRef[];
   reasons: string[];
+  plan?: ConnectionPlan;
+}
+export type PlanAction = "connect" | "separate" | "manual";
+export type PlanReason =
+  | "COVERED"
+  | "COVERED_AFTER_EARLIER"
+  | "ROLL_RELEASE"
+  | "HELD_BY_EARLIER_CALL"
+  | "SHARES_SOLD"
+  | "MULTIPLE_POSITIONS"
+  | "PARTIAL"
+  | "ORDER_UNKNOWN";
+export interface ConnectionPlan {
+  action: PlanAction;
+  /** The position the row was judged against; null only for MULTIPLE_POSITIONS. */
+  lifecycleId: Id | null;
+  reason: PlanReason;
+  sharesAtOpening?: string;
+  heldBy?: AllocationRef;
+  sharesSold?: { executionKey: string };
+  pairedWith?: AllocationRef;
+  dependsOn?: AllocationRef[];
 }
 export interface WheelCampaign {
   id: Id;

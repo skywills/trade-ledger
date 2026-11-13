@@ -1,0 +1,170 @@
+import { describe, expect, it } from "vitest";
+import { planConnections } from "../../src/server/lifecycles/connection-plan.js";
+import { projectLifecycles } from "../../src/server/lifecycles/project.js";
+import { validateLifecycleDecision } from "../../src/server/lifecycles/validate-decision.js";
+import type { Decision, Execution } from "../../src/shared/domain.js";
+import type {
+  AttachmentSuggestion,
+  LifecycleProjection,
+} from "../../src/shared/lifecycles.js";
+import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
+
+const callB = { ...call, key: "call-b", conid: "5" };
+const callC = { ...call, key: "call-c", conid: "6" };
+
+function at(e: Execution, time: string): Execution {
+  return { ...e, rawDateTime: time };
+}
+
+/** NVDA Dec5: A day 2; A bought back and B sold at one instant day 3; C sold day 4 while B is open. */
+function chain() {
+  const { ledger, projection } = fixture([
+    ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+    [
+      "a",
+      at(
+        execution("a-open", call, "-1", "70", 2, "open"),
+        "2026-10-02T10:00:00Z",
+      ),
+    ],
+    [
+      "a",
+      at(
+        execution("a-close", call, "1", "-30", 3, "close"),
+        "2026-10-03T10:00:00Z",
+      ),
+    ],
+    [
+      "b",
+      at(
+        execution("b-open", callB, "-1", "60", 3, "open"),
+        "2026-10-03T10:00:00Z",
+      ),
+    ],
+    [
+      "c",
+      at(
+        execution("c-open", callC, "-1", "50", 4, "open"),
+        "2026-10-04T10:00:00Z",
+      ),
+    ],
+  ]);
+  const decisions: Decision[] = [];
+  const lifecycles = projectLifecycles(ledger, projection, decisions);
+  return { ledger, projection, decisions, lifecycles };
+}
+
+const planOf = (p: LifecycleProjection, key: string) =>
+  p.suggestions.find((s) => s.callOpening.executionKey === key)?.plan;
+const refOf = (p: LifecycleProjection, key: string) =>
+  p.suggestions.find((s) => s.callOpening.executionKey === key)?.callOpening;
+
+describe("planConnections", () => {
+  it("recommends connect for each call in a roll chain", () => {
+    const c = chain();
+    const planned = planConnections(c);
+    const target = c.lifecycles.suggestions[0]?.candidateLifecycleIds[0];
+    expect(planOf(planned, "a-open")).toMatchObject({
+      action: "connect",
+      lifecycleId: target,
+      reason: "COVERED",
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "connect",
+      lifecycleId: target,
+      reason: "COVERED_AFTER_EARLIER",
+      dependsOn: [refOf(c.lifecycles, "a-open")],
+    });
+  });
+
+  it("recommends separate when an earlier recommended call still holds the shares", () => {
+    const c = chain();
+    const planned = planConnections(c);
+    expect(planOf(planned, "c-open")).toMatchObject({
+      action: "separate",
+      reason: "HELD_BY_EARLIER_CALL",
+      heldBy: refOf(c.lifecycles, "b-open"),
+    });
+  });
+
+  it("agrees with validation", () => {
+    const c = chain();
+    const planned = planConnections(c);
+    const rowMembers = (s: AttachmentSuggestion) =>
+      c.lifecycles.members.filter(
+        (m) => m.allocation.strategyId === s.callOpening.strategyId,
+      );
+    const decision = (
+      id: string,
+      sequence: number,
+      requireCallCoverage: boolean,
+      rows: AttachmentSuggestion[],
+      lifecycleOf: (s: AttachmentSuggestion) => string,
+    ): Decision => ({
+      id,
+      sequence,
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      kind: "lifecycle_membership",
+      payload: {
+        requireCallCoverage,
+        assignments: rows.flatMap((s) =>
+          rowMembers(s).map((m) => ({
+            allocation: m.allocation,
+            lifecycleId: lifecycleOf(s),
+            quantity: m.quantity,
+          })),
+        ),
+      },
+    });
+    const withPlan = planned.suggestions.filter((s) => s.plan);
+    const separates = withPlan.filter((s) => s.plan?.action === "separate");
+    const connects = withPlan.filter((s) => s.plan?.action === "connect");
+    expect(separates.length).toBeGreaterThan(0);
+    expect(connects.length).toBeGreaterThan(0);
+    const sep = decision(
+      "sep",
+      1,
+      false,
+      separates,
+      (s) => s.plan?.lifecycleId ?? "",
+    );
+    const con = decision(
+      "con",
+      2,
+      true,
+      connects,
+      (s) => s.plan?.lifecycleId ?? "",
+    );
+    // Decisions only throw under the live-check id, as the decision service uses.
+    const live = (d: Decision): Decision => ({ ...d, id: "__validate__" });
+    expect(() =>
+      validateLifecycleDecision(c.ledger, c.projection, [], live(sep)),
+    ).not.toThrow();
+    expect(() =>
+      validateLifecycleDecision(c.ledger, c.projection, [sep], live(con)),
+    ).not.toThrow();
+    // The check is not vacuous: connecting the held call as well is refused.
+    const all = decision(
+      "all",
+      3,
+      true,
+      withPlan,
+      (s) => s.plan?.lifecycleId ?? "",
+    );
+    expect(() =>
+      validateLifecycleDecision(c.ledger, c.projection, [], live(all)),
+    ).toThrow();
+  });
+
+  it("does not mutate its input", () => {
+    const c = chain();
+    const planned = planConnections(c);
+    expect(planned).not.toBe(c.lifecycles);
+    expect(c.lifecycles.suggestions.every((s) => s.plan === undefined)).toBe(
+      true,
+    );
+    expect(planned.suggestions.some((s) => s.plan)).toBe(true);
+  });
+});
