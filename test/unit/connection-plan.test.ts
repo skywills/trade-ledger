@@ -325,6 +325,59 @@ describe("planConnections", () => {
     });
   });
 
+  it("keeps dependsOn when a roll release also follows an earlier call", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 3, "close"),
+          "2026-10-03T09:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T09:30:00Z",
+        ),
+      ],
+      [
+        "c",
+        at(
+          execution("c-open", callC, "-1", "50", 3, "open"),
+          "2026-10-03T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-close", callB, "1", "-20", 3, "close"),
+          "2026-10-03T10:30:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "c-open")).toMatchObject({
+      action: "connect",
+      reason: "ROLL_RELEASE",
+      dependsOn: [refOf(lifecycles, "a-open")],
+    });
+  });
+
   it("does not mutate its input", () => {
     const c = chain();
     const planned = planConnections(c);

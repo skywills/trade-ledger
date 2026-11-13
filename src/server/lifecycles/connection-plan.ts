@@ -189,17 +189,22 @@ function connectPlan(
   existing: PlanRow[],
   exec: Map<string, Execution>,
 ): ConnectionPlan {
+  const earlier = accepted.filter((a) =>
+    closesAtOrBefore(closeOf(a, exec), row.opening),
+  );
+  const dependsOn = earlier.flatMap((a) => openRef(a) ?? []);
   if (
     isRollRelease(
       row.opening,
       shortCallOpenings([...existing, ...accepted], exec),
     )
   )
-    return { action: "connect", lifecycleId: target, reason: "ROLL_RELEASE" };
-  const earlier = accepted.filter((a) =>
-    closesAtOrBefore(closeOf(a, exec), row.opening),
-  );
-  const dependsOn = earlier.flatMap((a) => openRef(a) ?? []);
+    return {
+      action: "connect",
+      lifecycleId: target,
+      reason: "ROLL_RELEASE",
+      ...(dependsOn.length ? { dependsOn } : {}),
+    };
   return dependsOn.length
     ? {
         action: "connect",
