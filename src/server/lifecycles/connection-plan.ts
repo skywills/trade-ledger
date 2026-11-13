@@ -22,6 +22,7 @@ import {
   spreadLeg,
 } from "./connection-plan-reasons.js";
 import { refKey } from "./membership.js";
+import { shareAvailability } from "./project.js";
 import { validateLifecycleDecision } from "./validate-decision.js";
 
 export interface PlanInput {
@@ -48,26 +49,56 @@ export function planRowKey(
   return JSON.stringify([s.callOpening.strategyId, e?.instrument.key ?? null]);
 }
 
-function buildRows(
-  lifecycles: LifecycleProjection,
-  exec: Map<string, Execution>,
-): Map<string, PlanRow[]> {
+interface BuiltRows {
+  byPosition: Map<string, PlanRow[]>;
+  /** Rows that more than one position could cover, with those positions. */
+  multiple: Array<{ row: PlanRow; candidates: string[] }>;
+}
+
+const underlyingOf = (e: Execution) =>
+  e.instrument.underlying ?? e.instrument.symbol;
+
+/** Positions whose shares, ignoring call reservations, could have covered the whole row. */
+function unreservedPositions(
+  input: PlanInput,
+  row: PlanRow,
+  suggestions: AttachmentSuggestion[],
+): string[] {
+  const multiplier = new Decimal(row.opening.instrument.multiplier ?? "0");
+  if (!multiplier.gt(0)) return [];
+  const needed = suggestions
+    .reduce(
+      (total, s) => total.plus(new Decimal(s.quantity).abs()),
+      new Decimal(0),
+    )
+    .times(multiplier);
+  const unreserved = shareAvailability(input.ledger, input.lifecycles, false);
+  return input.lifecycles.lifecycles
+    .filter(
+      (l) =>
+        l.account === row.opening.account &&
+        l.currency === row.opening.currency &&
+        l.underlyingKey === `value:${underlyingOf(row.opening)}` &&
+        unreserved(l.id, row.opening).gte(needed),
+    )
+    .map((l) => l.id)
+    .sort();
+}
+
+function buildRows(input: PlanInput, exec: Map<string, Execution>): BuiltRows {
+  const { lifecycles } = input;
   const grouped = new Map<string, AttachmentSuggestion[]>();
   for (const s of lifecycles.suggestions) {
     const key = planRowKey(s, exec);
     grouped.set(key, [...(grouped.get(key) ?? []), s]);
   }
   const byPosition = new Map<string, PlanRow[]>();
+  const multiple: BuiltRows["multiple"] = [];
   for (const suggestions of grouped.values()) {
     const first = suggestions[0];
     const instrumentKey =
       first && exec.get(first.callOpening.executionKey)?.instrument.key;
     if (!first || !instrumentKey) continue;
-    const candidates = first.candidateLifecycleIds.filter((id) =>
-      suggestions.every((s) => s.candidateLifecycleIds.includes(id)),
-    );
-    const [target] = candidates;
-    if (candidates.length !== 1 || !target) continue;
     const members = lifecycles.members.filter(
       (m) =>
         m.allocation.strategyId === first.callOpening.strategyId &&
@@ -79,14 +110,28 @@ function buildRows(
     });
     const opening = [...openings].sort(compareOpenings)[0];
     if (!opening) continue;
-    byPosition.set(target, [
-      ...(byPosition.get(target) ?? []),
-      { suggestions, members, opening },
-    ]);
+    const row: PlanRow = { suggestions, members, opening };
+    let candidates = first.candidateLifecycleIds.filter((id) =>
+      suggestions.every((s) => s.candidateLifecycleIds.includes(id)),
+    );
+    if (
+      !candidates.length &&
+      suggestions.some((s) =>
+        s.reasons.includes("SHARES_RESERVED_BY_OTHER_CALLS"),
+      )
+    )
+      candidates = unreservedPositions(input, row, suggestions);
+    const [target] = candidates;
+    if (!target) continue;
+    if (candidates.length > 1) {
+      multiple.push({ row, candidates });
+      continue;
+    }
+    byPosition.set(target, [...(byPosition.get(target) ?? []), row]);
   }
   for (const rows of byPosition.values())
     rows.sort((a, b) => compareOpenings(a.opening, b.opening));
-  return byPosition;
+  return { byPosition, multiple };
 }
 
 function compareOpenings(a: Execution, b: Execution): number {
@@ -188,11 +233,13 @@ function connectPlan(
   accepted: PlanRow[],
   existing: PlanRow[],
   exec: Map<string, Execution>,
+  pending: AllocationRef[],
 ): ConnectionPlan {
   const earlier = accepted.filter((a) =>
     closesAtOrBefore(closeOf(a, exec), row.opening),
   );
-  const dependsOn = earlier.flatMap((a) => openRef(a) ?? []);
+  const earlierRefs = earlier.flatMap((a) => openRef(a) ?? []);
+  const dependsOn = mergeRefs(earlierRefs, pending);
   if (
     isRollRelease(
       row.opening,
@@ -205,14 +252,24 @@ function connectPlan(
       reason: "ROLL_RELEASE",
       ...(dependsOn.length ? { dependsOn } : {}),
     };
-  return dependsOn.length
-    ? {
-        action: "connect",
-        lifecycleId: target,
-        reason: "COVERED_AFTER_EARLIER",
-        dependsOn,
-      }
-    : { action: "connect", lifecycleId: target, reason: "COVERED" };
+  if (earlierRefs.length)
+    return {
+      action: "connect",
+      lifecycleId: target,
+      reason: "COVERED_AFTER_EARLIER",
+      dependsOn,
+    };
+  return {
+    action: "connect",
+    lifecycleId: target,
+    reason: "COVERED",
+    ...(dependsOn.length ? { dependsOn } : {}),
+  };
+}
+
+function mergeRefs(...lists: AllocationRef[][]): AllocationRef[] {
+  const byKey = new Map(lists.flat().map((r) => [refKey(r), r]));
+  return [...byKey.values()];
 }
 
 function shortCallOpenings(
@@ -270,6 +327,7 @@ function separatePlan(
   existing: PlanRow[],
   lifecycles: LifecycleProjection,
   exec: Map<string, Execution>,
+  pending: AllocationRef[],
 ): ConnectionPlan {
   const held = shortCallOpenings([...existing, ...holders], exec)
     .filter(
@@ -290,7 +348,50 @@ function separatePlan(
     reason: sharesSold ? "SHARES_SOLD" : "HELD_BY_EARLIER_CALL",
     ...(held ? { heldBy: held.ref } : {}),
     ...(sharesSold ? { sharesSold } : {}),
+    ...(pending.length ? { dependsOn: pending } : {}),
   };
+}
+
+/** Calls in the position, or about to be, whose time against this opening cannot be ordered. */
+function orderUnknown(
+  row: PlanRow,
+  others: PlanRow[],
+  exec: Map<string, Execution>,
+): boolean {
+  return others.some((o) =>
+    o.members.some((m) => {
+      const e = exec.get(m.allocation.executionKey);
+      return (
+        e !== undefined &&
+        e.instrument.putCall === "C" &&
+        e.instrument.key !== row.opening.instrument.key &&
+        e.date === row.opening.date &&
+        compareLifecycleTime(e, row.opening) === null
+      );
+    }),
+  );
+}
+
+/** The row with its fills up to and including the nth; the last prefix is the whole row. */
+function fillPrefixes(row: PlanRow, exec: Map<string, Execution>): PlanRow[] {
+  const fills = row.suggestions
+    .flatMap((s) => {
+      const e = exec.get(s.callOpening.executionKey);
+      return e ? [e] : [];
+    })
+    .sort(compareOpenings);
+  return fills.map((_, i) => {
+    if (i === fills.length - 1) return row;
+    const included = new Set(fills.slice(0, i + 1).map((f) => f.key));
+    return {
+      ...row,
+      members: row.members.filter(
+        (m) =>
+          m.allocation.role === "open" &&
+          included.has(m.allocation.executionKey),
+      ),
+    };
+  });
 }
 
 function planPosition(
@@ -298,13 +399,23 @@ function planPosition(
   exec: Map<string, Execution>,
   target: string,
   rows: PlanRow[],
+  multiple: BuiltRows["multiple"],
 ): Map<PlanRow, ConnectionPlan> {
   const plans = new Map<PlanRow, ConnectionPlan>();
   const existing = existingRows(target, input.lifecycles, exec);
   const separates: PlanRow[] = [];
+  const manuals: PlanRow[] = [];
   const accepted: PlanRow[] = [];
   rows.forEach((row, n) => {
-    const kept = separates.map((s, i) =>
+    const choices = multiple
+      .filter(
+        (m) =>
+          m.candidates.includes(target) &&
+          compareOpenings(m.row.opening, row.opening) < 0,
+      )
+      .map((m) => m.row);
+    // Manual rows are assumed kept apart so they do not skew the order check for later rows.
+    const kept = [...separates, ...manuals, ...choices].map((s, i) =>
       hypotheticalDecision(
         `plan:sep:${n}:${i}`,
         Number.MAX_SAFE_INTEGER - n - i - 1,
@@ -313,16 +424,46 @@ function planPosition(
         target,
       ),
     );
-    const candidate = hypotheticalDecision(
-      "__validate__", // the id decisions treat as a live check: failures throw
-      Number.MAX_SAFE_INTEGER,
-      true,
-      [...accepted, row],
-      target,
-    );
-    const verdict = connects(input, kept, candidate)
-      ? connectPlan(target, row, accepted, existing, exec)
-      : separatePlan(target, row, accepted, existing, input.lifecycles, exec);
+    const pending = [...choices, ...manuals].flatMap((r) => openRef(r) ?? []);
+    const judged = (members: PlanRow) =>
+      hypotheticalDecision(
+        "__validate__", // the id decisions treat as a live check: failures throw
+        Number.MAX_SAFE_INTEGER,
+        true,
+        [...accepted, members],
+        target,
+      );
+    const others = [...existing, ...rows.filter((r) => r !== row)];
+    const verdicts = orderUnknown(row, others, exec)
+      ? null
+      : fillPrefixes(row, exec).map((p) => connects(input, kept, judged(p)));
+    const manualReason =
+      verdicts === null
+        ? "ORDER_UNKNOWN"
+        : new Set(verdicts).size > 1
+          ? "PARTIAL"
+          : null;
+    if (manualReason) {
+      plans.set(row, {
+        action: "manual",
+        lifecycleId: target,
+        reason: manualReason,
+        ...(pending.length ? { dependsOn: pending } : {}),
+      });
+      manuals.push(row);
+      return;
+    }
+    const verdict = verdicts?.at(-1)
+      ? connectPlan(target, row, accepted, existing, exec, pending)
+      : separatePlan(
+          target,
+          row,
+          accepted,
+          existing,
+          input.lifecycles,
+          exec,
+          pending,
+        );
     const pairedWith = spreadLeg(
       row.opening,
       input.ledger.executions,
@@ -335,14 +476,22 @@ function planPosition(
   return plans;
 }
 
-/** Recommends, per review row, connecting to or keeping a call apart from its one candidate position. */
+/** Recommends, per review row, connecting to or keeping a call apart from its candidate position. */
 export function planConnections(input: PlanInput): LifecycleProjection {
   const exec = new Map(input.ledger.executions.map((e) => [e.key, e]));
   const planned = new Map<AttachmentSuggestion, ConnectionPlan>();
-  for (const [target, rows] of buildRows(input.lifecycles, exec)) {
-    for (const [row, plan] of planPosition(input, exec, target, rows))
+  const { byPosition, multiple } = buildRows(input, exec);
+  for (const [target, rows] of byPosition) {
+    for (const [row, plan] of planPosition(input, exec, target, rows, multiple))
       for (const s of row.suggestions) planned.set(s, plan);
   }
+  for (const { row } of multiple)
+    for (const s of row.suggestions)
+      planned.set(s, {
+        action: "manual",
+        lifecycleId: null,
+        reason: "MULTIPLE_POSITIONS",
+      });
   return {
     ...input.lifecycles,
     suggestions: input.lifecycles.suggestions.map((s) => {

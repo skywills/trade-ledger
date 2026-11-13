@@ -378,6 +378,189 @@ describe("planConnections", () => {
     });
   });
 
+  it("asks for a choice when two share positions could cover a call", () => {
+    const { ledger, projection } = fixture([
+      ["s1", execution("s1-buy", stock, "100", "-10000", 1, "open")],
+      ["s2", execution("s2-buy", stock, "100", "-10000", 1, "open")],
+      ["s2", execution("s2-sell", stock, "-100", "10500", 5, "close")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 4, "open"),
+          "2026-10-04T10:00:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 4, "close"),
+          "2026-10-04T15:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 6, "open"),
+          "2026-10-06T10:00:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    expect(
+      lifecycles.suggestions.find(
+        (s) => s.callOpening.executionKey === "a-open",
+      )?.candidateLifecycleIds,
+    ).toHaveLength(2);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "a-open")).toMatchObject({
+      action: "manual",
+      reason: "MULTIPLE_POSITIONS",
+      lifecycleId: null,
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "connect",
+      dependsOn: [refOf(lifecycles, "a-open")],
+    });
+  });
+
+  it("marks a row partial when only some of its fills fit", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open-1", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-open-2", call, "-1", "70", 2, "open"),
+          "2026-10-02T11:00:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "a-open-1")).toMatchObject({
+      action: "manual",
+      reason: "PARTIAL",
+    });
+    expect(planOf(planned, "a-open-2")).toMatchObject({
+      action: "manual",
+      reason: "PARTIAL",
+    });
+  });
+
+  it("asks for review when trade order is unknown", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 3, "close"),
+          "2026-10-03T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(execution("b-open", callB, "-1", "60", 3, "open"), "2026-10-03"),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "manual",
+      reason: "ORDER_UNKNOWN",
+    });
+  });
+
+  it("recommends separate for a call already blocked by saved connections", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T10:00:00Z",
+        ),
+      ],
+    ]);
+    const initial = projectLifecycles(ledger, projection, []);
+    const target = initial.suggestions[0]?.candidateLifecycleIds[0];
+    if (!target) throw Error("missing share lifecycle");
+    const saved: Decision = {
+      id: "connect-a",
+      sequence: 1,
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      kind: "lifecycle_membership",
+      payload: {
+        requireCallCoverage: true,
+        assignments: initial.members
+          .filter((m) => m.allocation.strategyId === "a")
+          .map((m) => ({
+            allocation: m.allocation,
+            lifecycleId: target,
+            quantity: m.quantity,
+          })),
+      },
+    };
+    const lifecycles = projectLifecycles(ledger, projection, [saved]);
+    const row = lifecycles.suggestions.find(
+      (s) => s.callOpening.executionKey === "b-open",
+    );
+    expect(row?.reasons).toContain("SHARES_RESERVED_BY_OTHER_CALLS");
+    expect(row?.candidateLifecycleIds).toEqual([]);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [saved],
+      lifecycles,
+    });
+    expect(planOf(planned, "b-open")).toMatchObject({
+      action: "separate",
+      reason: "HELD_BY_EARLIER_CALL",
+      lifecycleId: target,
+      heldBy: {
+        strategyId: "a",
+        executionKey: "a-open",
+        role: "open",
+      },
+    });
+  });
+
   it("does not mutate its input", () => {
     const c = chain();
     const planned = planConnections(c);
