@@ -286,3 +286,13 @@ it("renders the list as before when no plans are attached", () => {
   expect(html).toContain("Keep selected separate");
   expect(html).toContain('type="checkbox"');
 });
+
+it("titles rows with the readable contract and a correct plural", () => {
+  const html = renderToStaticMarkup(
+    <ConnectionQueue data={queueData({ early: covered, late: kept })} />,
+  );
+  expect(html).toContain("Nov20&#x27;26 105C");
+  expect(html).toMatch(/Nov20&#x27;26 105C · 1 short call</);
+  expect(html).not.toContain("short calls<");
+  expect(html).not.toMatch(/XYZ · \d+ short call/);
+});

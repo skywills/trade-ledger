@@ -5,6 +5,7 @@ import {
   explainPlan,
   groupPlan,
   type PositionGroup,
+  shortCallsLabel,
 } from "./connection-guidance.js";
 import { type ConnectionGroup, lifecycleLabel } from "./connections.js";
 
@@ -41,7 +42,8 @@ export function ConnectionRow({
         <span>
           <time>{connectionDate(group, data)}</time>
           <strong>
-            {group.instrument.symbol} · {group.contracts} short calls
+            {contractLabel(group.instrument)} ·{" "}
+            {shortCallsLabel(group.contracts)}
           </strong>
         </span>
       </label>

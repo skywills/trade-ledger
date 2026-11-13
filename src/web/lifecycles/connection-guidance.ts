@@ -29,6 +29,11 @@ export function contractLabel(i: Execution["instrument"]): string {
   return `${expiry} ${strike}${i.putCall ?? ""}`.trim();
 }
 
+/** "1 short call" / "2 short calls". */
+export function shortCallsLabel(contracts: number | string): string {
+  return `${contracts} short ${Number(contracts) === 1 ? "call" : "calls"}`;
+}
+
 export function groupPlan(g: ConnectionGroup): ConnectionPlan | null {
   return g.suggestions[0]?.plan ?? null;
 }

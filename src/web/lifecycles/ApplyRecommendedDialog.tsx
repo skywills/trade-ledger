@@ -6,7 +6,11 @@ import {
   type ConnectionData,
   connectionDate,
 } from "./connection-batch.js";
-import { contractLabel, type PositionGroup } from "./connection-guidance.js";
+import {
+  contractLabel,
+  type PositionGroup,
+  shortCallsLabel,
+} from "./connection-guidance.js";
 
 export function ApplyRecommendedDialog({
   data,
@@ -117,7 +121,7 @@ export function ApplyRecommendedDialog({
             <li key={g.key}>
               <time>{connectionDate(g, data)}</time>
               <strong>
-                {contractLabel(g.instrument)} · {g.contracts} short calls
+                {contractLabel(g.instrument)} · {shortCallsLabel(g.contracts)}
               </strong>
               <span>{action}</span>
             </li>
