@@ -43,7 +43,7 @@ export interface AttachmentSuggestion {
   quantity: string;
   sources: SourceRef[];
   reasons: string[];
-  plan?: ConnectionPlan;
+  plan?: ConnectionPlan | undefined;
 }
 export type PlanAction = "connect" | "separate" | "manual";
 export type PlanReason =
@@ -60,12 +60,31 @@ export interface ConnectionPlan {
   /** The position the row was judged against; null only for MULTIPLE_POSITIONS. */
   lifecycleId: Id | null;
   reason: PlanReason;
-  sharesAtOpening?: string;
-  heldBy?: AllocationRef;
-  sharesSold?: { executionKey: string };
-  pairedWith?: AllocationRef;
-  dependsOn?: AllocationRef[];
+  sharesAtOpening?: string | undefined;
+  heldBy?: AllocationRef | undefined;
+  sharesSold?: { executionKey: string } | undefined;
+  pairedWith?: AllocationRef | undefined;
+  dependsOn?: AllocationRef[] | undefined;
 }
+export const ConnectionPlanSchema = z.object({
+  action: z.enum(["connect", "separate", "manual"]),
+  lifecycleId: z.string().nullable(),
+  reason: z.enum([
+    "COVERED",
+    "COVERED_AFTER_EARLIER",
+    "ROLL_RELEASE",
+    "HELD_BY_EARLIER_CALL",
+    "SHARES_SOLD",
+    "MULTIPLE_POSITIONS",
+    "PARTIAL",
+    "ORDER_UNKNOWN",
+  ]),
+  sharesAtOpening: DecimalTextSchema.optional(),
+  heldBy: AllocationRefSchema.optional(),
+  sharesSold: z.object({ executionKey: z.string() }).optional(),
+  pairedWith: AllocationRefSchema.optional(),
+  dependsOn: z.array(AllocationRefSchema).optional(),
+});
 export interface WheelCampaign {
   id: Id;
   name: string;

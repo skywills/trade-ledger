@@ -14,6 +14,7 @@ import type {
   LifecycleProjection,
   RetainedLifecycleAnchor,
 } from "../../shared/lifecycles.js";
+import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
 import {
   compareByTime,
@@ -21,6 +22,7 @@ import {
   sharesSoldAfter,
   spreadLeg,
 } from "./connection-plan-reasons.js";
+import { scopeTo } from "./connection-plan-scope.js";
 import { refKey } from "./membership.js";
 import { shareAvailability } from "./project.js";
 import { validateLifecycleDecision } from "./validate-decision.js";
@@ -30,7 +32,7 @@ export interface PlanInput {
   projection: Projection;
   decisions: readonly Decision[];
   lifecycles: LifecycleProjection;
-  origins?: Projection;
+  origins?: Projection | undefined;
   retainedAnchors?: readonly RetainedLifecycleAnchor[];
 }
 
@@ -394,14 +396,58 @@ function fillPrefixes(row: PlanRow, exec: Map<string, Execution>): PlanRow[] {
   });
 }
 
-function planPosition(
+/**
+ * Free shares in the target position when the row opens, from the same
+ * coverage code the projection uses. The earlier accepted rows are assumed
+ * connected (their members moved into the position), so the figure matches
+ * what the user will see once those connections are saved, not the saved state.
+ */
+function freeSharesAt(
   input: PlanInput,
+  target: string,
+  accepted: PlanRow[],
+  row: PlanRow,
+): string {
+  const moved = new Set(
+    accepted.flatMap((a) => a.members.map((m) => refKey(m.allocation))),
+  );
+  const assumed: LifecycleProjection = {
+    ...input.lifecycles,
+    members: [
+      ...input.lifecycles.members.filter(
+        (m) => !moved.has(refKey(m.allocation)),
+      ),
+      ...accepted.flatMap((a) =>
+        a.members.map((m) => ({ ...m, lifecycleId: target })),
+      ),
+    ],
+  };
+  return shareAvailability(input.ledger, assumed)(
+    target,
+    row.opening,
+  ).toString();
+}
+
+function planPosition(
+  whole: PlanInput,
   exec: Map<string, Execution>,
   target: string,
   rows: PlanRow[],
   multiple: BuiltRows["multiple"],
 ): Map<PlanRow, ConnectionPlan> {
   const plans = new Map<PlanRow, ConnectionPlan>();
+  const first = rows[0];
+  // Hypothetical checks run on this account's trades in this underlying only.
+  const input: PlanInput = first
+    ? {
+        ...whole,
+        ...scopeTo(
+          whole,
+          first.opening.account,
+          underlyingSymbol(first.opening.instrument),
+        ),
+      }
+    : whole;
   const existing = existingRows(target, input.lifecycles, exec);
   const separates: PlanRow[] = [];
   const manuals: PlanRow[] = [];
@@ -469,7 +515,14 @@ function planPosition(
       input.ledger.executions,
       input.projection.allocations,
     );
-    plans.set(row, pairedWith ? { ...verdict, pairedWith } : verdict);
+    const sized =
+      verdict.action === "connect"
+        ? {
+            ...verdict,
+            sharesAtOpening: freeSharesAt(input, target, accepted, row),
+          }
+        : verdict;
+    plans.set(row, pairedWith ? { ...sized, pairedWith } : sized);
     if (verdict.action === "connect") accepted.push(row);
     else separates.push(row);
   });

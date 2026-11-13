@@ -22,6 +22,7 @@ import {
   readLedger,
 } from "../ledger/normalize.js";
 import { accountLifecycles } from "../lifecycles/accounting.js";
+import { planConnections } from "../lifecycles/connection-plan.js";
 import {
   projectLifecycles,
   validateMembership,
@@ -54,7 +55,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "lifecycles-v11";
+export const ALGORITHM_VERSION = "lifecycles-v12";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
@@ -170,7 +171,8 @@ export async function computeProjection(
     ledger,
     remapStrategyIds(provisional, remap),
   );
-  const lifecycles = accountLifecycles(
+  const retained = readLifecycleAnchors(store.db);
+  const accounted = accountLifecycles(
     ledger,
     originProjection,
     projectLifecycles(
@@ -179,9 +181,18 @@ export async function computeProjection(
       decisions,
       undefined,
       originProjection,
-      readLifecycleAnchors(store.db),
+      retained,
     ),
   );
+  // Recommendations judge the final, accounted positions and keep every other field intact.
+  const lifecycles = planConnections({
+    ledger,
+    projection,
+    decisions,
+    lifecycles: accounted,
+    origins: originProjection,
+    retainedAnchors: retained,
+  });
   const snapshots = decisions
     .filter((d) => d.kind === "lifecycle_valuation")
     .map((d) => ValuationSnapshotSchema.parse(d.payload));

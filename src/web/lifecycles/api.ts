@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AllocationRefSchema } from "../../shared/lifecycles.js";
+import {
+  AllocationRefSchema,
+  ConnectionPlanSchema,
+} from "../../shared/lifecycles.js";
 import {
   BuildResponseSchema,
   DecisionResponseSchema,
@@ -39,6 +42,8 @@ export const SuggestionSchema = z.object({
   quantity: z.string(),
   sources: z.array(SourceRefSchema),
   reasons: z.array(z.string()),
+  // Optional so projections stored before plans existed still parse.
+  plan: ConnectionPlanSchema.optional(),
 });
 export const CampaignSchema = z.object({
   id: z.string(),

@@ -68,6 +68,7 @@ describe("planConnections", () => {
       action: "connect",
       lifecycleId: target,
       reason: "COVERED",
+      sharesAtOpening: "100",
     });
     expect(planOf(planned, "b-open")).toMatchObject({
       action: "connect",
