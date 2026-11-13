@@ -825,29 +825,31 @@ export function shareAvailability(
     callOpensByDay.set(day, [...(callOpensByDay.get(day) ?? []), x]);
   }
   /**
-   * A same-day buy-back only corrects an order-sequence slip when nothing
+   * A same-day buy-back or worthless expiry only frees the shares when nothing
    * else used the freed shares that day: no other call sold after it (that
    * call is the real roll) and no shares of this lifecycle sold after the
-   * new call (an exit, which leaves the new call uncovered).
+   * new call, or at an unknown time that day (an exit, which leaves the new
+   * call uncovered).
    */
-  const legSlip = (id: string, buyBack: Execution, before: Execution) =>
+  const sameDayRelease = (id: string, close: Execution, before: Execution) =>
     !(
-      callOpensByDay.get(JSON.stringify([buyBack.account, buyBack.date])) ?? []
+      callOpensByDay.get(JSON.stringify([close.account, close.date])) ?? []
     ).some(
       (x) =>
         x.key !== before.key &&
-        underlyingSymbol(x.instrument) ===
-          underlyingSymbol(buyBack.instrument) &&
-        compareLifecycleTime(x, buyBack) === 1,
+        underlyingSymbol(x.instrument) === underlyingSymbol(close.instrument) &&
+        compareLifecycleTime(x, close) === 1,
     ) &&
     !(members.get(id) ?? []).some((m) => {
       const x = exec.get(m.allocation.executionKey);
-      return (
-        x?.instrument.assetClass === "STK" &&
-        m.allocation.role === "close" &&
-        x.date === before.date &&
-        compareLifecycleTime(x, before) === 1
-      );
+      if (
+        x?.instrument.assetClass !== "STK" ||
+        m.allocation.role !== "close" ||
+        x.date !== before.date
+      )
+        return false;
+      const order = compareLifecycleTime(x, before);
+      return order === 1 || order === null;
     });
   return (id: string, before?: Execution): Decimal => {
     let shares = new Decimal(0);
@@ -866,17 +868,20 @@ export function shareAvailability(
         // A legged roll: the new call was sold first and the old covered call
         // bought back later the same day, usually an order-sequence slip that
         // is corrected moments later. Its buy-back releases the shares for the
-        // new call. Expiry, assignment or a later-day buy-back does not.
-        const leggedRollBuyBack =
+        // new call. So does an expiry-day roll, where the old call expires
+        // worthless (no cash) later that day and the shares stay. Assignment
+        // (shares called away) or a later-day close does not.
+        const sameDayRollRelease =
           order === 1 &&
           e.instrument.putCall === "C" &&
-          e.event === "trade" &&
+          (e.event === "trade" ||
+            (e.event === "expiry" && new Decimal(e.netCash).isZero())) &&
           new Decimal(m.quantity).gt(0) &&
           e.date === before.date &&
-          legSlip(id, e, before);
+          sameDayRelease(id, e, before);
         if (
           (order === 0 && !frees) ||
-          (order === 1 && !leggedRollBuyBack) ||
+          (order === 1 && !sameDayRollRelease) ||
           (order === null && !new Decimal(m.quantity).lt(0))
         )
           continue;
