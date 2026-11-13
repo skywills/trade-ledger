@@ -189,7 +189,7 @@ it("imports assignment, attaches a call before close import, and reports one com
     await t.dispose();
   }
 });
-it("resolves a real orphan stock close split across two independent opening lots", async () => {
+it("splits a stock close across two independent opening lots FIFO", async () => {
   const t = await createTestStore();
   try {
     await commit(
@@ -201,37 +201,13 @@ it("resolves a real orphan stock close split across two independent opening lots
       ],
       "shared.csv",
     );
+    // IBKR matches the 200-share sale FIFO across both 100-share lots, so no
+    // manual split decision is needed.
     const projection = activeProjection(t.store).projection;
     if (!projection?.lifecycles) throw Error("missing lifecycle projection");
-    const source = projection.allocations.find((a) =>
-      a.executionKey.endsWith(":shared-sale"),
+    expect(projection.issues.map((i) => i.code)).not.toContain(
+      "LIFECYCLE_EXPOSURE_UNRESOLVED",
     );
-    if (!source) throw Error("missing shared close");
-    const targets = projection.lifecycles.lifecycles.filter((l) =>
-      l.positions.some((p) => p.quantity === "100"),
-    );
-    expect(targets).toHaveLength(2);
-    await appendDecision(
-      t.store,
-      {
-        kind: "lifecycle_membership",
-        clientRequestId: "split-sale",
-        author: "user",
-        payload: {
-          assignments: targets.map((l) => ({
-            lifecycleId: l.id,
-            allocation: {
-              strategyId: source.strategyId,
-              executionKey: source.executionKey,
-              role: source.role,
-            },
-            quantity: "-100",
-          })),
-        },
-      },
-      decisionWatermark(t.store),
-    );
-    await rebuild(t.store, input);
     const result = aggregateAnalytics(readAnalyticsSnapshot(t.store), {
       basis: "reconstructed",
       currency: "USD",

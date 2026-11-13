@@ -17,7 +17,11 @@ import {
 } from "./api.js";
 import { BuildAction } from "./BuildAction.js";
 import { ConnectionReview } from "./ConnectionReview.js";
-import { connectionGroups, reviewLabel } from "./connections.js";
+import {
+  connectionGroups,
+  lifecycleEventRows,
+  reviewLabel,
+} from "./connections.js";
 import { MembershipEditor, SourcePartitionEditor } from "./MembershipEditor.js";
 import { ValuationEditor } from "./ValuationEditor.js";
 import "./lifecycles.css";
@@ -328,61 +332,51 @@ export function LifecycleDetail({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {[...d.members]
-              .sort((a, b) =>
-                (
-                  d.executions.find((e) => e.key === a.allocation.executionKey)
-                    ?.date ?? ""
-                ).localeCompare(
-                  d.executions.find((e) => e.key === b.allocation.executionKey)
-                    ?.date ?? "",
-                ),
-              )
-              .map((m) => {
-                const e = d.executions.find(
-                  (e) => e.key === m.allocation.executionKey,
-                );
-                return (
-                  <tr
-                    key={`${m.allocation.strategyId}-${m.allocation.executionKey}-${m.allocation.role}`}
-                  >
-                    <td>{e?.date ?? "Unknown"}</td>
-                    <td>{e?.instrument.symbol ?? m.allocation.executionKey}</td>
-                    <td>{e?.event.replaceAll("_", " ") ?? "Unknown"}</td>
-                    <td>{m.allocation.role}</td>
-                    <td>{m.quantity}</td>
-                    <td>{formatMoney(m.netCash, l.currency)}</td>
-                    <td>{formatMoney(m.brokerPnl, l.currency)}</td>
-                    <td>
-                      {m.brokerPnl === null
-                        ? "Unavailable"
-                        : m.estimated
-                          ? "Allocated (estimated)"
-                          : m.pnlAttribution === "basis-reconciled"
-                            ? "Basis-reconciled"
-                            : "Broker reported"}
-                    </td>
-                    <td>
-                      <Link
-                        to={`/strategies/${encodeURIComponent(m.allocation.strategyId)}`}
-                      >
-                        Original component
-                      </Link>
-                    </td>
-                    <td>
-                      {m.sources.map((s) => (
-                        <span key={`${s.importId}-${s.rowNumber}`}>
-                          <Link
-                            to={`/imports?import=${encodeURIComponent(s.importId)}&row=${s.rowNumber}`}
-                          >
-                            Row {s.rowNumber}
-                          </Link>{" "}
-                        </span>
-                      ))}
-                    </td>
-                  </tr>
-                );
-              })}
+            {lifecycleEventRows(d.members, d.executions).map((m) => {
+              const e = d.executions.find(
+                (e) => e.key === m.allocation.executionKey,
+              );
+              return (
+                <tr
+                  key={`${m.allocation.strategyId}-${m.allocation.executionKey}-${m.allocation.role}`}
+                >
+                  <td>{e?.date ?? "Unknown"}</td>
+                  <td>{e?.instrument.symbol ?? m.allocation.executionKey}</td>
+                  <td>{e?.event.replaceAll("_", " ") ?? "Unknown"}</td>
+                  <td>{m.allocation.role}</td>
+                  <td>{m.quantity}</td>
+                  <td>{formatMoney(m.netCash, l.currency)}</td>
+                  <td>{formatMoney(m.brokerPnl, l.currency)}</td>
+                  <td>
+                    {m.brokerPnl === null
+                      ? "Unavailable"
+                      : m.estimated
+                        ? "Allocated (estimated)"
+                        : m.pnlAttribution === "basis-reconciled"
+                          ? "Basis-reconciled"
+                          : "Broker reported"}
+                  </td>
+                  <td>
+                    <Link
+                      to={`/strategies/${encodeURIComponent(m.allocation.strategyId)}`}
+                    >
+                      Original component
+                    </Link>
+                  </td>
+                  <td>
+                    {m.sources.map((s) => (
+                      <span key={`${s.importId}-${s.rowNumber}`}>
+                        <Link
+                          to={`/imports?import=${encodeURIComponent(s.importId)}&row=${s.rowNumber}`}
+                        >
+                          Row {s.rowNumber}
+                        </Link>{" "}
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </TableScroll>

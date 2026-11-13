@@ -20,6 +20,7 @@ import {
   manifestHash,
   persistLedgerBuild,
 } from "../storage/ledger.js";
+import { resolveAdjustedOptionRoots } from "./adjusted-options.js";
 import { resolveContractMultipliers } from "./contracts.js";
 import {
   type Candidate,
@@ -323,12 +324,13 @@ export async function normalizeLedger(
   );
   issues.push(...revisionOutcome.issues);
   issues.push(...applyCashSettlements(revisionOutcome.revisions, cashRows));
-  resolveContractMultipliers(
-    revisionOutcome.revisions
-      .filter((revision) => revision.state === "active")
-      .map((revision) => revision.payload),
-    issues,
-  );
+  const activePayloads = revisionOutcome.revisions
+    .filter((revision) => revision.state === "active")
+    .map((revision) => revision.payload);
+  // Before multipliers: a renamed (adjusted) option contract inherits the
+  // original contract's identity and multiplier.
+  resolveAdjustedOptionRoots(activePayloads);
+  resolveContractMultipliers(activePayloads, issues);
 
   const ledgerId = await persistLedgerBuild(store, {
     inputManifestHash: manifestHash(

@@ -59,6 +59,24 @@ export function connectionTimeline(
   return { rows, uncertain };
 }
 
+/**
+ * Lifecycle event table order: calendar date first, then execution time where
+ * provenance establishes it, so same-day fills (assignments, buy-backs, share
+ * sales) are not shown in arbitrary input order.
+ */
+export function lifecycleEventRows(
+  members: LifecycleMember[],
+  executions: Execution[],
+): LifecycleMember[] {
+  const date = new Map(executions.map((e) => [e.key, e.date]));
+  const byDate = [...members].sort((a, b) =>
+    (date.get(a.allocation.executionKey) ?? "").localeCompare(
+      date.get(b.allocation.executionKey) ?? "",
+    ),
+  );
+  return connectionTimeline(byDate, executions).rows;
+}
+
 export interface ConnectionGroup {
   key: string;
   canReviewWhole: boolean;
@@ -203,7 +221,9 @@ export function reviewLabel(reasons: string[]): string {
           ? "Assignment/exercise settlement or delivery evidence is missing; reconstructed P&L is unavailable"
           : reason === "cash_settlement_currency_missing"
             ? "Settlement cash has no currency. Include Currency in the Statement of Funds export; no cash was applied."
-            : reason.replaceAll("_", " ").toLowerCase(),
+            : reason === "IBKR_TAX_LOT_DIFFERS"
+              ? "Shares follow your covered-call pairing; IBKR's FIFO tax lots split this P&L differently"
+              : reason.replaceAll("_", " ").toLowerCase(),
     )
     .join(" · ");
 }
