@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { explainedByBrokerBasis } from "../../shared/broker-basis.js";
 import type {
   Allocation,
   DecimalText,
@@ -189,7 +190,16 @@ function amountsFor(
   const reconciliation =
     reconstructedPnl !== null &&
     brokerPnl !== null &&
-    !reconcilesWithin(reconstructedPnl, brokerPnl, strategy.currency);
+    !reconcilesWithin(reconstructedPnl, brokerPnl, strategy.currency) &&
+    !explainedByBrokerBasis(
+      allocations.flatMap((allocation) => {
+        const execution = executionByKey.get(allocation.executionKey);
+        return execution ? [{ ...allocation, execution }] : [];
+      }),
+      reconstructedPnl,
+      brokerPnl,
+      strategy.currency,
+    );
 
   return {
     openingAmount,
