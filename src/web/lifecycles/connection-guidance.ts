@@ -142,7 +142,9 @@ export function explainPlan(
   const soldAt = opening
     ? `${opening.date}${time(opening) ? ` ${time(opening)}` : ""}`
     : "an unknown time";
-  const earlier = plan.heldBy ?? plan.dependsOn?.[0];
+  // heldBy: HELD_BY_EARLIER_CALL, SHARES_SOLD, ROLL_RELEASE; dependsOn[0]: COVERED_AFTER_EARLIER.
+  const earlier =
+    plan.reason === "COVERED_AFTER_EARLIER" ? plan.dependsOn?.[0] : plan.heldBy;
   let text: string;
   switch (plan.reason) {
     case "COVERED": {

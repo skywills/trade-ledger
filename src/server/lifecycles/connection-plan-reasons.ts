@@ -28,12 +28,12 @@ function releasesLater(close: Execution | null, opening: Execution): boolean {
   );
 }
 
-/** True when a call open at this opening is bought back or expires worthless later that day. */
-export function isRollRelease(
+/** The call held at this opening that is bought back or expires worthless later that day, if any. */
+export function rollReleasedCall<T extends HeldCall>(
   opening: Execution,
-  calls: readonly HeldCall[],
-): boolean {
-  return calls.some(
+  calls: readonly T[],
+): T | undefined {
+  return calls.find(
     (c) =>
       c.execution.key !== opening.key &&
       compareByTime(c.execution, opening) < 0 &&

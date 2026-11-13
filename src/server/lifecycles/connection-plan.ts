@@ -18,7 +18,7 @@ import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
 import {
   compareByTime,
-  isRollRelease,
+  rollReleasedCall,
   sharesSoldAfter,
   spreadLeg,
 } from "./connection-plan-reasons.js";
@@ -257,16 +257,16 @@ function connectPlan(
   );
   const earlierRefs = earlier.flatMap((a) => openRef(a) ?? []);
   const dependsOn = mergeRefs(earlierRefs, pending);
-  if (
-    isRollRelease(
-      row.opening,
-      shortCallOpenings([...existing, ...accepted], exec),
-    )
-  )
+  const released = rollReleasedCall(
+    row.opening,
+    shortCallOpenings([...existing, ...accepted], exec),
+  );
+  if (released)
     return {
       action: "connect",
       lifecycleId: target,
       reason: "ROLL_RELEASE",
+      heldBy: released.ref,
       ...(dependsOn.length ? { dependsOn } : {}),
     };
   if (earlierRefs.length)

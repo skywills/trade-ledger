@@ -239,7 +239,7 @@ it("explains plans", () => {
     plan({
       action: "connect",
       reason: "COVERED_AFTER_EARLIER",
-      heldBy: ref("b"),
+      dependsOn: [ref("b")],
     }),
     "a",
   );

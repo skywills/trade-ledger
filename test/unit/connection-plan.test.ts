@@ -245,6 +245,7 @@ describe("planConnections", () => {
     expect(planOf(planned, "b-open")).toMatchObject({
       action: "connect",
       reason: "ROLL_RELEASE",
+      heldBy: refOf(lifecycles, "a-open"),
     });
   });
 
@@ -283,6 +284,7 @@ describe("planConnections", () => {
     expect(planOf(planned, "b-open")).toMatchObject({
       action: "connect",
       reason: "ROLL_RELEASE",
+      heldBy: refOf(lifecycles, "a-open"),
     });
   });
 
@@ -375,6 +377,7 @@ describe("planConnections", () => {
     expect(planOf(planned, "c-open")).toMatchObject({
       action: "connect",
       reason: "ROLL_RELEASE",
+      heldBy: refOf(lifecycles, "b-open"),
       dependsOn: [refOf(lifecycles, "a-open")],
     });
   });
