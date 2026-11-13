@@ -1,5 +1,6 @@
 import { Decimal } from "decimal.js";
 import type { LedgerSnapshot } from "../../shared/domain.js";
+import { groupBy } from "../../shared/group-by.js";
 import type {
   LifecycleProjection,
   LifecycleValuation,
@@ -16,8 +17,9 @@ export function valueLifecycles(
   snapshots: readonly ValuationSnapshot[],
 ): LifecycleValuation[] {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
+  const membersByLifecycle = groupBy(p.members, (m) => m.lifecycleId);
   return p.lifecycles.map((l) => {
-    const members = p.members.filter((m) => m.lifecycleId === l.id);
+    const members = membersByLifecycle.get(l.id) ?? [];
     const realized = brokerRealized(ledger, members);
     const base: LifecycleValuation = {
       lifecycleId: l.id,
