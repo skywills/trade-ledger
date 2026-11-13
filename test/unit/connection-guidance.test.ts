@@ -306,3 +306,48 @@ it("explains plans", () => {
     "Trade times can't show what happened first. Review this call individually.",
   );
 });
+
+function sectionOf(data: ConnectionData) {
+  const [section] = connectionSections(data);
+  if (!section) throw new Error("no section");
+  return section;
+}
+
+it("blocks Apply when a row depends on a manual row in the needs-choice group", () => {
+  const choice = plan({
+    action: "manual",
+    reason: "MULTIPLE_POSITIONS",
+    lifecycleId: null,
+  });
+  const dependent = plan({
+    action: "connect",
+    reason: "COVERED_AFTER_EARLIER",
+    dependsOn: [ref("a")],
+  });
+  const data = build([
+    ["s1", "a", choice],
+    ["s2", "b", dependent],
+  ]);
+  const groups = positionGroups(sectionOf(data), data);
+  const l1 = groups.find((g) => g.lifecycleId === "L1");
+  expect(l1?.blockedBy && groupPlan(l1.blockedBy)?.reason).toBe(
+    "MULTIPLE_POSITIONS",
+  );
+});
+
+it("does not apply rows that cannot be reviewed whole, and blocks instead", () => {
+  const data = build([
+    ["s1", "c", plan({ action: "connect", reason: "COVERED" })],
+    ["s2", "b", plan({ action: "connect", reason: "COVERED" })],
+  ]);
+  // Row "c" has an opening member without a suggestion, so it cannot be reviewed whole.
+  data.lifecycles?.members.push(member("L1", "n1"));
+  const section = sectionOf(data);
+  for (const g of section.groups) {
+    if (g.suggestions[0]?.callOpening.executionKey === "c")
+      g.canReviewWhole = false;
+  }
+  const l1 = positionGroups(section, data).find((g) => g.lifecycleId === "L1");
+  expect(l1?.applicable.connect).toHaveLength(1);
+  expect(l1?.blockedBy?.suggestions[0]?.callOpening.executionKey).toBe("c");
+});

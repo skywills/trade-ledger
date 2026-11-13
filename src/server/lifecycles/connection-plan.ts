@@ -552,7 +552,7 @@ function planPosition(
 }
 
 /** Recommends, per review row, connecting to or keeping a call apart from its candidate position. */
-export function planConnections(input: PlanInput): LifecycleProjection {
+function planAll(input: PlanInput): LifecycleProjection {
   const exec = new Map(input.ledger.executions.map((e) => [e.key, e]));
   const planned = new Map<AttachmentSuggestion, ConnectionPlan>();
   const { byPosition, multiple } = buildRows(input, exec);
@@ -585,4 +585,14 @@ export function planConnections(input: PlanInput): LifecycleProjection {
       return plan ? { ...s, plan } : { ...s };
     }),
   };
+}
+
+/** Never throws: a planning failure leaves the input lifecycles without plans. */
+export function planConnections(input: PlanInput): LifecycleProjection {
+  try {
+    return planAll(input);
+  } catch (error) {
+    (input.onError ?? reportPlanError)(error, "all");
+    return input.lifecycles;
+  }
 }

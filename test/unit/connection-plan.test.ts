@@ -60,6 +60,20 @@ const refOf = (p: LifecycleProjection, key: string) =>
   p.suggestions.find((s) => s.callOpening.executionKey === key)?.callOpening;
 
 describe("planConnections", () => {
+  it("returns the lifecycles unchanged when row building fails", () => {
+    const c = chain();
+    const errors: unknown[] = [];
+    const broken = {
+      ...c,
+      lifecycles: { ...c.lifecycles, members: null as never },
+      onError: (error: unknown) => errors.push(error),
+    };
+    const planned = planConnections(broken);
+    expect(errors).toHaveLength(1);
+    expect(planned).toEqual(broken.lifecycles);
+    expect(planned.suggestions.every((s) => s.plan === undefined)).toBe(true);
+  });
+
   it("recommends connect for each call in a roll chain", () => {
     const c = chain();
     const planned = planConnections(c);

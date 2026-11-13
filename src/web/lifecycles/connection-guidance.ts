@@ -85,19 +85,43 @@ export function positionGroups(
   return ordered.map((lifecycleId): PositionGroup => {
     const groups = byPosition.get(lifecycleId) ?? [];
     const action = (g: ConnectionGroup) => groupPlan(g)?.action;
+    const wholeOnly = (g: ConnectionGroup) => g.canReviewWhole;
     const connect =
-      lifecycleId === null ? [] : groups.filter((g) => action(g) === "connect");
+      lifecycleId === null
+        ? []
+        : groups.filter((g) => action(g) === "connect" && wholeOnly(g));
     const separate =
       lifecycleId === null
         ? []
-        : groups.filter((g) => action(g) === "separate");
+        : groups.filter((g) => action(g) === "separate" && wholeOnly(g));
     const applicableRows = new Set([...connect, ...separate]);
+    const openings = (g: ConnectionGroup) =>
+      g.suggestions.map((s) => s.callOpening.executionKey);
     const blockedBy =
-      groups.find(
-        (g, i) =>
-          action(g) === "manual" &&
-          groups.slice(i + 1).some((later) => applicableRows.has(later)),
-      ) ?? null;
+      lifecycleId === null
+        ? null
+        : (groups.find(
+            (g, i) =>
+              action(g) === "manual" &&
+              groups.slice(i + 1).some((later) => applicableRows.has(later)),
+          ) ??
+          // A manual row anywhere in the ticker (e.g. needs-choice) that an applicable row waits on.
+          section.groups.find(
+            (g) =>
+              action(g) === "manual" &&
+              [...applicableRows].some((row) =>
+                groupPlan(row)?.dependsOn?.some((d) =>
+                  openings(g).includes(d.executionKey),
+                ),
+              ),
+          ) ??
+          // Refused by createConnectionBatch, so Apply must not half-apply.
+          groups.find(
+            (g) =>
+              !wholeOnly(g) &&
+              (action(g) === "connect" || action(g) === "separate"),
+          ) ??
+          null);
     return {
       lifecycleId,
       title:
