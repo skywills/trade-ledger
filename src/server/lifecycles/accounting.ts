@@ -67,9 +67,12 @@ export function accountLifecycles(
         severity: "warning",
       });
     }
+    // IBKR's P&L follows its FIFO tax lots; when the user's pairing assigned
+    // shares to a different lifecycle, a gap here is expected, not an error.
     if (
       l.brokerPnl !== null &&
       l.reconstructedPnl !== null &&
+      !l.reasons.includes("IBKR_TAX_LOT_DIFFERS") &&
       !reconcilesWithin(l.brokerPnl, l.reconstructedPnl, l.currency)
     ) {
       l.reasons.push("PNL_RECONCILIATION");

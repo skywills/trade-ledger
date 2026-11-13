@@ -115,10 +115,31 @@ export function applyMembershipChanges(
         return [];
       }),
     );
+    // Only calls a decision claimed as covered are checked. A call that joined
+    // the lifecycle because its assignment consumed these shares (IBKR's FIFO
+    // lot may differ from the pairing the user made) never claimed coverage.
+    const coveredOpenings = new Set(
+      decisions.flatMap((d) => {
+        if (d.kind === "lifecycle_attachment") {
+          const p = LifecycleAttachmentPayloadSchema.safeParse(d.payload);
+          return p.success ? [refKey(p.data.opening)] : [];
+        }
+        if (d.kind === "lifecycle_membership") {
+          const p = LifecycleMembershipPayloadSchema.safeParse(d.payload);
+          return p.success && p.data.requireCallCoverage
+            ? p.data.assignments
+                .filter((a) => a.allocation.role === "open")
+                .map((a) => refKey(a.allocation))
+            : [];
+        }
+        return [];
+      }),
+    );
     for (const id of ownerIds) {
       const opens = draft.members.filter(
         (m) =>
           m.lifecycleId === id &&
+          coveredOpenings.has(refKey(m.allocation)) &&
           m.allocation.role === "open" &&
           new Decimal(m.quantity).lt(0) &&
           exec.get(m.allocation.executionKey)?.instrument.putCall === "C",

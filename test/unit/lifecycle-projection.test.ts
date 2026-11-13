@@ -221,12 +221,9 @@ it("resolves a shared stock disposal through explicit quantity partitions", () =
     [],
     ids,
   );
-  expect(unresolved.issues).toContainEqual(
-    expect.objectContaining({
-      code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
-      severity: "warning",
-      sources: [{ importId: "imp", rowNumber: 8 }],
-    }),
+  // FIFO (IBKR's lot matching) splits the 200-share sale across both lots.
+  expect(unresolved.issues).not.toContainEqual(
+    expect.objectContaining({ code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS" }),
   );
   const d = {
     id: "__validate__",
