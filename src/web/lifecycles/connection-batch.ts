@@ -11,6 +11,7 @@ import {
   requestJson,
 } from "../api.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
+import type { PositionGroup } from "./connection-guidance.js";
 import {
   type ConnectionGroup,
   connectionGroups,
@@ -436,5 +437,40 @@ export async function runConnectionBatch(
     batch.data = fresh;
     for (const member of step) member.status = "complete";
     onProgress(`Resolved ${label} connections.`);
+  }
+}
+
+/**
+ * Apply a position's recommended actions: keep the separate rows first, then
+ * connect the rest to the position, building the second batch from the fresh
+ * data the first run leaves behind. Throws on the first failure.
+ */
+export async function applyRecommended(
+  data: ConnectionData,
+  position: PositionGroup,
+  io: BatchIO = batchIO,
+  onProgress: (message: string) => void = () => {},
+  signal?: AbortSignal,
+): Promise<void> {
+  const { connect, separate } = position.applicable;
+  let current = data;
+  if (separate.length) {
+    const batch = createConnectionBatch(
+      current,
+      separate.map((g) => g.key),
+      "",
+      true,
+    );
+    await runConnectionBatch(batch, io, onProgress, signal);
+    current = batch.data;
+  }
+  if (connect.length) {
+    const batch = createConnectionBatch(
+      current,
+      connect.map((g) => g.key),
+      position.lifecycleId ?? "",
+      false,
+    );
+    await runConnectionBatch(batch, io, onProgress, signal);
   }
 }

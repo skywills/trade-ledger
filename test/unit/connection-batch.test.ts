@@ -3,12 +3,14 @@ import { projectLifecycles } from "../../src/server/lifecycles/project.js";
 import { validateLifecycleDecision } from "../../src/server/lifecycles/validate-decision.js";
 import type { Decision } from "../../src/shared/domain.js";
 import {
+  applyRecommended,
   type BatchIO,
   canonicalProposalPayload,
   connectionSections,
   createConnectionBatch,
   runConnectionBatch,
 } from "../../src/web/lifecycles/connection-batch.js";
+import type { PositionGroup } from "../../src/web/lifecycles/connection-guidance.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
 
 function setup(overlapping = false, sameContract = false, third = false) {
@@ -669,4 +671,76 @@ it("retains a blocked review whose original share coverage spans multiple lifecy
     candidateLifecycleIds: [],
     reasons: ["CONFIRM_COVERED_CALL", "SHARES_RESERVED_BY_OTHER_CALLS"],
   });
+});
+
+function recommended(
+  f: ReturnType<typeof setup>,
+  connect: boolean,
+  separate: boolean,
+) {
+  const [early, late] = f.section.groups;
+  if (!early || !late) throw Error("Missing groups");
+  const position: PositionGroup = {
+    lifecycleId: f.target,
+    title: "position",
+    groups: [early, late],
+    applicable: {
+      connect: connect ? [early] : [],
+      separate: separate ? [late] : [],
+    },
+    blockedBy: null,
+  };
+  return position;
+}
+
+const coverage = (requests: unknown[]) =>
+  requests.map(
+    (r) =>
+      (r as { payload: { requireCallCoverage: boolean } }).payload
+        .requireCallCoverage,
+  );
+
+it("applies the separate batch before the connect batch", async () => {
+  const f = setup();
+  await applyRecommended(f.initial, recommended(f, true, true), f.io);
+  expect(coverage(f.savedRequests)).toEqual([false, true]);
+  expect(f.decisions).toHaveLength(2);
+});
+
+it("stops before the connect batch when the separate batch fails", async () => {
+  const f = setup();
+  f.io.save = async () => {
+    throw new Error("Save failed");
+  };
+  await expect(
+    applyRecommended(f.initial, recommended(f, true, true), f.io),
+  ).rejects.toThrow("Save failed");
+  expect(f.decisions).toHaveLength(0);
+});
+
+it("saves nothing further when the connect preview is invalid after the separate save", async () => {
+  const f = setup();
+  const preview = f.io.preview;
+  f.io.preview = async (proposal, data, signal) => {
+    const result = await preview(proposal, data, signal);
+    return proposal.payload.requireCallCoverage
+      ? { ...result, valid: false }
+      : result;
+  };
+  await expect(
+    applyRecommended(f.initial, recommended(f, true, true), f.io),
+  ).rejects.toThrow("cannot be resolved");
+  expect(coverage(f.savedRequests)).toEqual([false]);
+});
+
+it("runs only the connect batch when nothing is kept separate", async () => {
+  const f = setup();
+  await applyRecommended(f.initial, recommended(f, true, false), f.io);
+  expect(coverage(f.savedRequests)).toEqual([true]);
+});
+
+it("runs only the separate batch when nothing is connected", async () => {
+  const f = setup();
+  await applyRecommended(f.initial, recommended(f, false, true), f.io);
+  expect(coverage(f.savedRequests)).toEqual([false]);
 });

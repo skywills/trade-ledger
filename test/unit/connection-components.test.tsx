@@ -2,8 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { projectLifecycles } from "../../src/server/lifecycles/project.js";
 import type { Execution } from "../../src/shared/domain.js";
+import type { ConnectionPlan } from "../../src/shared/lifecycles.js";
 import { useJson } from "../../src/web/api.js";
 import { ConnectionDialog } from "../../src/web/lifecycles/ConnectionDialog.js";
+import { ConnectionQueue } from "../../src/web/lifecycles/ConnectionQueue.js";
+import type { ConnectionData } from "../../src/web/lifecycles/connection-batch.js";
 import { connectionGroups } from "../../src/web/lifecycles/connections.js";
 import { LifecycleDetail } from "../../src/web/lifecycles/LifecycleDetail.js";
 import { call, execution, fixture, stock } from "../fixtures/lifecycles.js";
@@ -185,4 +188,101 @@ it("explicitly labels uncertain preview ordering instead of implying a verified 
   expect(renderSequence(shares, calls)).toContain(
     "Exact trade order is uncertain",
   );
+});
+
+function queueData(plans: Record<string, Omit<ConnectionPlan, "lifecycleId">>) {
+  const { ledger, projection } = fixture([
+    ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+    [
+      "late",
+      execution(
+        "late",
+        { ...call, key: "late", conid: "4" },
+        "-1",
+        "80",
+        4,
+        "open",
+      ),
+    ],
+    ["early", execution("early", call, "-1", "70", 2, "open")],
+  ]);
+  const p = projectLifecycles(ledger, projection, []);
+  const target = p.suggestions[0]?.candidateLifecycleIds[0] ?? "";
+  const withPlans = {
+    ...p,
+    suggestions: p.suggestions.map((s) => {
+      const plan = plans[s.callOpening.executionKey];
+      return plan ? { ...s, plan: { lifecycleId: target, ...plan } } : s;
+    }),
+  };
+  return {
+    buildId: "build",
+    ledgerId: ledger.id,
+    stale: false,
+    watermark: 0,
+    generatedAt: "",
+    rebuildRequired: false,
+    lifecycles: withPlans,
+    connectionExecutions: ledger.executions,
+  } as ConnectionData;
+}
+
+const covered = {
+  action: "connect",
+  reason: "COVERED",
+  sharesAtOpening: "100",
+} as const;
+const kept = { action: "separate", reason: "HELD_BY_EARLIER_CALL" } as const;
+const manual = { action: "manual", reason: "PARTIAL" } as const;
+
+it("shows position headings, action badges, explanations and the apply button", () => {
+  const html = renderToStaticMarkup(
+    <ConnectionQueue data={queueData({ early: covered, late: kept })} />,
+  );
+  expect(html).toContain(
+    "A share position covers one short call per 100 shares at a time.",
+  );
+  expect(html).toContain("Shares from");
+  expect(html).toContain(">Connect</span>");
+  expect(html).toContain(">Keep separate</span>");
+  expect(html).toContain("100 shares were free when this call was sold.");
+  expect(html).toContain("Apply recommended: connect 1, keep 1 separate");
+  expect(html).not.toMatch(/Apply recommended[^<]*<[^>]*disabled/);
+  expect(html).toContain("Connect selected");
+  expect(html).toContain("Select all XYZ connections");
+  expect(html).toContain("Review connection");
+});
+
+it("disables apply and names the older manual row that blocks it", () => {
+  const html = renderToStaticMarkup(
+    <ConnectionQueue data={queueData({ early: manual, late: covered })} />,
+  );
+  expect(html).toContain("Apply recommended: connect 1");
+  expect(html).toMatch(/disabled[^>]*>Apply recommended: connect 1/);
+  expect(html).toContain(
+    "Resolve the 2026-10-02 Nov20&#x27;26 105C call first.",
+  );
+  expect(html).toContain(">Needs your choice</span>");
+});
+
+it("omits apply for the needs-your-choice group", () => {
+  const html = renderToStaticMarkup(
+    <ConnectionQueue
+      data={queueData({
+        early: { action: "manual", reason: "MULTIPLE_POSITIONS" },
+        late: manual,
+      })}
+    />,
+  );
+  expect(html).not.toContain("Apply recommended");
+});
+
+it("renders the list as before when no plans are attached", () => {
+  const html = renderToStaticMarkup(<ConnectionQueue data={queueData({})} />);
+  expect(html).not.toContain("Apply recommended");
+  expect(html).not.toContain("Keep separate</span>");
+  expect(html).not.toContain("connection-badge");
+  expect(html).toContain("Connect selected");
+  expect(html).toContain("Keep selected separate");
+  expect(html).toContain('type="checkbox"');
 });
