@@ -14,9 +14,11 @@ function rollAt(
   oldClose: {
     day: number;
     time: string;
-    event?: "trade" | "expiry";
+    event?: "trade" | "expiry" | "assignment";
+    cash?: string;
   } = { day: 3, time: "2026-10-03T10:44:19Z" },
   extra: Parameters<typeof fixture>[0] = [],
+  connect: string[] = ["old"],
 ) {
   const { ledger, projection } = fixture([
     ...extra,
@@ -29,7 +31,8 @@ function rollAt(
           "old-close",
           call,
           "1",
-          oldClose.event === "expiry" ? "0" : "-30",
+          oldClose.cash ??
+            (oldClose.event === "trade" || !oldClose.event ? "-30" : "0"),
           oldClose.day,
           "close",
           oldClose.event ?? "trade",
@@ -51,8 +54,8 @@ function rollAt(
   );
   const target = old?.candidateLifecycleIds[0];
   if (!old || !target) throw Error("Missing old call connection");
-  const oldMembers = initial.members.filter(
-    (m) => m.allocation.strategyId === "old",
+  const oldMembers = initial.members.filter((m) =>
+    connect.includes(m.allocation.strategyId),
   );
   const confirmed: Decision = {
     id: "connect-old",
@@ -71,12 +74,9 @@ function rollAt(
     },
   };
   const after = projectLifecycles(ledger, projection, [confirmed]);
-  return {
-    target,
-    next: after.suggestions.find(
-      (s) => s.callOpening.executionKey === "new-open",
-    ),
-  };
+  const find = (key: string) =>
+    after.suggestions.find((s) => s.callOpening.executionKey === key);
+  return { target, next: find("new-open"), find };
 }
 
 it("frees shares for a call sold in the same instant the covered call is bought back", () => {
@@ -104,15 +104,43 @@ it("still blocks when the old call is only bought back on a later day", () => {
   expect(next?.reasons).toContain("SHARES_RESERVED_BY_OTHER_CALLS");
 });
 
-it("still blocks when the old call expires that day instead of being bought back", () => {
-  // FIG 2025-11-07: new call sold in the morning, old call expired at 16:20.
-  const { next } = rollAt("2026-10-03T09:48:22Z", {
+it("treats an expiry-day roll as covered: old call expires worthless later the same day", () => {
+  // FIG 2025-11-07: new call sold 09:48, old call expired worthless at 16:20.
+  // A worthless expiry keeps the shares, so they cover the new call.
+  const { target, next } = rollAt("2026-10-03T09:48:22Z", {
     day: 3,
     time: "2026-10-03T16:20:00Z",
     event: "expiry",
   });
+  expect(next?.reasons).not.toContain("SHARES_RESERVED_BY_OTHER_CALLS");
+  expect(next?.candidateLifecycleIds).toEqual([target]);
+});
+
+it("still blocks when the old call only expires on a later day", () => {
+  const { next } = rollAt("2026-10-03T09:48:22Z", {
+    day: 4,
+    time: "2026-10-04T16:20:00Z",
+    event: "expiry",
+  });
   expect(next?.candidateLifecycleIds).toEqual([]);
   expect(next?.reasons).toContain("SHARES_RESERVED_BY_OTHER_CALLS");
+});
+
+it("does not treat an expiry-day roll as covered when the shares are sold that day", () => {
+  const { next } = rollAt(
+    "2026-10-03T09:48:22Z",
+    { day: 3, time: "2026-10-03T16:20:00Z", event: "expiry" },
+    [
+      [
+        "shares",
+        {
+          ...execution("share-sale", stock, "-100", "12900", 3, "close"),
+          rawDateTime: "2026-10-03T11:00:00Z",
+        },
+      ],
+    ],
+  );
+  expect(next?.candidateLifecycleIds).toEqual([]);
 });
 
 it("does not treat it as a legged roll when another call is sold after the buy-back", () => {
@@ -153,4 +181,52 @@ it("does not treat it as a legged roll when the shares are sold that day", () =>
     ],
   );
   expect(next?.candidateLifecycleIds).toEqual([]);
+});
+
+const expiryDayClose = {
+  day: 3,
+  time: "2026-10-03T16:20:00Z",
+  event: "expiry",
+} as const;
+
+it("still blocks when the old call is assigned that day instead of expiring", () => {
+  const { next } = rollAt("2026-10-03T09:48:22Z", {
+    ...expiryDayClose,
+    event: "assignment",
+  });
+  expect(next?.candidateLifecycleIds).toEqual([]);
+  expect(next?.reasons).toContain("SHARES_RESERVED_BY_OTHER_CALLS");
+});
+
+it("still blocks when an expiry row carries cash, so it was not worthless", () => {
+  const { next } = rollAt("2026-10-03T09:48:22Z", {
+    ...expiryDayClose,
+    cash: "-500",
+  });
+  expect(next?.candidateLifecycleIds).toEqual([]);
+});
+
+it("frees an expiring call's shares for only one of two calls sold that day", () => {
+  // Once the first new call is connected, the second cannot reuse the shares.
+  const second = { ...call, key: "second-call", conid: "7" };
+  const { target, find } = rollAt(
+    "2026-10-03T09:48:22Z",
+    expiryDayClose,
+    [
+      [
+        "second",
+        {
+          ...execution("second-open", second, "-1", "40", 3, "open"),
+          rawDateTime: "2026-10-03T10:30:00Z",
+        },
+      ],
+    ],
+    ["old", "new"],
+  );
+  expect(target).toBeTruthy();
+  expect(find("new-open")).toBeUndefined();
+  expect(find("second-open")?.candidateLifecycleIds).toEqual([]);
+  expect(find("second-open")?.reasons).toContain(
+    "SHARES_RESERVED_BY_OTHER_CALLS",
+  );
 });
