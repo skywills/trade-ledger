@@ -11,6 +11,7 @@ import { ErrorPanel, Loading } from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
 import { BuildAction } from "../lifecycles/BuildAction.js";
 import type { ConnectionDraft } from "../lifecycles/ConnectionDialog.js";
+import { shortCallsLabel } from "../lifecycles/connection-guidance.js";
 
 const ConnectionDialog = lazy(() =>
   import("../lifecycles/ConnectionDialog.js").then((module) => ({
@@ -141,7 +142,7 @@ function GuidedAgentConnectionProposal({
       <span className="connection-eyebrow">AGENT PROPOSED CONNECTION</span>
       <h3>Review {group.underlying} covered-call connection</h3>
       <p>
-        {group.contracts} short calls · {group.shares ?? "Unknown"} shares
+        {shortCallsLabel(group.contracts)} · {group.shares ?? "Unknown"} shares
         required
       </p>
       {proposal.rationale && <p>{proposal.rationale}</p>}

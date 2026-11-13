@@ -9,6 +9,7 @@ import {
   createConnectionBatch,
   runConnectionBatch,
 } from "./connection-batch.js";
+import { contractLabel, shortCallsLabel } from "./connection-guidance.js";
 import {
   type ConnectionGroup,
   connectionTimeline,
@@ -199,7 +200,8 @@ export function BatchConnectionDialog({
               <li key={group.key}>
                 <time>{connectionDate(group, data)}</time>
                 <strong>
-                  {group.instrument.symbol} · {group.contracts} short calls
+                  {contractLabel(group.instrument)} ·{" "}
+                  {shortCallsLabel(group.contracts)}
                 </strong>
                 <span>
                   {item?.status === "complete"

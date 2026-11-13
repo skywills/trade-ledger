@@ -12,6 +12,12 @@ import {
 } from "../api.js";
 import { LifecycleListSchema, rebuildLifecycles } from "./api.js";
 import {
+  contractLabel,
+  explainPlan,
+  groupPlan,
+  type PositionGroup,
+} from "./connection-guidance.js";
+import {
   type ConnectionGroup,
   connectionGroups,
   connectionProposal,
@@ -300,6 +306,27 @@ function batchProposal(
   };
 }
 
+/** Names the first remaining call whose plan is not to connect to the target. */
+function uncoveredCall(
+  batch: ConnectionBatch,
+  remaining: BatchItem[],
+  advice: string,
+): string | null {
+  for (const item of remaining) {
+    const plan = groupPlan(item.group);
+    if (
+      !plan ||
+      (plan.action === "connect" && plan.lifecycleId === batch.target)
+    )
+      continue;
+    const key = item.group.suggestions[0]?.callOpening.executionKey;
+    const opening = batch.data.connectionExecutions.find((e) => e.key === key);
+    if (!opening) continue;
+    return `${contractLabel(opening.instrument)} (${connectionDate(item.group, batch.data)}) can't be covered: ${explainPlan(plan, batch.data, item.group)} ${advice}`;
+  }
+  return null;
+}
+
 /** Mutable attempt state retains acknowledged receipts and exact uncertain requests. */
 export async function runConnectionBatch(
   batch: ConnectionBatch,
@@ -381,10 +408,12 @@ export async function runConnectionBatch(
           const savedNote = batch.items.some((i) => i.receipt !== undefined)
             ? "No further decisions were saved."
             : "No decisions were saved.";
+          const advice = `${savedNote} Close this review and select fewer connections, or review them individually.`;
           throw new ConnectionSelectionError(
             selection.blockingConnection
               ? `Resolve the earlier connection dated ${selection.blockingConnection.date} first. ${savedNote} Close this review and include it in your selection.`
-              : `The selected calls cannot all be connected with the available shares. ${savedNote} Close this review and select fewer connections, or review them individually.`,
+              : (uncoveredCall(batch, remaining, advice) ??
+                  `The selected calls cannot all be connected with the available shares. ${advice}`),
           );
         }
       }
@@ -436,5 +465,40 @@ export async function runConnectionBatch(
     batch.data = fresh;
     for (const member of step) member.status = "complete";
     onProgress(`Resolved ${label} connections.`);
+  }
+}
+
+/**
+ * Apply a position's recommended actions: keep the separate rows first, then
+ * connect the rest to the position, building the second batch from the fresh
+ * data the first run leaves behind. Throws on the first failure.
+ */
+export async function applyRecommended(
+  data: ConnectionData,
+  position: PositionGroup,
+  io: BatchIO = batchIO,
+  onProgress: (message: string) => void = () => {},
+  signal?: AbortSignal,
+): Promise<void> {
+  const { connect, separate } = position.applicable;
+  let current = data;
+  if (separate.length) {
+    const batch = createConnectionBatch(
+      current,
+      separate.map((g) => g.key),
+      "",
+      true,
+    );
+    await runConnectionBatch(batch, io, onProgress, signal);
+    current = batch.data;
+  }
+  if (connect.length) {
+    const batch = createConnectionBatch(
+      current,
+      connect.map((g) => g.key),
+      position.lifecycleId ?? "",
+      false,
+    );
+    await runConnectionBatch(batch, io, onProgress, signal);
   }
 }

@@ -6,6 +6,7 @@ import { ProposalSchema } from "../ai/proposals.js";
 import { checkBuild } from "../analytics/details.js";
 import { readAnalyticsSnapshot } from "../analytics/snapshot.js";
 import { decisionWatermark } from "../decisions/service.js";
+import { connectionExecutionKeys } from "../lifecycles/connection-executions.js";
 import {
   selectCampaignDetail,
   selectLifecycleDetail,
@@ -83,21 +84,9 @@ export async function registerLifecycleRoutes(
   app.get("/api/lifecycles", (request) => {
     const { snapshot: s, meta } = snapshot(request);
     const projection = s.projection?.lifecycles;
-    const strategies = new Set(
-      projection?.suggestions.map((a) => a.callOpening.strategyId),
-    );
-    const targets = new Set(
-      projection?.suggestions.flatMap((a) => a.candidateLifecycleIds),
-    );
-    const keys = new Set(
-      projection?.members
-        .filter(
-          (m) =>
-            strategies.has(m.allocation.strategyId) ||
-            targets.has(m.lifecycleId),
-        )
-        .map((m) => m.allocation.executionKey),
-    );
+    const keys = projection
+      ? connectionExecutionKeys(projection)
+      : new Set<string>();
     return {
       ...meta,
       lifecycles: projection ?? null,

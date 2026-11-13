@@ -115,7 +115,9 @@ test("overlapping connections remain available when the selection exceeds share 
   const dialog = page.getByRole("dialog", { name: "Connect OVERLAP connections" });
   await dialog.getByRole("button", { name: "Confirm connections", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("No decisions were saved");
-  await expect(dialog.getByRole("alert")).toContainText("available shares");
+  // The error names the call that cannot be covered and why.
+  await expect(dialog.getByRole("alert")).toContainText("can't be covered");
+  await expect(dialog.getByRole("alert")).toContainText("still held the shares");
   await expect(dialog.getByRole("button", { name: "Retry remaining connections", exact: true })).toHaveCount(0);
   const after = await (await request.get("/api/lifecycles")).json();
   expect(after.watermark).toBe(before.watermark);
@@ -136,7 +138,9 @@ test("a single connection leaves competing calls visible for an explicit separat
   await expect(dialog).toContainText("Connection confirmed");
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await page.goto("/lifecycles");
-  await expect(section).toContainText("Still unconnected");
+  // The blocked call is recommended to be kept separate, naming the call holding the shares.
+  await expect(section).toContainText("Keep separate");
+  await expect(section).toContainText("still held the shares");
   await expect(section.getByRole("checkbox")).toHaveCount(2);
   await section.getByRole("checkbox", { name: "Select all SINGLE connections", exact: true }).check();
   await expect(section.getByRole("button", { name: "Connect selected", exact: true })).toBeDisabled();

@@ -1,18 +1,28 @@
 import { lazy, Suspense, useState } from "react";
-import { Link } from "../navigation.js";
+import { ApplyRecommendedButton, ConnectionRow } from "./ConnectionRows.js";
 import {
   type ConnectionData,
   type ConnectionSection,
   commonConnectionTargets,
-  connectionDate,
   connectionSections,
 } from "./connection-batch.js";
-import { lifecycleLabel } from "./connections.js";
+import {
+  groupPlan,
+  type PositionGroup,
+  positionGroups,
+} from "./connection-guidance.js";
+import type { ConnectionGroup } from "./connections.js";
 import "./connections.css";
 
 const BatchConnectionDialog = lazy(() =>
   import("./BatchConnectionDialog.js").then((m) => ({
     default: m.BatchConnectionDialog,
+  })),
+);
+
+const ApplyRecommendedDialog = lazy(() =>
+  import("./ApplyRecommendedDialog.js").then((m) => ({
+    default: m.ApplyRecommendedDialog,
   })),
 );
 
@@ -26,6 +36,7 @@ function UnderlyingConnections({
   onChanged: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState<PositionGroup | null>(null);
   const [mode, setMode] = useState<"connect" | "separate" | null>(null);
   const eligible = section.groups.filter((g) => g.canReviewWhole);
   const groups = section.groups.filter((g) => selected.has(g.key));
@@ -33,6 +44,30 @@ function UnderlyingConnections({
     eligible.length > 0 && eligible.every((g) => selected.has(g.key));
   const disabled = data.stale || data.rebuildRequired || !data.buildId;
   const candidates = commonConnectionTargets(groups);
+  const positions = section.groups.some(groupPlan)
+    ? positionGroups(section, data)
+    : null;
+  const toggle = (key: string, checked: boolean) =>
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  const rows = (list: ConnectionGroup[]) => (
+    <ul className="connection-selection-list">
+      {list.map((group) => (
+        <ConnectionRow
+          key={group.key}
+          group={group}
+          data={data}
+          checked={selected.has(group.key)}
+          disabled={disabled}
+          onToggle={(checked) => toggle(group.key, checked)}
+        />
+      ))}
+    </ul>
+  );
   return (
     <section
       className="connection-underlying"
@@ -60,67 +95,23 @@ function UnderlyingConnections({
         />
         Select all {section.underlying} connections
       </label>
-      <ul className="connection-selection-list">
-        {section.groups.map((group) => {
-          const owner = group.members[0]?.lifecycleId ?? group.candidateIds[0];
-          return (
-            <li key={group.key}>
-              <label className="connection-selection">
-                <input
-                  type="checkbox"
-                  checked={selected.has(group.key)}
-                  disabled={disabled || !group.canReviewWhole}
-                  onChange={(e) =>
-                    setSelected((previous) => {
-                      const next = new Set(previous);
-                      if (e.target.checked) next.add(group.key);
-                      else next.delete(group.key);
-                      return next;
-                    })
-                  }
-                />
-                <span>
-                  <time>{connectionDate(group, data)}</time>
-                  <strong>
-                    {group.instrument.symbol} · {group.contracts} short calls
-                  </strong>
-                </span>
-              </label>
-              <p className="muted">
-                {group.candidateIds
-                  .map((id) =>
-                    lifecycleLabel(
-                      data.lifecycles?.lifecycles.find((l) => l.id === id),
-                    ),
-                  )
-                  .join(" / ")}
-              </p>
-              {group.suggestions.some((s) =>
-                s.reasons.includes("SHARES_RESERVED_BY_OTHER_CALLS"),
-              ) && (
-                <p className="muted">
-                  Still unconnected: other confirmed calls reserve the available
-                  shares at this call’s opening. Keep these trades separate, or
-                  review the existing connections.
-                </p>
-              )}
-              {!group.canReviewWhole && (
-                <p className="muted">
-                  Some fills already have a decision. Use individual review for
-                  the remaining fills.
-                </p>
-              )}
-              {owner && (
-                <Link
-                  to={`/lifecycles/${encodeURIComponent(owner)}?expectedBuildId=${encodeURIComponent(data.buildId ?? "")}`}
-                >
-                  Review connection
-                </Link>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      {positions
+        ? positions.map((position) => (
+            <div
+              key={position.lifecycleId ?? "choice"}
+              className="connection-position"
+            >
+              <h5>{position.title}</h5>
+              {rows(position.groups)}
+              <ApplyRecommendedButton
+                position={position}
+                data={data}
+                disabled={disabled}
+                onApply={() => setApplying(position)}
+              />
+            </div>
+          ))
+        : rows(section.groups)}
       <p className="muted">
         {groups.length} selected. Include earlier related connections when
         connecting calls to the same share lifecycle.
@@ -149,6 +140,19 @@ function UnderlyingConnections({
           Keep selected separate
         </button>
       </div>
+      {applying && (
+        <Suspense fallback={<p role="status">Loading connection review…</p>}>
+          <ApplyRecommendedDialog
+            data={data}
+            position={applying}
+            onDismiss={() => {
+              setApplying(null);
+              setSelected(new Set());
+              onChanged();
+            }}
+          />
+        </Suspense>
+      )}
       {mode && (
         <Suspense fallback={<p role="status">Loading connection review…</p>}>
           <BatchConnectionDialog
@@ -192,6 +196,12 @@ export function ConnectionQueue({
       <p className="muted">
         Select connections for one underlying and resolve them together, oldest
         first.
+      </p>
+      <p className="muted">
+        A share position covers one short call per 100 shares at a time. Calls
+        are connected oldest first; a call sold while the shares were already
+        covering another call, or kept open after the shares were sold, is kept
+        separate.
       </p>
       {sections.map((section) => (
         <UnderlyingConnections
