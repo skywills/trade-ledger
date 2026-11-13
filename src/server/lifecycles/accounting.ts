@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { explainedByBrokerBasis } from "../../shared/broker-basis.js";
 import type { LedgerSnapshot, Projection } from "../../shared/domain.js";
 import type {
   Lifecycle,
@@ -27,6 +28,7 @@ export function accountLifecycles(
   strategies: Projection,
   p: LifecycleProjection,
 ): LifecycleProjection {
+  const executions = new Map(ledger.executions.map((e) => [e.key, e]));
   for (const l of p.lifecycles) {
     const members = p.members.filter((m) => m.lifecycleId === l.id);
     const cash = sum(members.map((m) => m.netCash));
@@ -67,10 +69,22 @@ export function accountLifecycles(
         severity: "warning",
       });
     }
+    // IBKR's P&L follows its FIFO tax lots; when the user's pairing assigned
+    // shares to a different lifecycle, a gap here is expected, not an error.
     if (
       l.brokerPnl !== null &&
       l.reconstructedPnl !== null &&
-      !reconcilesWithin(l.brokerPnl, l.reconstructedPnl, l.currency)
+      !l.reasons.includes("IBKR_TAX_LOT_DIFFERS") &&
+      !reconcilesWithin(l.brokerPnl, l.reconstructedPnl, l.currency) &&
+      !explainedByBrokerBasis(
+        members.flatMap((m) => {
+          const execution = executions.get(m.allocation.executionKey);
+          return execution ? [{ ...m, execution }] : [];
+        }),
+        l.reconstructedPnl,
+        l.brokerPnl,
+        l.currency,
+      )
     ) {
       l.reasons.push("PNL_RECONCILIATION");
       p.issues.push({

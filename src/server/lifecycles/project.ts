@@ -23,7 +23,12 @@ import {
   resolveLifecycleAlias,
 } from "./aliases.js";
 import { compareLifecycleTime } from "./chronology.js";
+import {
+  applyConnectedLotOwnership,
+  connectedCallTargets,
+} from "./connected-lots.js";
 import { applyMembershipChanges } from "./decisions.js";
+import { fifoLotPnl } from "./fifo-pnl.js";
 import {
   indexMembersByAllocation,
   partition,
@@ -39,6 +44,30 @@ export const lifecycleId = (a: LifecycleAnchor) =>
     .slice(0, 24)}`;
 
 /** Keep exact identity and the existing unique execution/role fallback. */
+/**
+ * FIFO split of a share disposal across holders, earliest acquisition first.
+ * Undefined when the holders cannot cover the whole disposal.
+ */
+function fifoTargets(
+  book: ReadonlyMap<string, Decimal>,
+  close: { quantity: string },
+): Array<{ lifecycleId: string; quantity: string }> | undefined {
+  const quantity = new Decimal(close.quantity);
+  let remaining = quantity.abs();
+  const targets: Array<{ lifecycleId: string; quantity: string }> = [];
+  for (const [lifecycleId, held] of book) {
+    if (remaining.isZero()) break;
+    if (held.isZero() || held.isNegative() === quantity.isNegative()) continue;
+    const take = Decimal.min(remaining, held.abs());
+    targets.push({
+      lifecycleId,
+      quantity: (quantity.isNegative() ? take.negated() : take).toFixed(),
+    });
+    remaining = remaining.minus(take);
+  }
+  return remaining.isZero() && targets.length ? targets : undefined;
+}
+
 function allocationResolver(allocations: readonly Allocation[]) {
   const exact = new Map<string, Allocation>();
   const byExecution = new Map<string, Allocation[]>();
@@ -283,6 +312,10 @@ export function projectLifecycles(
       for (const [k, v] of roots) if (v === to) roots.set(k, from);
     }
   }
+  const callTargets = connectedCallTargets(decisions);
+  // Lifecycles whose share ownership follows the user's pairing, not IBKR's
+  // FIFO tax lot; their broker P&L is split differently by design.
+  const taxLotNotes = new Set<string>();
   for (const strategyId of changedStockStrategies) {
     const rows = projection.allocations
       .filter((a) => a.strategyId === strategyId)
@@ -323,6 +356,22 @@ export function projectLifecycles(
             (m) => refKey(m.allocation) !== refKey(a),
           );
           draft.members.push(...pieces);
+        } else if (!explicitCloseRefs.has(refKey(a)) && fifoTargets(book, a)) {
+          // IBKR matches share disposals FIFO: the book lists holders in the
+          // order their current shares were acquired (emptied holders are
+          // removed below), so the earliest lot is consumed first.
+          ownedStockCloses.add(refKey(a));
+          pieces = fifoLotPnl(
+            partition(a, fifoTargets(book, a) ?? [], e.sources),
+            a.brokerPnl,
+            draft.members,
+            exec,
+            e.instrument.key,
+          );
+          draft.members = draft.members.filter(
+            (m) => refKey(m.allocation) !== refKey(a),
+          );
+          draft.members.push(...pieces);
         } else if (owners.length !== 1 && !explicitCloseRefs.has(refKey(a))) {
           draft.issues.push({
             key: `lifecycle:stock-close:${refKey(a)}`,
@@ -336,17 +385,29 @@ export function projectLifecycles(
           }
         }
       }
-      for (const m of pieces)
-        book.set(
-          m.lifecycleId,
-          (book.get(m.lifecycleId) ?? new Decimal(0)).plus(m.quantity),
+      for (const m of pieces) {
+        const held = (book.get(m.lifecycleId) ?? new Decimal(0)).plus(
+          m.quantity,
         );
+        // Re-acquired shares re-enter at the back of the FIFO queue.
+        if (held.isZero()) book.delete(m.lifecycleId);
+        else book.set(m.lifecycleId, held);
+      }
     }
   }
   const pendingMerges = new Map<
     string,
     Array<{ to: string; optionKeys: string[] }>
   >();
+  // The user's covered-call pairing decides share ownership over IBKR's FIFO
+  // lot, before assigned calls join the owner of the shares they delivered.
+  for (const id of applyConnectedLotOwnership(
+    draft.members,
+    projection,
+    exec,
+    callTargets,
+  ))
+    taxLotNotes.add(id);
   // An exercised option can dispose of stock already owned by another option
   // lifecycle. Join the closed option cycle to that proven stock owner; moving
   // only the stock disposal would separate it from the acquisition it closes.
@@ -708,6 +769,16 @@ export function projectLifecycles(
         ),
       ];
   }
+  const finalId = (id: string) => {
+    let current = id;
+    for (let hops = 0; hops < 64 && aliases.has(current); hops++)
+      current = aliases.get(current) ?? current;
+    return current;
+  };
+  const noted = new Set([...taxLotNotes].map(finalId));
+  for (const l of draft.lifecycles)
+    if (noted.has(l.id))
+      l.reasons = [...new Set([...l.reasons, "IBKR_TAX_LOT_DIFFERS"])];
   return draft;
 }
 export function availableShares(
@@ -732,6 +803,43 @@ export function shareAvailability(
     rows.push(m);
     members.set(m.lifecycleId, rows);
   }
+  // Short-call openings by account and date, for the legged-roll check.
+  const callOpensByDay = new Map<string, Execution[]>();
+  for (const x of ledger.executions) {
+    if (
+      x.instrument.putCall !== "C" ||
+      x.action !== "open" ||
+      !new Decimal(x.quantity).lt(0)
+    )
+      continue;
+    const day = JSON.stringify([x.account, x.date]);
+    callOpensByDay.set(day, [...(callOpensByDay.get(day) ?? []), x]);
+  }
+  /**
+   * A same-day buy-back only corrects an order-sequence slip when nothing
+   * else used the freed shares that day: no other call sold after it (that
+   * call is the real roll) and no shares of this lifecycle sold after the
+   * new call (an exit, which leaves the new call uncovered).
+   */
+  const legSlip = (id: string, buyBack: Execution, before: Execution) =>
+    !(
+      callOpensByDay.get(JSON.stringify([buyBack.account, buyBack.date])) ?? []
+    ).some(
+      (x) =>
+        x.key !== before.key &&
+        underlyingSymbol(x.instrument) ===
+          underlyingSymbol(buyBack.instrument) &&
+        compareLifecycleTime(x, buyBack) === 1,
+    ) &&
+    !(members.get(id) ?? []).some((m) => {
+      const x = exec.get(m.allocation.executionKey);
+      return (
+        x?.instrument.assetClass === "STK" &&
+        m.allocation.role === "close" &&
+        x.date === before.date &&
+        compareLifecycleTime(x, before) === 1
+      );
+    });
   return (id: string, before?: Execution): Decimal => {
     let shares = new Decimal(0);
     const calls = new Map<string, { quantity: Decimal; multiplier: string }>();
@@ -740,9 +848,26 @@ export function shareAvailability(
       if (!e || (before && e.key === before.key)) continue;
       if (before) {
         const order = compareLifecycleTime(e, before);
+        // A fill in the same instant counts only when it frees coverage: a
+        // covered-call buy-back in a combo roll, or shares acquired in a
+        // buy-write or same-instant assignment. Consuming fills stay excluded.
+        const frees =
+          new Decimal(m.quantity).gt(0) &&
+          (e.instrument.assetClass === "STK" || e.instrument.putCall === "C");
+        // A legged roll: the new call was sold first and the old covered call
+        // bought back later the same day, usually an order-sequence slip that
+        // is corrected moments later. Its buy-back releases the shares for the
+        // new call. Expiry, assignment or a later-day buy-back does not.
+        const leggedRollBuyBack =
+          order === 1 &&
+          e.instrument.putCall === "C" &&
+          e.event === "trade" &&
+          new Decimal(m.quantity).gt(0) &&
+          e.date === before.date &&
+          legSlip(id, e, before);
         if (
-          order === 0 ||
-          order === 1 ||
+          (order === 0 && !frees) ||
+          (order === 1 && !leggedRollBuyBack) ||
           (order === null && !new Decimal(m.quantity).lt(0))
         )
           continue;
