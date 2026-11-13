@@ -65,19 +65,65 @@ function hasDeliveryCash(
   );
 }
 
+// Called once per lifecycle during accounting. The ledger-wide indexes depend
+// only on the ledger and strategy projection, so they are built once and
+// reused while the underlying arrays are unchanged (same array, same length).
+interface Cached<T> {
+  source: readonly unknown[];
+  length: number;
+  index: T;
+}
+const executionIndex = new WeakMap<
+  LedgerSnapshot,
+  Cached<Map<string, Execution>>
+>();
+const ownerIndex = new WeakMap<Projection, Cached<Map<string, Set<string>>>>();
+
+function executionsOf(ledger: LedgerSnapshot): Map<string, Execution> {
+  const cached = executionIndex.get(ledger);
+  if (
+    cached?.source === ledger.executions &&
+    cached.length === ledger.executions.length
+  )
+    return cached.index;
+  const index = new Map(ledger.executions.map((e) => [e.key, e]));
+  executionIndex.set(ledger, {
+    source: ledger.executions,
+    length: ledger.executions.length,
+    index,
+  });
+  return index;
+}
+
+function ownersOf(strategies: Projection): Map<string, Set<string>> {
+  const cached = ownerIndex.get(strategies);
+  if (
+    cached?.source === strategies.allocations &&
+    cached.length === strategies.allocations.length
+  )
+    return cached.index;
+  const index = new Map<string, Set<string>>();
+  for (const allocation of strategies.allocations) {
+    const ids = index.get(allocation.executionKey) ?? new Set<string>();
+    ids.add(allocation.strategyId);
+    index.set(allocation.executionKey, ids);
+  }
+  ownerIndex.set(strategies, {
+    source: strategies.allocations,
+    length: strategies.allocations.length,
+    index,
+  });
+  return index;
+}
+
 /** Quantity closure alone does not establish where assignment/exercise cash went. */
 export function unresolvedEventCash(
   ledger: LedgerSnapshot,
   strategies: Projection,
   members: readonly LifecycleMember[],
 ): LifecycleMember[] {
-  const executions = new Map(ledger.executions.map((e) => [e.key, e]));
-  const owners = new Map<string, Set<string>>();
-  for (const allocation of strategies.allocations) {
-    const ids = owners.get(allocation.executionKey) ?? new Set<string>();
-    ids.add(allocation.strategyId);
-    owners.set(allocation.executionKey, ids);
-  }
+  const executions = executionsOf(ledger);
+  const owners = ownersOf(strategies);
   const events = new Map<string, LifecycleMember[]>();
   for (const member of members) {
     const e = executions.get(member.allocation.executionKey);
