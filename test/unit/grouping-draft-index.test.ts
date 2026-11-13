@@ -69,4 +69,16 @@ describe("draftsHolding (close-matching candidate index)", () => {
       "later",
     ]);
   });
+
+  it("sees a leg added to an existing draft when no draft was added", () => {
+    const a = draftWith("a", put);
+    const context = contextOf(new Map([["a", a]]));
+    expect(draftsHolding(context, call)).toEqual([]);
+    expect(draftsHolding(context, call)).toEqual([]);
+    addLeg(
+      a,
+      legOf(execution("a-call", call, "1", "-20", 2, "close"), "close"),
+    );
+    expect(draftsHolding(context, call).map((d) => d.id)).toEqual(["a"]);
+  });
 });
