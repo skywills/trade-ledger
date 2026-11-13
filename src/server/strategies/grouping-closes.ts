@@ -10,6 +10,7 @@ import {
 import { orderByKnownChronology } from "./grouping-close-order.js";
 import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { fifoCloseAllocation, fifoLegAmounts } from "./grouping-fifo.js";
 import { signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue } from "./projection.js";
 
@@ -152,6 +153,40 @@ export function matchCloses(context: GroupingContext): Execution[] {
         recordConsumption(close, closeQuantity, netCash, brokerPnl);
         continue;
       }
+    }
+
+    // Also when no single lot can absorb the whole close (candidates empty):
+    // FIFO spreads it across the earlier lots, as IBKR does.
+    const fifo =
+      candidates.length !== 1 || basisAllocation === null
+        ? fifoCloseAllocation(
+            context,
+            close,
+            closeQuantity,
+            exposureCandidates.length > 1 ? exposureCandidates : candidates,
+          )
+        : undefined;
+    if (fifo !== undefined) {
+      const netCash = residualNetCash(close);
+      const brokerPnl = residualBrokerPnl(close);
+      for (const part of fifoLegAmounts(
+        context,
+        close,
+        fifo,
+        netCash,
+        brokerPnl,
+      )) {
+        addLeg(
+          part.draft,
+          legOf(close, "close", {
+            quantity: part.quantity,
+            netCash: part.netCash,
+            brokerPnl: part.brokerPnl,
+          }),
+        );
+      }
+      recordConsumption(close, closeQuantity, netCash, brokerPnl);
+      continue;
     }
 
     if (candidates.length > 1 || basisAllocation === null) {

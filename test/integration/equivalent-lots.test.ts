@@ -132,10 +132,6 @@ describe("equivalent opening lots", () => {
     { name: "different cost basis", patch: { CostBasis: "102" } },
     { name: "different price", patch: { TradePrice: "50.5" } },
     { name: "different quantity", patch: { Quantity: "4" } },
-    {
-      name: "different opening time",
-      patch: { DateTime: "2025-04-01 10:00:01" },
-    },
     { name: "different multiplier", patch: { Multiplier: "2" } },
     { name: "different fees", patch: { IBCommission: "-2" } },
     { name: "missing price", patch: { TradePrice: "" } },
@@ -154,6 +150,29 @@ describe("equivalent opening lots", () => {
         expect(
           projection.strategies.filter((s) => s.status === "open"),
         ).toHaveLength(2);
+      },
+    );
+  });
+
+  it("closes the earlier of two lots opened one second apart (FIFO)", async () => {
+    await withLedger(
+      [
+        row("OPEN-A"),
+        row("OPEN-B", false, { DateTime: "2025-04-01 10:00:01" }),
+        row("CLOSE-A", true),
+      ],
+      (ledger) => {
+        const projection = groupStrategies(ledger, [], resolveId);
+        expect(projection.issues.map((i) => i.code)).not.toContain(
+          "AMBIGUOUS_CLOSE",
+        );
+        const close = ledger.executions.find(
+          (e) => e.brokerIds.TradeID === "CLOSE-A",
+        );
+        expect(
+          projection.allocations.find((a) => a.executionKey === close?.key)
+            ?.strategyId,
+        ).toBe(strategyFor(ledger, "OPEN-A"));
       },
     );
   });

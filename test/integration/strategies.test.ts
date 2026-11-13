@@ -211,7 +211,7 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       expect(projection.allocations).toHaveLength(2);
     }));
 
-  it("resolves multi-open ambiguity deterministically rather than arbitrary FIFO", () =>
+  it("matches a close to the earliest open lot first (FIFO, as IBKR does)", () =>
     withStore(async (store) => {
       const rows = buildExecutionTable([
         optionLeg("OPEN-1", "T-1", { TradeDate: "2026-09-01" }),
@@ -224,15 +224,21 @@ describe("strategy grouping, closes and option lifecycle links", () => {
           TradePrice: "3",
         }),
       ]);
-      const ledger = await ledgerFrom(store, "ambiguous.csv", rows);
+      const ledger = await ledgerFrom(store, "fifo.csv", rows);
       const projection = groupStrategies(ledger, [], resolveId);
 
-      expect(projection.issues.map((i) => i.code)).toContain("AMBIGUOUS_CLOSE");
-      // Neither opening is arbitrarily consumed; both remain intact.
-      expect(projection.allocations).toHaveLength(3);
-      expect(
-        projection.strategies.filter((s) => s.status === "open"),
-      ).toHaveLength(2);
+      expect(projection.issues.map((i) => i.code)).not.toContain(
+        "AMBIGUOUS_CLOSE",
+      );
+      const strategyOf = (key: string) =>
+        projection.allocations.find((a) => a.executionKey === key)?.strategyId;
+      const status = (key: string) =>
+        projection.strategies.find((s) => s.id === strategyOf(key))?.status;
+      expect(strategyOf(exec(ledger, "T-3").key)).toBe(
+        strategyOf(exec(ledger, "T-1").key),
+      );
+      expect(status(exec(ledger, "T-1").key)).toBe("closed");
+      expect(status(exec(ledger, "T-2").key)).toBe("open");
 
       const reversed: LedgerSnapshot = {
         ...ledger,
@@ -240,6 +246,94 @@ describe("strategy grouping, closes and option lifecycle links", () => {
       };
       const reversedProjection = groupStrategies(reversed, [], resolveId);
       expect(canonical(reversedProjection)).toBe(canonical(projection));
+    }));
+
+  it("spreads a close larger than any one lot across lots in FIFO order", () =>
+    withStore(async (store) => {
+      // VIX 2025: 2 + 2 contracts bought on different days, all 4 expire.
+      const rows = buildExecutionTable([
+        optionLeg("OPEN-1", "T-1", {
+          TradeDate: "2026-09-01",
+          Quantity: "+2",
+          NetCash: "-40",
+          FifoPnlRealized: "0",
+        }),
+        optionLeg("OPEN-2", "T-2", {
+          TradeDate: "2026-09-02",
+          Quantity: "+2",
+          NetCash: "-30",
+          FifoPnlRealized: "0",
+        }),
+        optionLeg("CLOSE-1", "T-3", {
+          TradeDate: "2026-09-03",
+          Quantity: "-4",
+          "Notes/Codes": "C",
+          NetCash: "400",
+          TradePrice: "1",
+          FifoPnlRealized: "330",
+        }),
+      ]);
+      const ledger = await ledgerFrom(store, "spill.csv", rows);
+      const projection = groupStrategies(ledger, [], resolveId);
+
+      const codes = projection.issues.map((i) => i.code);
+      expect(codes).not.toContain("MISSING_OPENING");
+      expect(codes).not.toContain("AMBIGUOUS_CLOSE");
+      const closeKey = exec(ledger, "T-3").key;
+      const parts = projection.allocations.filter(
+        (a) => a.executionKey === closeKey,
+      );
+      const strategyOf = (key: string) =>
+        projection.allocations.find((a) => a.executionKey === key)?.strategyId;
+      expect(parts.map((a) => [a.strategyId, a.quantity]).sort()).toEqual(
+        [
+          [strategyOf(exec(ledger, "T-1").key), "-2"],
+          [strategyOf(exec(ledger, "T-2").key), "-2"],
+        ].sort(),
+      );
+      expect(
+        projection.strategies.filter((s) => s.status === "open"),
+      ).toHaveLength(0);
+      // IBKR's per-lot P&L: proceeds share minus that lot's own cost.
+      const pnlOf = (tradeId: string) =>
+        parts.find(
+          (a) => a.strategyId === strategyOf(exec(ledger, tradeId).key),
+        )?.brokerPnl;
+      expect(pnlOf("T-1")).toBe("160");
+      expect(pnlOf("T-2")).toBe("170");
+      expect(codes).not.toContain("PNL_RECONCILIATION");
+    }));
+
+  it("still flags a close when the open lots' order cannot be established", () =>
+    withStore(async (store) => {
+      const rows = buildExecutionTable([
+        optionLeg("OPEN-1", "T-1", {
+          TradeDate: "2026-09-02",
+          DateTime: "2026-09-02",
+          TradePrice: "2",
+          NetCash: "-200",
+        }),
+        optionLeg("OPEN-2", "T-2", {
+          TradeDate: "2026-09-02",
+          DateTime: "2026-09-02",
+          TradePrice: "2.5",
+          NetCash: "-250",
+        }),
+        optionLeg("CLOSE-1", "T-3", {
+          TradeDate: "2026-09-03",
+          Quantity: "-1",
+          "Notes/Codes": "C",
+          NetCash: "300",
+          TradePrice: "3",
+        }),
+      ]);
+      const ledger = await ledgerFrom(store, "uncertain.csv", rows);
+      const projection = groupStrategies(ledger, [], resolveId);
+
+      expect(projection.issues.map((i) => i.code)).toContain("AMBIGUOUS_CLOSE");
+      expect(
+        projection.strategies.filter((s) => s.status === "open"),
+      ).toHaveLength(2);
     }));
 
   it("matches closes using known lot references", () =>
