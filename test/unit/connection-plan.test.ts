@@ -565,6 +565,160 @@ describe("planConnections", () => {
     });
   });
 
+  it("honours an earlier kept-separate row when planning later calls (SOFI shape)", () => {
+    const callX = { ...call, key: "call-x", conid: "7" };
+    const callY = { ...call, key: "call-y", conid: "8" };
+    const callZ = { ...call, key: "call-z", conid: "9" };
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:32:00Z",
+        ),
+      ],
+      [
+        "x",
+        at(
+          execution("x-open", callX, "-1", "60", 3, "open"),
+          "2026-10-03T09:48:00Z",
+        ),
+      ],
+      [
+        "a",
+        at(
+          execution("a-close", call, "1", "-30", 3, "close"),
+          "2026-10-03T10:27:00Z",
+        ),
+      ],
+      [
+        "y",
+        at(
+          execution("y-open", callY, "-1", "55", 3, "open"),
+          "2026-10-03T10:28:00Z",
+        ),
+      ],
+      [
+        "y",
+        at(
+          execution("y-close", callY, "1", "-20", 9, "close"),
+          "2026-10-09T10:00:00Z",
+        ),
+      ],
+      [
+        "z",
+        at(
+          execution("z-open", callZ, "-1", "50", 10, "open"),
+          "2026-10-10T10:00:00Z",
+        ),
+      ],
+    ]);
+    const lifecycles = projectLifecycles(ledger, projection, []);
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+    });
+    const target = lifecycles.suggestions.find(
+      (s) => s.callOpening.executionKey === "a-open",
+    )?.candidateLifecycleIds[0];
+    expect(planOf(planned, "a-open")).toMatchObject({ action: "connect" });
+    expect(planOf(planned, "x-open")).toMatchObject({
+      action: "separate",
+      reason: "HELD_BY_EARLIER_CALL",
+      heldBy: refOf(lifecycles, "a-open"),
+    });
+    expect(planOf(planned, "y-open")).toMatchObject({
+      action: "connect",
+      lifecycleId: target,
+    });
+    expect(planOf(planned, "z-open")).toMatchObject({
+      action: "connect",
+      lifecycleId: target,
+    });
+
+    // Agreement: saving X's separate exactly as the app does, then A+Y+Z connect validly.
+    const separate: Decision = {
+      id: "sep-x",
+      sequence: 1,
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      kind: "lifecycle_membership",
+      payload: {
+        requireCallCoverage: false,
+        assignments: lifecycles.members
+          .filter((m) => m.allocation.strategyId === "x")
+          .map((m) => ({
+            allocation: m.allocation,
+            lifecycleId: m.lifecycleId,
+            quantity: m.quantity,
+          })),
+      },
+    };
+    const connect: Decision = {
+      id: "__validate__",
+      sequence: 2,
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      kind: "lifecycle_membership",
+      payload: {
+        requireCallCoverage: true,
+        assignments: lifecycles.members
+          .filter((m) => ["a", "y", "z"].includes(m.allocation.strategyId))
+          .map((m) => ({
+            allocation: m.allocation,
+            lifecycleId: target as string,
+            quantity: m.quantity,
+          })),
+      },
+    };
+    expect(() =>
+      validateLifecycleDecision(ledger, projection, [separate], connect),
+    ).not.toThrow();
+  });
+
+  it("throws instead of emitting a separate with no holder", () => {
+    const { ledger, projection } = fixture([
+      ["shares", execution("shares", stock, "100", "-10000", 1, "open")],
+      [
+        "a",
+        at(
+          execution("a-open", call, "-1", "70", 2, "open"),
+          "2026-10-02T10:00:00Z",
+        ),
+      ],
+      [
+        "b",
+        at(
+          execution("b-open", callB, "-1", "60", 3, "open"),
+          "2026-10-03T10:00:00Z",
+        ),
+      ],
+    ]);
+    const full = projectLifecycles(ledger, projection, []);
+    // A stale view that has forgotten A's review row, while validation still sees it pending.
+    const lifecycles = {
+      ...full,
+      suggestions: full.suggestions.filter(
+        (s) => s.callOpening.executionKey !== "a-open",
+      ),
+    };
+    const errors: unknown[] = [];
+    const planned = planConnections({
+      ledger,
+      projection,
+      decisions: [],
+      lifecycles,
+      onError: (e) => errors.push(e),
+    });
+    expect(errors).toHaveLength(1);
+    expect(planOf(planned, "b-open")).toBeUndefined();
+  });
+
   it("does not mutate its input", () => {
     const c = chain();
     const planned = planConnections(c);

@@ -161,18 +161,20 @@ function hypotheticalDecision(
   sequence: number,
   requireCallCoverage: boolean,
   rows: PlanRow[],
-  lifecycleId: string,
+  /** The position to connect to; null keeps each member in its own lifecycle, as "Keep separate" saves it. */
+  lifecycleId: string | null,
 ): Decision {
   const assignments = new Map<
     string,
     { allocation: AllocationRef; lifecycleId: string; quantity: string }
   >();
   for (const member of rows.flatMap((r) => r.members)) {
-    const key = refKey(member.allocation);
+    const assigned = lifecycleId ?? member.lifecycleId;
+    const key = JSON.stringify([refKey(member.allocation), assigned]);
     const previous = assignments.get(key);
     assignments.set(key, {
       allocation: member.allocation,
-      lifecycleId,
+      lifecycleId: assigned,
       quantity: new Decimal(previous?.quantity ?? 0)
         .plus(member.quantity)
         .toString(),
@@ -359,6 +361,10 @@ function separatePlan(
     lifecycles.members.filter((m) => m.lifecycleId === target),
     exec,
   );
+  if (!held && !sharesSold)
+    throw new Error(
+      `Planner bug: ${row.opening.key} was judged separate but no earlier call holds the shares and no shares were sold.`,
+    );
   return {
     action: "separate",
     lifecycleId: target,
@@ -483,7 +489,7 @@ function planPosition(
         Number.MAX_SAFE_INTEGER - n - i - 1,
         false,
         [s],
-        target,
+        null,
       ),
     );
     const pending = [...choices, ...manuals].flatMap((r) => openRef(r) ?? []);
