@@ -57,7 +57,7 @@ export type PlanReason =
   | "ORDER_UNKNOWN";
 export interface ConnectionPlan {
   action: PlanAction;
-  /** The position the row was judged against; null only for MULTIPLE_POSITIONS. */
+  /** The position the row was judged against; null when several positions need review. */
   lifecycleId: Id | null;
   reason: PlanReason;
   sharesAtOpening?: string | undefined;
