@@ -27,6 +27,7 @@ export interface Issue {
   sources: SourceRef[];
   severity: "warning" | "error";
   reconciliation?: ReconciliationContext;
+  candidateMetadata?: Record<string, unknown>;
 }
 
 export interface Instrument {

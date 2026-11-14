@@ -273,9 +273,12 @@ export async function persistProjection(
         issue.key,
         issue.code,
         JSON.stringify(issue.sources),
-        JSON.stringify(
-          issue.reconciliation ? { reconciliation: issue.reconciliation } : {},
-        ),
+        JSON.stringify({
+          ...issue.candidateMetadata,
+          ...(issue.reconciliation
+            ? { reconciliation: issue.reconciliation }
+            : {}),
+        }),
         issue.severity,
       );
     }
@@ -290,6 +293,23 @@ function readReasons(json: string): string[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+function readCandidateMetadata(
+  json: string,
+): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return undefined;
+    const { reconciliation: _reconciliation, ...other } = value as Record<
+      string,
+      unknown
+    >;
+    return Object.keys(other).length ? other : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -491,12 +511,14 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
   }>;
   const issues: Issue[] = issueRows.map((row) => {
     const reconciliation = readReconciliation(row.candidate_json);
+    const candidateMetadata = readCandidateMetadata(row.candidate_json);
     return {
       key: row.stable_issue_key,
       code: row.reason,
       sources: JSON.parse(row.source_references_json) as Issue["sources"],
       severity: row.severity as Issue["severity"],
       ...(reconciliation ? { reconciliation } : {}),
+      ...(candidateMetadata ? { candidateMetadata } : {}),
     };
   });
 

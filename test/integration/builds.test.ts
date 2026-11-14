@@ -219,7 +219,22 @@ describe("versioned builds, atomic activation and rollback", () => {
           "UPDATE review_items SET candidate_json = ? WHERE build_id = ?",
         )
         .run(JSON.stringify({ other: { value: 42 }, reconciliation }), id);
-      expect(loadProjection(store.db, id).issues).toEqual([issue]);
+      const loaded = loadProjection(store.db, id);
+      const nextId = await insertCandidate(store, {
+        ledgerId,
+        watermark: 0,
+        algorithmVersion: "test",
+        inputHash: "next",
+        now: "2026-01-01",
+      });
+      await persistProjection(store, nextId, ledgerId, loaded, "2026-01-01");
+      const saved = store.db
+        .prepare("SELECT candidate_json FROM review_items WHERE build_id = ?")
+        .get(nextId) as { candidate_json: string };
+      expect(JSON.parse(saved.candidate_json)).toEqual({
+        other: { value: 42 },
+        reconciliation,
+      });
       for (const candidate of [
         "{}",
         '{"reconciliation":{"version":2}}',
