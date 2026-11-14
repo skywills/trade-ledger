@@ -1,3 +1,4 @@
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
   ALGORITHM_VERSION,
@@ -15,6 +16,7 @@ import {
   appendDecision,
   decisionWatermark,
 } from "../../src/server/decisions/service.js";
+import { registerReviewRoutes } from "../../src/server/http/routes-review.js";
 import {
   commitImport,
   previewImport,
@@ -249,3 +251,47 @@ describe("projection rebuild normalization input freshness", () => {
       ).toEqual({ status: "stale" });
     }));
 });
+
+it("groups equivalent findings before review pagination", async () =>
+  withStore(async (store) => {
+    const build = await rebuild(store, input("full"));
+    const insert = store.db.prepare(
+      `INSERT INTO review_items (build_id, stable_issue_key, reason, source_references_json, candidate_json, severity) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [key, kind, executionKey] of [
+      ["strategy:a", "strategy", "a"],
+      ["lifecycle:a", "lifecycle", "a"],
+      ["strategy:b", "strategy", "b"],
+      ["lifecycle:b", "lifecycle", "b"],
+    ]) {
+      const reconciliation = {
+        version: 1,
+        owners: [{ kind, id: key }],
+        slices: [{ executionKey, role: "open", quantity: "1", netCash: "2" }],
+        currency: "USD",
+        brokerPnl: "1",
+        reconstructedPnl: "2",
+      };
+      insert.run(
+        build.id,
+        key,
+        "PNL_RECONCILIATION",
+        "[]",
+        JSON.stringify({ reconciliation }),
+        "warning",
+      );
+    }
+    const app = Fastify();
+    try {
+      await registerReviewRoutes(app, store);
+      const first = (await app.inject("/api/review?pageSize=1&page=1")).json();
+      const second = (await app.inject("/api/review?pageSize=1&page=2")).json();
+      expect(first.total).toBe(2);
+      expect(second.total).toBe(2);
+      expect(first.items[0].key).not.toBe(second.items[0].key);
+      expect(first.items[0].issueKeys).toHaveLength(2);
+      expect(second.items[0].issueKeys).toHaveLength(2);
+    } finally {
+      await app.close();
+    }
+  }));
