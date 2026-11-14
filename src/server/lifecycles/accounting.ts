@@ -109,8 +109,23 @@ export function accountLifecycles(
       p.issues.push({
         key: `lifecycle:pnl:${l.id}`,
         code: "PNL_RECONCILIATION",
-        sources: members.flatMap((m) => m.sources),
+        sources: members.flatMap(
+          (m) => executions.get(m.allocation.executionKey)?.sources ?? [],
+        ),
         severity: "warning",
+        reconciliation: {
+          version: 1,
+          owners: [{ kind: "lifecycle", id: l.id }],
+          slices: members.map((m) => ({
+            executionKey: m.allocation.executionKey,
+            role: m.allocation.role,
+            quantity: m.quantity,
+            netCash: m.netCash,
+          })),
+          currency: l.currency,
+          brokerPnl: l.brokerPnl,
+          reconstructedPnl: l.reconstructedPnl,
+        },
       });
     }
   }

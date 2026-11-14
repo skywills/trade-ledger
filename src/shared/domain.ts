@@ -7,11 +7,26 @@ export interface SourceRef {
   rowNumber: number;
 }
 
+export interface ReconciliationContext {
+  version: 1;
+  owners: Array<{ kind: "strategy" | "lifecycle"; id: string }>;
+  slices: Array<{
+    executionKey: string;
+    role: "open" | "close";
+    quantity: string;
+    netCash: string;
+  }>;
+  currency: string;
+  brokerPnl: string;
+  reconstructedPnl: string;
+}
+
 export interface Issue {
   key: string;
   code: string;
   sources: SourceRef[];
   severity: "warning" | "error";
+  reconciliation?: ReconciliationContext;
 }
 
 export interface Instrument {

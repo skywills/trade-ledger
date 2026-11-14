@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { markBuildStatus } from "../../src/server/builds/repository.js";
+import {
+  insertCandidate,
+  loadProjection,
+  markBuildStatus,
+  persistProjection,
+} from "../../src/server/builds/repository.js";
 import {
   ALGORITHM_VERSION,
   activeBuildMeta,
@@ -160,6 +165,84 @@ function canonical(projection: Projection): string {
 }
 
 describe("versioned builds, atomic activation and rollback", () => {
+  it("round trips reconciliation evidence and ignores invalid candidate metadata", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const built = await rebuild(store, input("full"));
+      const ledgerId = activeLedgerId(store);
+      const id = await insertCandidate(store, {
+        ledgerId,
+        watermark: 0,
+        algorithmVersion: "test",
+        inputHash: "test",
+        now: "2026-01-01",
+      });
+      const reconciliation = {
+        version: 1 as const,
+        owners: [{ kind: "strategy" as const, id: "s" }],
+        slices: [
+          {
+            executionKey: "e",
+            role: "open" as const,
+            quantity: "1",
+            netCash: "-10",
+          },
+        ],
+        currency: "USD",
+        brokerPnl: "3",
+        reconstructedPnl: "2",
+      };
+      const issue = {
+        key: "evidence",
+        code: "PNL_RECONCILIATION",
+        sources: [],
+        severity: "warning" as const,
+        reconciliation,
+      };
+      await persistProjection(
+        store,
+        id,
+        ledgerId,
+        {
+          ledgerId,
+          watermark: 0,
+          strategies: [],
+          allocations: [],
+          links: [],
+          issues: [issue],
+        },
+        "2026-01-01",
+      );
+      expect(loadProjection(store.db, id).issues).toEqual([issue]);
+      store.db
+        .prepare(
+          "UPDATE review_items SET candidate_json = ? WHERE build_id = ?",
+        )
+        .run(JSON.stringify({ other: { value: 42 }, reconciliation }), id);
+      expect(loadProjection(store.db, id).issues).toEqual([issue]);
+      for (const candidate of [
+        "{}",
+        '{"reconciliation":{"version":2}}',
+        '{"reconciliation":{"version":1,"owners":[],"slices":[{"role":"bad"}],"currency":"USD","brokerPnl":"1","reconstructedPnl":"2"}}',
+        "invalid",
+      ]) {
+        store.db
+          .prepare(
+            "UPDATE review_items SET candidate_json = ? WHERE build_id = ?",
+          )
+          .run(candidate, id);
+        expect(loadProjection(store.db, id).issues).toEqual([
+          {
+            key: issue.key,
+            code: issue.code,
+            sources: [],
+            severity: "warning",
+          },
+        ]);
+      }
+      expect(built.id).toBeTruthy();
+    }));
+
   it("marks a retained cash-based futures algorithm build stale", async () =>
     withStore(async (store) => {
       await commitBytes(store, "spread.csv", fixtures.spread);

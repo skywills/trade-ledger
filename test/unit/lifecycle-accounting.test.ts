@@ -222,5 +222,29 @@ it("retains lifecycle option reconciliation warnings", () => {
   l.complete = true;
   accountLifecycles(f.ledger, f.projection, p);
   expect(p.lifecycles[0]?.reconstructedPnl).toBe("86.5536102");
-  expect(p.issues.map((i) => i.code)).toContain("PNL_RECONCILIATION");
+  expect(p.issues.find((i) => i.code === "PNL_RECONCILIATION")).toMatchObject({
+    key: `lifecycle:pnl:${l.id}`,
+    sources: [...open.sources, ...close.sources],
+    reconciliation: {
+      version: 1,
+      owners: [{ kind: "lifecycle", id: l.id }],
+      currency: "USD",
+      brokerPnl: "86.53261",
+      reconstructedPnl: "86.5536102",
+      slices: [
+        {
+          executionKey: "o",
+          role: "open",
+          quantity: "-1",
+          netCash: "139.6558602",
+        },
+        {
+          executionKey: "c",
+          role: "close",
+          quantity: "1",
+          netCash: "-53.10225",
+        },
+      ],
+    },
+  });
 });

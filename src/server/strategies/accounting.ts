@@ -310,8 +310,30 @@ export function accountProjection(
       executionByKey,
     );
 
-    if (amounts.reconciliation) {
+    if (
+      amounts.reconciliation &&
+      amounts.brokerPnl !== null &&
+      amounts.reconstructedPnl !== null
+    ) {
       const issue = makeIssue("PNL_RECONCILIATION", [], "warning", strategy.id);
+      issue.sources = executionsOf(strategyAllocations, executionByKey).flatMap(
+        (execution) => execution.sources,
+      );
+      issue.reconciliation = {
+        version: 1,
+        owners: [{ kind: "strategy", id: strategy.id }],
+        slices: strategyAllocations.map(
+          ({ executionKey, role, quantity, netCash }) => ({
+            executionKey,
+            role,
+            quantity,
+            netCash,
+          }),
+        ),
+        currency: strategy.currency,
+        brokerPnl: amounts.brokerPnl,
+        reconstructedPnl: amounts.reconstructedPnl,
+      };
       if (!seeIssue.has(issue.key)) {
         seeIssue.add(issue.key);
         issues.push(issue);

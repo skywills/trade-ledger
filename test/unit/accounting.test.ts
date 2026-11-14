@@ -440,9 +440,37 @@ describe("accountProjection", () => {
     expect(build("10.01").issues.map((issue) => issue.code)).not.toContain(
       "PNL_RECONCILIATION",
     );
-    expect(build("9.50").issues.map((issue) => issue.code)).toContain(
-      "PNL_RECONCILIATION",
+    const issue = build("9.50").issues.find(
+      (item) => item.code === "PNL_RECONCILIATION",
     );
+    expect(issue).toMatchObject({
+      key: "strategy:PNL_RECONCILIATION:s1:",
+      sources: [
+        { importId: "imp", rowNumber: 1 },
+        { importId: "imp", rowNumber: 1 },
+      ],
+      reconciliation: {
+        version: 1,
+        owners: [{ kind: "strategy", id: "s1" }],
+        currency: "USD",
+        brokerPnl: "9.5",
+        reconstructedPnl: "10",
+        slices: [
+          {
+            executionKey: "exec:imp:1",
+            role: "open",
+            quantity: "1",
+            netCash: "-1000",
+          },
+          {
+            executionKey: "exec:imp:2",
+            role: "close",
+            quantity: "-1",
+            netCash: "1010",
+          },
+        ],
+      },
+    });
   });
 
   it("distinguishes an explicit zero broker P/L from an unknown one", () => {
