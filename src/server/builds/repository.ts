@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { Decimal } from "decimal.js";
 import type {
   Allocation,
   Id,
   Issue,
   Projection,
+  ReconciliationContext,
   Strategy,
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
@@ -272,7 +274,12 @@ export async function persistProjection(
         issue.key,
         issue.code,
         JSON.stringify(issue.sources),
-        "{}",
+        JSON.stringify({
+          ...issue.candidateMetadata,
+          ...(issue.reconciliation
+            ? { reconciliation: issue.reconciliation }
+            : {}),
+        }),
         issue.severity,
       );
     }
@@ -287,6 +294,82 @@ function readReasons(json: string): string[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+function readCandidateMetadata(
+  json: string,
+): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return undefined;
+    const { reconciliation: _reconciliation, ...other } = value as Record<
+      string,
+      unknown
+    >;
+    return Object.keys(other).length ? other : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readReconciliation(json: string): ReconciliationContext | undefined {
+  try {
+    const metadata: unknown = JSON.parse(json);
+    const record = (value: unknown): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null && !Array.isArray(value);
+    if (!record(metadata) || !record(metadata.reconciliation)) return undefined;
+    const context = metadata.reconciliation;
+    const finiteDecimal = (value: unknown): boolean => {
+      if (typeof value !== "string") return false;
+      try {
+        return new Decimal(value).isFinite();
+      } catch {
+        return false;
+      }
+    };
+    if (
+      context.version !== 1 ||
+      !Array.isArray(context.owners) ||
+      !Array.isArray(context.slices) ||
+      typeof context.currency !== "string" ||
+      !finiteDecimal(context.brokerPnl) ||
+      !finiteDecimal(context.reconstructedPnl) ||
+      !context.owners.every(
+        (owner: unknown) =>
+          record(owner) &&
+          (owner.kind === "strategy" || owner.kind === "lifecycle") &&
+          typeof owner.id === "string",
+      ) ||
+      !context.slices.every(
+        (slice: unknown) =>
+          record(slice) &&
+          typeof slice.executionKey === "string" &&
+          (slice.role === "open" || slice.role === "close") &&
+          typeof slice.quantity === "string" &&
+          typeof slice.netCash === "string",
+      )
+    )
+      return undefined;
+    return {
+      version: 1,
+      owners: context.owners.map((owner) => ({
+        kind: owner.kind,
+        id: owner.id,
+      })),
+      slices: context.slices.map((slice) => ({
+        executionKey: slice.executionKey,
+        role: slice.role,
+        quantity: slice.quantity,
+        netCash: slice.netCash,
+      })),
+      currency: context.currency,
+      brokerPnl: context.brokerPnl as string,
+      reconstructedPnl: context.reconstructedPnl as string,
+    };
+  } catch {
+    return undefined;
   }
 }
 
@@ -425,21 +508,28 @@ export function loadProjection(db: Store["db"], buildId: Id): Projection {
 
   const issueRows = db
     .prepare(
-      `SELECT stable_issue_key, reason, source_references_json, severity
+      `SELECT stable_issue_key, reason, source_references_json, candidate_json, severity
        FROM review_items WHERE build_id = ? ORDER BY stable_issue_key`,
     )
     .all(buildId) as Array<{
     stable_issue_key: string;
     reason: string;
     source_references_json: string;
+    candidate_json: string;
     severity: string;
   }>;
-  const issues: Issue[] = issueRows.map((row) => ({
-    key: row.stable_issue_key,
-    code: row.reason,
-    sources: JSON.parse(row.source_references_json) as Issue["sources"],
-    severity: row.severity as Issue["severity"],
-  }));
+  const issues: Issue[] = issueRows.map((row) => {
+    const reconciliation = readReconciliation(row.candidate_json);
+    const candidateMetadata = readCandidateMetadata(row.candidate_json);
+    return {
+      key: row.stable_issue_key,
+      code: row.reason,
+      sources: JSON.parse(row.source_references_json) as Issue["sources"],
+      severity: row.severity as Issue["severity"],
+      ...(reconciliation ? { reconciliation } : {}),
+      ...(candidateMetadata ? { candidateMetadata } : {}),
+    };
+  });
 
   const lifecycles = loadLifecycleProjection(db, buildId);
   return {

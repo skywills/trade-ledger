@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { aggregateAnalytics } from "../../src/server/analytics/aggregate.js";
+import { parseAnalyticsQuery } from "../../src/server/analytics/query.js";
+import { readAnalyticsSnapshot } from "../../src/server/analytics/snapshot.js";
+import { ALGORITHM_VERSION, rebuild } from "../../src/server/builds/service.js";
 import { strategyAnchorKey } from "../../src/server/decisions/registry.js";
+import { notesInput } from "../../src/server/decisions/schemas.js";
+import {
+  appendDecision,
+  decisionWatermark,
+} from "../../src/server/decisions/service.js";
 import {
   commitImport,
   previewImport,
 } from "../../src/server/imports/service.js";
-import { normalizeLedger } from "../../src/server/ledger/normalize.js";
+import {
+  LEDGER_PARSER_VERSION,
+  normalizeLedger,
+} from "../../src/server/ledger/normalize.js";
 import type { Store } from "../../src/server/storage/database.js";
 import {
   accountProjection,
@@ -250,5 +262,149 @@ describe("strategy accounting over normalized ledgers", () => {
       expect(strategy?.openingDate).toBe("2026-09-03");
       expect(strategy?.expiry).toBe("2027-01-15");
       expect(strategy?.expiryYear).toBe(2027);
+    }));
+});
+
+describe("persisted futures accounting", () => {
+  it("preserves source evidence and excludes unavailable reconstructed results from analytics", () =>
+    withStore(async (store) => {
+      const rows = [
+        {
+          conid: "1001",
+          order: "A",
+          quantity: "-1",
+          price: "196.9",
+          proceeds: "9845",
+          cash: "-72.6333",
+          commission: "-2.633313103",
+          action: "O",
+          date: "2026-09-01",
+        },
+        {
+          conid: "1001",
+          order: "A-C",
+          quantity: "1",
+          price: "194.3",
+          proceeds: "-9715",
+          cash: "-2.6377",
+          commission: "-2.637697079",
+          action: "C",
+          date: "2026-09-02",
+        },
+        {
+          conid: "1002",
+          order: "B",
+          quantity: "1",
+          price: "197.3",
+          proceeds: "-9865",
+          cash: "72.3667",
+          commission: "",
+          action: "O",
+          date: "2026-09-01",
+        },
+        {
+          conid: "1002",
+          order: "B-C",
+          quantity: "-1",
+          price: "195.2",
+          proceeds: "9760",
+          cash: "-2.6377",
+          commission: "-2.637697079",
+          action: "C",
+          date: "2026-09-02",
+        },
+      ];
+      await commitBytes(
+        store,
+        "futures.csv",
+        buildExecutionTable(
+          rows.map((r, i) =>
+            executionRow({
+              ClientAccountID: "SIM-FUT",
+              AssetClass: "FUT",
+              Symbol: `SYN${r.conid}`,
+              Conid: r.conid,
+              CurrencyPrimary: "USD",
+              TradeDate: r.date,
+              DateTime: `${r.date} 10:00:00`,
+              Quantity: r.quantity,
+              TradePrice: r.price,
+              Proceeds: r.proceeds,
+              IBCommission: r.commission,
+              NetCash: r.cash,
+              "Notes/Codes": r.action,
+              IBOrderID: r.order,
+              BrokerageOrderID: r.order,
+              IBExecID: `SYN-EXEC-${i}`,
+              TradeID: `SYN-TRADE-${i}`,
+              Expiry: "2027-03-19",
+              Multiplier: "50",
+            }),
+          ),
+        ),
+      );
+      await appendDecision(
+        store,
+        notesInput({ strategyId: "synthetic-note", text: "retained" }),
+        decisionWatermark(store),
+      );
+      const watermark = decisionWatermark(store);
+      const sourceRows = store.db
+        .prepare("SELECT raw_fields_json FROM import_rows ORDER BY row_number")
+        .all();
+      const result = await rebuild(store, {
+        mode: "full",
+        parserVersion: LEDGER_PARSER_VERSION,
+        algorithmVersion: ALGORITHM_VERSION,
+        signal: new AbortController().signal,
+      });
+      expect(result.status).toBe("active");
+      const snapshot = readAnalyticsSnapshot(store);
+      expect(snapshot.projection?.watermark).toBe(watermark);
+      expect(decisionWatermark(store)).toBe(watermark);
+      expect(
+        store.db
+          .prepare(
+            "SELECT raw_fields_json FROM import_rows ORDER BY row_number",
+          )
+          .all(),
+      ).toEqual(sourceRows);
+      expect(
+        snapshot.ledger?.executions
+          .map((e) => [e.proceeds, e.commission, e.netCash])
+          .sort(),
+      ).toEqual(
+        [
+          ["9845", "-2.633313103", "-72.6333"],
+          ["-9715", "-2.637697079", "-2.6377"],
+          ["-9865", null, "72.3667"],
+          ["9760", "-2.637697079", "-2.6377"],
+        ].sort(),
+      );
+      expect(
+        snapshot.projection?.strategies.map((s) => s.reconstructedPnl).sort(),
+      ).toEqual(["124.728989818", null].sort());
+      expect(
+        snapshot.projection?.lifecycles?.lifecycles
+          .map((c) => c.reconstructedPnl)
+          .sort(),
+      ).toEqual(["124.728989818", null].sort());
+      for (const unit of ["strategy", "lifecycle"] as const) {
+        const analytics = aggregateAnalytics(
+          snapshot,
+          parseAnalyticsQuery({
+            unit,
+            basis: "reconstructed",
+            currency: "USD",
+          }),
+        );
+        expect(analytics.performance).toMatchObject({
+          closed: 2,
+          eligible: 1,
+          missing: 1,
+          pnl: "124.728989818",
+          breakeven: 0,
+        });
+      }
     }));
 });

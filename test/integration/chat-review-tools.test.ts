@@ -101,6 +101,50 @@ describe("agent review diagnostics and sanitized reports", () => {
     ).toEqual(before);
   });
 
+  it("retains every raw reconciliation key and its context for diagnosis", async () => {
+    const { test, tools, issue, buildId } = await setup();
+    const insert = test.store.db.prepare(
+      "INSERT INTO review_items (build_id, stable_issue_key, reason, source_references_json, candidate_json, severity) VALUES (?, ?, 'PNL_RECONCILIATION', ?, ?, 'warning')",
+    );
+    for (const key of [
+      "strategy-a",
+      "lifecycle-a",
+      "strategy-b",
+      "lifecycle-b",
+    ]) {
+      const reconciliation = {
+        version: 1,
+        owners: [
+          {
+            kind: key.startsWith("strategy") ? "strategy" : "lifecycle",
+            id: key,
+          },
+        ],
+        slices: [],
+        currency: "USD",
+        brokerPnl: "1",
+        reconstructedPnl: "1.0210002",
+      };
+      insert.run(
+        buildId,
+        key,
+        JSON.stringify(issue.sources),
+        JSON.stringify({ reconciliation }),
+      );
+      const result = await call(tools, "diagnose_review_issue", {
+        issueKey: key,
+        expectedBuildId: buildId,
+      });
+      expect(result.isError).not.toBe(true);
+      const data = JSON.parse(result.content);
+      expect(data.issue).toMatchObject({
+        key,
+        reconciliation,
+      });
+      expect(data.items[0].sources).toEqual(issue.sources);
+    }
+  });
+
   it("generates an allowlisted report without financial data or source identifiers and publishes nothing", async () => {
     const { tools, issue, buildId } = await setup();
     const result = await call(tools, "create_issue_report", {

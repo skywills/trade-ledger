@@ -23,6 +23,7 @@ import {
   reconcilesWithin,
   UNAVAILABLE,
 } from "../../src/shared/money.js";
+import { futuresSpread } from "../fixtures/futures-pnl.js";
 
 const instrument: Instrument = {
   key: "conid:1",
@@ -439,9 +440,37 @@ describe("accountProjection", () => {
     expect(build("10.01").issues.map((issue) => issue.code)).not.toContain(
       "PNL_RECONCILIATION",
     );
-    expect(build("9.50").issues.map((issue) => issue.code)).toContain(
-      "PNL_RECONCILIATION",
+    const issue = build("9.50").issues.find(
+      (item) => item.code === "PNL_RECONCILIATION",
     );
+    expect(issue).toMatchObject({
+      key: "strategy:PNL_RECONCILIATION:s1:",
+      sources: [
+        { importId: "imp", rowNumber: 1 },
+        { importId: "imp", rowNumber: 1 },
+      ],
+      reconciliation: {
+        version: 1,
+        owners: [{ kind: "strategy", id: "s1" }],
+        currency: "USD",
+        brokerPnl: "9.5",
+        reconstructedPnl: "10",
+        slices: [
+          {
+            executionKey: "exec:imp:1",
+            role: "open",
+            quantity: "1",
+            netCash: "-1000",
+          },
+          {
+            executionKey: "exec:imp:2",
+            role: "close",
+            quantity: "-1",
+            netCash: "1010",
+          },
+        ],
+      },
+    });
   });
 
   it("distinguishes an explicit zero broker P/L from an unknown one", () => {
@@ -657,5 +686,103 @@ describe("validateProjection", () => {
     expect(issues.filter((issue) => issue.severity === "error")).toHaveLength(
       0,
     );
+  });
+});
+
+describe("futures reconstruction", () => {
+  it.each(["mtm-gap", "coincidental-match"] as const)(
+    "reconstructs %s while retaining cash and allocations",
+    (variant) => {
+      const rows = futuresSpread(variant);
+      const allocations = rows.map((r) =>
+        allocation({
+          strategyId: "s",
+          executionKey: r.execution.key,
+          quantity: r.quantity,
+          netCash: r.netCash,
+          brokerPnl: r.execution.brokerPnl,
+          role: r.execution.action as "open" | "close",
+        }),
+      );
+      const input = projection(
+        [
+          strategy({
+            id: "s",
+            status: "closed",
+            complete: true,
+            reasons: ["FUTURES_PNL_UNAVAILABLE"],
+          }),
+        ],
+        allocations,
+      );
+      const result = accountProjection(
+        ledger(rows.map((r) => r.execution)),
+        input,
+      );
+      expect(result.strategies[0]).toMatchObject({
+        reconstructedPnl: "14.457979636",
+        brokerPnl: "14.45798",
+        cashflow: variant === "mtm-gap" ? "-5.542" : "14.458",
+        reasons: [],
+      });
+      expect(result.allocations).toEqual(allocations);
+      expect(result.issues.map((i) => i.code)).not.toContain(
+        "PNL_RECONCILIATION",
+      );
+      const first = rows[0];
+      if (!first) throw Error("Missing fixture row");
+      first.execution.proceeds = null;
+      const missing = accountProjection(
+        ledger(rows.map((r) => r.execution)),
+        input,
+      );
+      expect(missing.strategies[0]?.reconstructedPnl).toBeNull();
+      expect(missing.strategies[0]?.reasons).toContain(
+        "FUTURES_PNL_UNAVAILABLE",
+      );
+      expect(
+        accountProjection(ledger(rows.slice(1).map((r) => r.execution)), input)
+          .strategies[0]?.reconstructedPnl,
+      ).toBeNull();
+    },
+  );
+  it("retains option reconciliation warnings", () => {
+    const open = execution({
+      key: "o",
+      quantity: "-1",
+      netCash: "139.6558602",
+    });
+    const close = execution({
+      key: "c",
+      quantity: "1",
+      netCash: "-53.10225",
+      basis: "139.65586",
+      brokerPnl: "86.53261",
+      action: "close",
+    });
+    const result = accountProjection(
+      ledger([open, close]),
+      projection(
+        [strategy({ id: "s", status: "closed", complete: true })],
+        [
+          allocation({
+            strategyId: "s",
+            executionKey: "o",
+            quantity: "-1",
+            netCash: open.netCash,
+          }),
+          allocation({
+            strategyId: "s",
+            executionKey: "c",
+            quantity: "1",
+            netCash: close.netCash,
+            brokerPnl: close.brokerPnl,
+            role: "close",
+          }),
+        ],
+      ),
+    );
+    expect(result.strategies[0]?.reconstructedPnl).toBe("86.5536102");
+    expect(result.issues.map((i) => i.code)).toContain("PNL_RECONCILIATION");
   });
 });

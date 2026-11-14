@@ -9,6 +9,7 @@ import {
 import { AppError } from "../../shared/errors.js";
 import { activeProjection } from "../builds/service.js";
 import { appendDecision, decisionWatermark } from "../decisions/service.js";
+import { groupReviewIssues } from "../review/group-issues.js";
 import type { Store } from "../storage/database.js";
 
 function readExpectedWatermark(store: Store, body: unknown): number {
@@ -44,7 +45,7 @@ export async function registerReviewRoutes(
     );
     const active = activeProjection(store);
     const issues = active.projection?.issues ?? [];
-    const all = sortWithAllowlist(issues, sort, {
+    const all = sortWithAllowlist(groupReviewIssues(issues), sort, {
       key: (entry) => entry.key,
       code: (entry) => entry.code,
       severity: (entry) => entry.severity,

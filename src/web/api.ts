@@ -25,11 +25,32 @@ export const SourceRefSchema = z.object({
   rowNumber: z.number().int(),
 });
 
+const OwnerSchema = z.object({
+  kind: z.enum(["strategy", "lifecycle"]),
+  id: z.string(),
+});
+const ReconciliationSchema = z.object({
+  version: z.literal(1),
+  owners: z.array(OwnerSchema),
+  slices: z.array(
+    z.object({
+      executionKey: z.string(),
+      role: z.enum(["open", "close"]),
+      quantity: z.string(),
+      netCash: z.string(),
+    }),
+  ),
+  currency: z.string(),
+  brokerPnl: z.string(),
+  reconstructedPnl: z.string(),
+});
+
 export const IssueSchema = z.object({
   key: z.string(),
   code: z.string(),
   sources: z.array(SourceRefSchema),
   severity: z.enum(["warning", "error"]),
+  reconciliation: ReconciliationSchema.optional(),
 });
 
 const InstrumentSchema = z.object({
@@ -199,7 +220,11 @@ export const JournalEnvelope = listEnvelopeSchema(StrategySchema);
 export const TransactionsEnvelope = listEnvelopeSchema(ExecutionSchema);
 export const LotsEnvelope = listEnvelopeSchema(LotSchema);
 export const ImportsEnvelope = listEnvelopeSchema(ImportSummarySchema);
-export const ReviewEnvelope = listEnvelopeSchema(IssueSchema);
+export const ReviewEntrySchema = IssueSchema.extend({
+  issueKeys: z.array(z.string()),
+  owners: z.array(OwnerSchema),
+});
+export const ReviewEnvelope = listEnvelopeSchema(ReviewEntrySchema);
 export const RunSummariesEnvelope = listEnvelopeSchema(RunSummarySchema);
 export const ImportRowsEnvelope = listEnvelopeSchema(ImportRowViewSchema);
 export const PreviewResponseSchema = z.object({

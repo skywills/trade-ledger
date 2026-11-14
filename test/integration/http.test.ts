@@ -18,7 +18,11 @@ import {
 } from "../../src/server/imports/service.js";
 import { LEDGER_PARSER_VERSION } from "../../src/server/ledger/normalize.js";
 import { closeStore, openStore } from "../../src/server/storage/database.js";
-import { fixtures } from "../fixtures/scenarios.js";
+import {
+  buildExecutionTable,
+  executionRow,
+  fixtures,
+} from "../fixtures/scenarios.js";
 
 const ORIGIN = "http://localhost:3000";
 const encoder = new TextEncoder();
@@ -417,6 +421,110 @@ describe("validated HTTP API", () => {
     expect(stale.json()).toMatchObject({ code: "STALE_INPUT" });
   });
 
+  it("rebuilds imported futures and option evidence into grouped review", async () => {
+    const app = await createTestApp();
+    const common = {
+      ClientAccountID: "SIM",
+      CurrencyPrimary: "USD",
+      LevelOfDetail: "EXECUTION",
+    };
+    const quantities = ["-1", "1", "1", "-1"];
+    const proceeds = ["9845", "-9715", "-9865", "9760"];
+    const cash = ["-72.6333", "-2.6377", "72.3667", "-2.6377"];
+    const commissions = [
+      "-2.633313103",
+      "-2.637697079",
+      "-2.633313103",
+      "-2.637697079",
+    ];
+    const rows = quantities.map((quantity, i) =>
+      executionRow({
+        ...common,
+        AssetClass: "FUT",
+        Symbol: i < 2 ? "FUTA" : "FUTB",
+        UnderlyingSymbol: "FUT",
+        Conid: i < 2 ? "101" : "102",
+        Expiry: "2027-03-19",
+        Multiplier: "50",
+        TradeDate: i % 2 ? "2026-09-25" : "2026-09-03",
+        DateTime: i % 2 ? "2026-09-25 11:00:00" : "2026-09-03 10:00:00",
+        Quantity: quantity,
+        TradePrice: "196",
+        Proceeds: proceeds[i] ?? "",
+        NetCash: cash[i] ?? "",
+        IBCommission: commissions[i] ?? "",
+        FifoPnlRealized: i % 2 ? "7.22899" : "",
+        "Notes/Codes": i % 2 ? "C" : "O",
+        IBOrderID: i % 2 ? "FUT-CLOSE" : "FUT-OPEN",
+        IBExecID: `fut-${i}`,
+        TradeID: `fut-${i}`,
+      }),
+    );
+    for (const [i, quantity, netCash, action] of [
+      [0, "-1", "139.6558602", "O"],
+      [1, "1", "-53.10225", "C"],
+    ] as const)
+      rows.push(
+        executionRow({
+          ...common,
+          AssetClass: "OPT",
+          Symbol: "SOFI",
+          UnderlyingSymbol: "SOFI",
+          Conid: "201",
+          Expiry: "2026-10-16",
+          Strike: "10",
+          "Put/Call": "P",
+          Multiplier: "100",
+          TradeDate: i ? "2026-09-25" : "2026-09-03",
+          DateTime: i ? "2026-09-25 11:00:00" : "2026-09-03 10:00:00",
+          Quantity: quantity,
+          TradePrice: "1",
+          NetCash: netCash,
+          CostBasis: i ? "139.65586" : "",
+          FifoPnlRealized: i ? "86.53261" : "",
+          "Notes/Codes": action,
+          IBOrderID: `OPT-${i}`,
+          IBExecID: `opt-${i}`,
+          TradeID: `opt-${i}`,
+        }),
+      );
+    await uploadAndCommit(app, "combined.csv", buildExecutionTable(rows));
+    const job = await waitForTerminalJob(app, await startBuild(app, "full"));
+    expect(job.status).toBe("complete");
+    const review = (await app.inject("/api/review?pageSize=100")).json();
+    const entries = review.items.filter(
+      (item: { code: string }) => item.code === "PNL_RECONCILIATION",
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      reconciliation: { brokerPnl: "86.53261", reconstructedPnl: "86.5536102" },
+    });
+    expect(entries[0].issueKeys).toHaveLength(2);
+    expect(entries[0].sources).not.toHaveLength(0);
+    const journal = (await app.inject("/api/journal?pageSize=100")).json();
+    const future = journal.items.find(
+      (item: { currency: string; reconstructedPnl: string }) =>
+        item.reconstructedPnl === "14.457979636",
+    );
+    expect(future).toMatchObject({
+      status: "closed",
+      cashflow: "-5.542",
+      brokerPnl: "14.45798",
+    });
+    const cycles = (await app.inject("/api/lifecycles")).json();
+    expect(cycles.lifecycles.lifecycles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "closed",
+          reconstructedPnl: "14.457979636",
+        }),
+      ]),
+    );
+    expect(
+      entries[0].owners.map((owner: { kind: string }) => owner.kind).sort(),
+    ).toEqual(["lifecycle", "strategy"]);
+  });
+
   it("returns build-consistent paginated projections after a rebuild", async () => {
     const app = await createTestApp();
     await uploadAndCommit(app, "spread.csv", fixtures.spread);
@@ -459,6 +567,18 @@ describe("validated HTTP API", () => {
     expect((strategy.json() as { metadata: unknown }).metadata).toEqual({
       notes: null,
       stopLoss: null,
+    });
+
+    const pinned = await app.inject(
+      `/api/strategies/${strategyId}?expectedBuildId=${fullBody.buildId}`,
+    );
+    expect(pinned.statusCode).toBe(200);
+    const wrongBuild = await app.inject(
+      `/api/strategies/${strategyId}?expectedBuildId=previous-build`,
+    );
+    expect(wrongBuild.statusCode).toBe(409);
+    expect(wrongBuild.json()).toMatchObject({
+      code: "ANALYTICS_BUILD_CHANGED",
     });
 
     // A retained note/stop-loss is visible through the same read route.

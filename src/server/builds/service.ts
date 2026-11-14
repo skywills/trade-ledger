@@ -55,7 +55,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "lifecycles-v13";
+export const ALGORITHM_VERSION = "lifecycles-v14";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
@@ -115,7 +115,10 @@ export function remapStrategyIds(
   return {
     ...projection,
     strategies: projection.strategies.map(
-      (strategy): Strategy => ({ ...strategy, id: idOf(strategy.id) }),
+      (strategy): Strategy => ({
+        ...strategy,
+        id: idOf(strategy.id),
+      }),
     ),
     allocations: projection.allocations.map((allocation) => ({
       ...allocation,
@@ -449,7 +452,12 @@ export function activeBuildMeta(store: Store): {
 } {
   const build = readActiveBuild(store.db);
   if (build === null) return { buildId: null, stale: false };
-  return { buildId: build.id, stale: inputsChanged(store, build) };
+  return {
+    buildId: build.id,
+    stale:
+      inputsChanged(store, build) ||
+      build.algorithm_version !== ALGORITHM_VERSION,
+  };
 }
 
 /**

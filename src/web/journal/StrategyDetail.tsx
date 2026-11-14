@@ -9,7 +9,7 @@ import {
 } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading } from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
-import { Link } from "../navigation.js";
+import { Link, useLocation } from "../navigation.js";
 import { DecisionEditor, listDecisions } from "../review/DecisionEditor.js";
 import { collectActualExpiries } from "./expiries.js";
 
@@ -24,9 +24,11 @@ function sourceTarget(execution: Execution | undefined): string | null {
 
 /** Strategy detail: source precision, ledger allocations, lots and decisions. */
 export function StrategyDetail({ id }: { id: string }) {
+  const { search } = useLocation();
+  const expected = new URLSearchParams(search).get("expectedBuildId");
   const lifecycles = useJson("/api/lifecycles", LifecycleListSchema);
   const detail = useJson(
-    `/api/strategies/${encodeURIComponent(id)}`,
+    `/api/strategies/${encodeURIComponent(id)}${expected ? `?expectedBuildId=${encodeURIComponent(expected)}` : ""}`,
     StrategyDetailSchema,
   );
   const transactions = useJson(
@@ -53,6 +55,12 @@ export function StrategyDetail({ id }: { id: string }) {
         message={detail.error?.message ?? "Failed to load the strategy."}
         onRetry={detail.reload}
       />
+    );
+  }
+
+  if (expected && detail.data?.buildId !== expected) {
+    return (
+      <ErrorPanel message="The active build changed. Refresh before continuing." />
     );
   }
 
@@ -102,7 +110,10 @@ export function StrategyDetail({ id }: { id: string }) {
         stale={detail.data?.stale ?? false}
       />
 
-      {(lifecycles.data?.lifecycles?.lifecycles ?? [])
+      {(lifecycles.data?.buildId === detail.data?.buildId
+        ? (lifecycles.data?.lifecycles?.lifecycles ?? [])
+        : []
+      )
         .filter((l) => l.componentIds.includes(id))
         .map((l) => (
           <p key={l.id}>

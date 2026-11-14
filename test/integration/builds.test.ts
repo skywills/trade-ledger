@@ -1,8 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { markBuildStatus } from "../../src/server/builds/repository.js";
+import {
+  insertCandidate,
+  loadProjection,
+  markBuildStatus,
+  persistProjection,
+} from "../../src/server/builds/repository.js";
 import {
   ALGORITHM_VERSION,
+  activeBuildMeta,
   activeProjection,
   BuildScheduler,
   computeProjection,
@@ -159,6 +165,120 @@ function canonical(projection: Projection): string {
 }
 
 describe("versioned builds, atomic activation and rollback", () => {
+  it("round trips reconciliation evidence and ignores invalid candidate metadata", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const built = await rebuild(store, input("full"));
+      const ledgerId = activeLedgerId(store);
+      const id = await insertCandidate(store, {
+        ledgerId,
+        watermark: 0,
+        algorithmVersion: "test",
+        inputHash: "test",
+        now: "2026-01-01",
+      });
+      const reconciliation = {
+        version: 1 as const,
+        owners: [{ kind: "strategy" as const, id: "s" }],
+        slices: [
+          {
+            executionKey: "e",
+            role: "open" as const,
+            quantity: "1",
+            netCash: "-10",
+          },
+        ],
+        currency: "USD",
+        brokerPnl: "3",
+        reconstructedPnl: "2",
+      };
+      const issue = {
+        key: "evidence",
+        code: "PNL_RECONCILIATION",
+        sources: [],
+        severity: "warning" as const,
+        reconciliation,
+      };
+      await persistProjection(
+        store,
+        id,
+        ledgerId,
+        {
+          ledgerId,
+          watermark: 0,
+          strategies: [],
+          allocations: [],
+          links: [],
+          issues: [issue],
+        },
+        "2026-01-01",
+      );
+      expect(loadProjection(store.db, id).issues).toEqual([issue]);
+      store.db
+        .prepare(
+          "UPDATE review_items SET candidate_json = ? WHERE build_id = ?",
+        )
+        .run(JSON.stringify({ other: { value: 42 }, reconciliation }), id);
+      const loaded = loadProjection(store.db, id);
+      const nextId = await insertCandidate(store, {
+        ledgerId,
+        watermark: 0,
+        algorithmVersion: "test",
+        inputHash: "next",
+        now: "2026-01-01",
+      });
+      await persistProjection(store, nextId, ledgerId, loaded, "2026-01-01");
+      const saved = store.db
+        .prepare("SELECT candidate_json FROM review_items WHERE build_id = ?")
+        .get(nextId) as { candidate_json: string };
+      expect(JSON.parse(saved.candidate_json)).toEqual({
+        other: { value: 42 },
+        reconciliation,
+      });
+      for (const candidate of [
+        "{}",
+        '{"reconciliation":{"version":2}}',
+        '{"reconciliation":{"version":1,"owners":[],"slices":[{"role":"bad"}],"currency":"USD","brokerPnl":"1","reconstructedPnl":"2"}}',
+        ...["not-a-number", "NaN", "Infinity"].map((amount) =>
+          JSON.stringify({
+            reconciliation: { ...reconciliation, brokerPnl: amount },
+          }),
+        ),
+        ...["invalid", "-Infinity"].map((amount) =>
+          JSON.stringify({
+            reconciliation: { ...reconciliation, reconstructedPnl: amount },
+          }),
+        ),
+        "invalid",
+      ]) {
+        store.db
+          .prepare(
+            "UPDATE review_items SET candidate_json = ? WHERE build_id = ?",
+          )
+          .run(candidate, id);
+        expect(loadProjection(store.db, id).issues).toEqual([
+          {
+            key: issue.key,
+            code: issue.code,
+            sources: [],
+            severity: "warning",
+          },
+        ]);
+      }
+      expect(built.id).toBeTruthy();
+    }));
+
+  it("marks a retained cash-based futures algorithm build stale", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const built = await rebuild(store, input("full"));
+      store.db
+        .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
+        .run("lifecycles-v13", built.id);
+      expect(activeProjection(store).stale).toBe(true);
+      expect(activeBuildMeta(store).stale).toBe(true);
+    }));
+
   it("rejects unavailable versions without disturbing the active build", async () =>
     withStore(async (store) => {
       await commitBytes(store, "spread.csv", fixtures.spread);
