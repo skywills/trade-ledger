@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { markBuildStatus } from "../../src/server/builds/repository.js";
 import {
   ALGORITHM_VERSION,
+  activeBuildMeta,
   activeProjection,
   BuildScheduler,
   computeProjection,
@@ -159,6 +160,17 @@ function canonical(projection: Projection): string {
 }
 
 describe("versioned builds, atomic activation and rollback", () => {
+  it("marks a retained cash-based futures algorithm build stale", async () =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const built = await rebuild(store, input("full"));
+      store.db
+        .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
+        .run("lifecycles-v13", built.id);
+      expect(activeProjection(store).stale).toBe(true);
+      expect(activeBuildMeta(store).stale).toBe(true);
+    }));
+
   it("rejects unavailable versions without disturbing the active build", async () =>
     withStore(async (store) => {
       await commitBytes(store, "spread.csv", fixtures.spread);
