@@ -8,6 +8,7 @@ import type {
   LifecycleProjection,
 } from "../../shared/lifecycles.js";
 import { reconcilesWithin } from "../../shared/money.js";
+import { reconstructPnl } from "../strategies/reconstructed-pnl.js";
 import { unresolvedEventCash } from "./event-cash.js";
 import { sum } from "./membership.js";
 export function brokerRealized(
@@ -41,20 +42,36 @@ export function accountLifecycles(
     if (quarantined) l.complete = false;
     l.cashflow = cash;
     l.brokerPnl = l.status === "closed" ? broker.value : null;
-    l.reconstructedPnl =
+    const eligible =
       l.status === "closed" &&
       l.complete &&
       !quarantined &&
-      unresolvedEvents.length === 0
-        ? cash
+      unresolvedEvents.length === 0;
+    const slices = members.flatMap((m) => {
+      const execution = executions.get(m.allocation.executionKey);
+      return execution
+        ? [{ execution, quantity: m.quantity, netCash: m.netCash }]
+        : [];
+    });
+    const reconstruction =
+      eligible && slices.length === members.length
+        ? reconstructPnl(slices)
         : null;
+    l.reconstructedPnl = reconstruction?.value ?? null;
+    const futuresUnavailable =
+      eligible &&
+      (slices.length !== members.length ||
+        reconstruction?.reason === "FUTURES_PNL_UNAVAILABLE");
     l.reasons = [
       ...new Set([
         ...l.reasons.filter(
           (reason) =>
-            reason !== "ESTIMATED_PNL" && reason !== "BASIS_RECONCILED_PNL",
+            reason !== "ESTIMATED_PNL" &&
+            reason !== "BASIS_RECONCILED_PNL" &&
+            reason !== "FUTURES_PNL_UNAVAILABLE",
         ),
         ...broker.reasons,
+        ...(futuresUnavailable ? ["FUTURES_PNL_UNAVAILABLE"] : []),
         ...(members.some((m) => m.estimated) ? ["ESTIMATED_PNL"] : []),
         ...(members.some((m) => m.pnlAttribution === "basis-reconciled")
           ? ["BASIS_RECONCILED_PNL"]

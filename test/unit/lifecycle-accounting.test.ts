@@ -5,6 +5,7 @@ import {
 } from "../../src/server/lifecycles/accounting.js";
 import { projectLifecycles } from "../../src/server/lifecycles/project.js";
 import { valueLifecycles } from "../../src/server/lifecycles/valuation.js";
+import { futuresSpread } from "../fixtures/futures-pnl.js";
 import {
   assigned,
   call,
@@ -170,4 +171,56 @@ it("adds put, stock, call and call-away cash to one completed wheel cycle", () =
     status: "closed",
     reconstructedPnl: "800",
   });
+});
+
+it.each(["mtm-gap", "coincidental-match"] as const)(
+  "reconstructs lifecycle futures %s",
+  (variant) => {
+    const rows = futuresSpread(variant);
+    const f = fixture(rows.map((r) => ["s", r.execution]));
+    const p = projectLifecycles(f.ledger, f.projection, []);
+    const l = p.lifecycles[0];
+    if (!l) throw Error("Missing lifecycle");
+    l.status = "closed";
+    l.complete = true;
+    l.reasons.push("FUTURES_PNL_UNAVAILABLE");
+    const members = structuredClone(p.members);
+    accountLifecycles(f.ledger, f.projection, p);
+    expect(l).toMatchObject({
+      reconstructedPnl: "14.457979636",
+      brokerPnl: "14.45798",
+      cashflow: variant === "mtm-gap" ? "-5.542" : "14.458",
+    });
+    expect(l.reasons).not.toContain("FUTURES_PNL_UNAVAILABLE");
+    expect(p.members).toEqual(members);
+    expect(p.issues.map((i) => i.code)).not.toContain("PNL_RECONCILIATION");
+    const first = rows[0];
+    if (!first) throw Error("Missing fixture row");
+    first.execution.proceeds = null;
+    accountLifecycles(f.ledger, f.projection, p);
+    expect(l.reconstructedPnl).toBeNull();
+    expect(l.reasons).toContain("FUTURES_PNL_UNAVAILABLE");
+    f.ledger.executions.shift();
+    accountLifecycles(f.ledger, f.projection, p);
+    expect(l.reconstructedPnl).toBeNull();
+  },
+);
+
+it("retains lifecycle option reconciliation warnings", () => {
+  const open = execution("o", put, "-1", "139.6558602", 1, "open");
+  const close = execution("c", put, "1", "-53.10225", 2, "close");
+  close.basis = "139.65586";
+  close.brokerPnl = "86.53261";
+  const f = fixture([
+    ["s", open],
+    ["s", close],
+  ]);
+  const p = projectLifecycles(f.ledger, f.projection, []);
+  const l = p.lifecycles[0];
+  if (!l) throw Error("Missing lifecycle");
+  l.status = "closed";
+  l.complete = true;
+  accountLifecycles(f.ledger, f.projection, p);
+  expect(p.lifecycles[0]?.reconstructedPnl).toBe("86.5536102");
+  expect(p.issues.map((i) => i.code)).toContain("PNL_RECONCILIATION");
 });

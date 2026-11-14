@@ -16,6 +16,7 @@ import { minorUnit, reconcilesWithin } from "../../shared/money.js";
 import { splitAmount } from "./allocation.js";
 import { signOf, yearOf } from "./matching.js";
 import { makeIssue } from "./projection.js";
+import { reconstructPnl } from "./reconstructed-pnl.js";
 
 function canonical(value: Decimal): DecimalText {
   return value.isZero() ? "0" : value.toFixed();
@@ -129,6 +130,7 @@ interface StrategyAmounts {
   reconstructedPnl: DecimalText | null;
   estimated: boolean;
   reconciliation: boolean;
+  futuresUnavailable: boolean;
 }
 
 function amountsFor(
@@ -186,7 +188,28 @@ function amountsFor(
     strategy.status === "closed" &&
     !hasBasisTransfer(executions) &&
     !hasQuarantinedEvidence(ledger);
-  const reconstructedPnl = definitive && cashflow !== null ? cashflow : null;
+  const slices = allocations.flatMap((allocation) => {
+    const execution = executionByKey.get(allocation.executionKey);
+    return execution
+      ? [
+          {
+            execution,
+            quantity: allocation.quantity,
+            netCash: allocation.netCash,
+          },
+        ]
+      : [];
+  });
+  const reconstruction =
+    definitive && cashflow !== null && slices.length === allocations.length
+      ? reconstructPnl(slices)
+      : null;
+  const reconstructedPnl = reconstruction?.value ?? null;
+  const futuresUnavailable =
+    definitive &&
+    cashflow !== null &&
+    (executions.length !== allocations.length ||
+      reconstruction?.reason === "FUTURES_PNL_UNAVAILABLE");
 
   const reconciliation =
     reconstructedPnl !== null &&
@@ -209,6 +232,7 @@ function amountsFor(
     reconstructedPnl,
     estimated: allocations.some((allocation) => allocation.pnlEstimated),
     reconciliation,
+    futuresUnavailable,
   };
 }
 
@@ -297,10 +321,13 @@ export function accountProjection(
     const reasons = new Set(
       strategy.reasons.filter(
         (reason) =>
-          reason !== "ESTIMATED_PNL" && reason !== "BASIS_RECONCILED_PNL",
+          reason !== "ESTIMATED_PNL" &&
+          reason !== "BASIS_RECONCILED_PNL" &&
+          reason !== "FUTURES_PNL_UNAVAILABLE",
       ),
     );
     if (amounts.estimated) reasons.add("ESTIMATED_PNL");
+    if (amounts.futuresUnavailable) reasons.add("FUTURES_PNL_UNAVAILABLE");
     if (
       strategyAllocations.some((a) => a.pnlAttribution === "basis-reconciled")
     )
