@@ -391,6 +391,13 @@ test("journal links encode IDs before navigating through App", async () => {
     .toContain(`/api/strategies/${encodeURIComponent(reservedId)}`);
 });
 
+test("strategy detail pins the build and rejects mismatched responses", async () => {
+  paths.length = 0;
+  await page.goto(`${new URL(page.url()).origin}/strategies/${encodeURIComponent(reservedId)}?expectedBuildId=build-one`);
+  await expect.poll(() => paths).toContain(`/api/strategies/${encodeURIComponent(reservedId)}?expectedBuildId=build-one`);
+  await expect(page.getByRole("heading", { name: "Synthetic trade" })).toHaveCount(0);
+});
+
 test("imports query IDs remain decoded exactly once", async () => {
   paths.length = 0;
   await page.goto(

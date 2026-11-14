@@ -95,6 +95,22 @@ export async function registerJournalRoutes(
   app.get("/api/strategies/:id", async (request) => {
     const { id } = request.params as { id: string };
     const active = activeProjection(store);
+    const query = request.query as Record<string, unknown>;
+    if (
+      query.expectedBuildId !== undefined &&
+      typeof query.expectedBuildId !== "string"
+    )
+      throw new AppError(
+        "INVALID_INPUT",
+        "expectedBuildId must be a string.",
+        400,
+      );
+    if (query.expectedBuildId && query.expectedBuildId !== active.buildId)
+      throw new AppError(
+        "ANALYTICS_BUILD_CHANGED",
+        "The active build changed. Refresh before continuing.",
+        409,
+      );
     const strategy = active.projection?.strategies.find(
       (entry) => entry.id === id,
     );

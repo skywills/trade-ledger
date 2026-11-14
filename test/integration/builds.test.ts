@@ -239,6 +239,16 @@ describe("versioned builds, atomic activation and rollback", () => {
         "{}",
         '{"reconciliation":{"version":2}}',
         '{"reconciliation":{"version":1,"owners":[],"slices":[{"role":"bad"}],"currency":"USD","brokerPnl":"1","reconstructedPnl":"2"}}',
+        ...["not-a-number", "NaN", "Infinity"].map((amount) =>
+          JSON.stringify({
+            reconciliation: { ...reconciliation, brokerPnl: amount },
+          }),
+        ),
+        ...["invalid", "-Infinity"].map((amount) =>
+          JSON.stringify({
+            reconciliation: { ...reconciliation, reconstructedPnl: amount },
+          }),
+        ),
         "invalid",
       ]) {
         store.db

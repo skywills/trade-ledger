@@ -60,9 +60,10 @@ it("retains the option owner pair when futures cash reconstruction is corrected"
     brokerPnl: "86.53261",
     reconstructedPnl: "86.5536102",
   });
+  if (!entry?.reconciliation) throw new Error("Missing reconciliation");
   expect(
-    new Decimal(entry!.reconciliation!.reconstructedPnl)
-      .minus(entry!.reconciliation!.brokerPnl)
+    new Decimal(entry.reconciliation.reconstructedPnl)
+      .minus(entry.reconciliation.brokerPnl)
       .toString(),
   ).toBe("0.0210002");
 });

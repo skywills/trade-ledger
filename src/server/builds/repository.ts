@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Decimal } from "decimal.js";
 import type {
   Allocation,
   Id,
@@ -320,13 +321,21 @@ function readReconciliation(json: string): ReconciliationContext | undefined {
       typeof value === "object" && value !== null && !Array.isArray(value);
     if (!record(metadata) || !record(metadata.reconciliation)) return undefined;
     const context = metadata.reconciliation;
+    const finiteDecimal = (value: unknown): boolean => {
+      if (typeof value !== "string") return false;
+      try {
+        return new Decimal(value).isFinite();
+      } catch {
+        return false;
+      }
+    };
     if (
       context.version !== 1 ||
       !Array.isArray(context.owners) ||
       !Array.isArray(context.slices) ||
       typeof context.currency !== "string" ||
-      typeof context.brokerPnl !== "string" ||
-      typeof context.reconstructedPnl !== "string" ||
+      !finiteDecimal(context.brokerPnl) ||
+      !finiteDecimal(context.reconstructedPnl) ||
       !context.owners.every(
         (owner: unknown) =>
           record(owner) &&
@@ -356,8 +365,8 @@ function readReconciliation(json: string): ReconciliationContext | undefined {
         netCash: slice.netCash,
       })),
       currency: context.currency,
-      brokerPnl: context.brokerPnl,
-      reconstructedPnl: context.reconstructedPnl,
+      brokerPnl: context.brokerPnl as string,
+      reconstructedPnl: context.reconstructedPnl as string,
     };
   } catch {
     return undefined;
