@@ -1,4 +1,5 @@
-import { ReviewEnvelope, useJson } from "../api.js";
+import { Decimal } from "decimal.js";
+import { JournalEnvelope, ReviewEnvelope, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
 import { ConnectionQueue } from "../lifecycles/ConnectionQueue.js";
@@ -11,6 +12,9 @@ import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
 export function ReviewPage() {
   const remote = useJson("/api/review?pageSize=100", ReviewEnvelope);
   const history = listDecisions();
+  const journal = useJson("/api/journal?pageSize=100", JournalEnvelope);
+  const currentJournal =
+    journal.data?.buildId === remote.data?.buildId ? journal.data : null;
   const connections = useJson("/api/lifecycles", LifecycleListSchema);
   const currentConnections =
     connections.data?.buildId === remote.data?.buildId
@@ -64,7 +68,7 @@ export function ReviewPage() {
                   <tr>
                     <th>Severity</th>
                     <th>Code</th>
-                    <th>Affected lifecycles</th>
+                    <th>Affected items</th>
                     <th>Sources</th>
                   </tr>
                 </thead>
@@ -91,31 +95,82 @@ export function ReviewPage() {
                         )}
                       </td>
                       <td>
-                        {(currentConnections?.lifecycles?.lifecycles ?? [])
-                          .filter(
-                            (cycle) =>
-                              cycle.reasons.includes(issue.code) &&
-                              currentConnections?.lifecycles?.members.some(
-                                (member) =>
-                                  member.lifecycleId === cycle.id &&
-                                  member.sources.some((source) =>
-                                    issue.sources.some(
-                                      (ref) =>
-                                        ref.importId === source.importId &&
-                                        ref.rowNumber === source.rowNumber,
-                                    ),
-                                  ),
-                              ),
-                          )
-                          .map((cycle) => (
-                            <p key={cycle.id}>
-                              <Link
-                                to={`/lifecycles/${encodeURIComponent(cycle.id)}?expectedBuildId=${encodeURIComponent(remote.data?.buildId ?? "")}`}
-                              >
-                                {cycle.description}
-                              </Link>
-                            </p>
-                          ))}
+                        {(() => {
+                          const legacy =
+                            !issue.reconciliation && issue.owners.length === 0
+                              ? (
+                                  currentConnections?.lifecycles?.lifecycles ??
+                                  []
+                                )
+                                  .filter(
+                                    (cycle) =>
+                                      cycle.reasons.includes(issue.code) &&
+                                      currentConnections?.lifecycles?.members.some(
+                                        (member) =>
+                                          member.lifecycleId === cycle.id &&
+                                          member.sources.some((source) =>
+                                            issue.sources.some(
+                                              (ref) =>
+                                                ref.importId ===
+                                                  source.importId &&
+                                                ref.rowNumber ===
+                                                  source.rowNumber,
+                                            ),
+                                          ),
+                                      ),
+                                  )
+                                  .map((cycle) => ({
+                                    kind: "lifecycle" as const,
+                                    id: cycle.id,
+                                  }))
+                              : [];
+                          const owners = issue.owners.length
+                            ? issue.owners
+                            : legacy;
+                          if (!owners.length) return "Unattributed issue";
+                          return owners.map((owner) => {
+                            const label =
+                              owner.kind === "lifecycle"
+                                ? currentConnections?.lifecycles?.lifecycles.find(
+                                    (cycle) => cycle.id === owner.id,
+                                  )?.description
+                                : currentJournal?.items.find(
+                                    (strategy) => strategy.id === owner.id,
+                                  )?.description;
+                            return (
+                              <p key={`${owner.kind}:${owner.id}`}>
+                                <Link
+                                  to={`/${owner.kind === "strategy" ? "strategies" : "lifecycles"}/${encodeURIComponent(owner.id)}?expectedBuildId=${encodeURIComponent(remote.data?.buildId ?? "")}`}
+                                >
+                                  {label ?? owner.id}
+                                </Link>
+                              </p>
+                            );
+                          });
+                        })()}
+                        {issue.reconciliation &&
+                          (() => {
+                            const { brokerPnl, reconstructedPnl, currency } =
+                              issue.reconciliation;
+                            const difference = new Decimal(
+                              reconstructedPnl,
+                            ).minus(brokerPnl);
+                            return (
+                              <div>
+                                <p>
+                                  Broker: {brokerPnl} {currency}
+                                </p>
+                                <p>
+                                  Reconstructed: {reconstructedPnl} {currency}
+                                </p>
+                                <p>
+                                  Difference:{" "}
+                                  {difference.isPositive() ? "+" : ""}
+                                  {difference.toString()} {currency}
+                                </p>
+                              </div>
+                            );
+                          })()}
                       </td>
                       <td>
                         {issue.sources.length === 0
@@ -144,7 +199,11 @@ export function ReviewPage() {
       )}
 
       <AskAgent
-        issueKeys={(remote.data?.items ?? []).map((issue) => issue.key)}
+        issueKeys={[
+          ...new Set(
+            (remote.data?.items ?? []).flatMap((issue) => issue.issueKeys),
+          ),
+        ]}
       />
       <PastAnalyses />
 

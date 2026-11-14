@@ -268,6 +268,9 @@ export function reviewTools(ctx: ChatToolContext): ChatTool[] {
                 key: issue.key,
                 code: issue.code,
                 severity: issue.severity,
+                ...(issue.reconciliation
+                  ? { reconciliation: issue.reconciliation }
+                  : {}),
               },
               evidenceStatus:
                 selected.size === 0
