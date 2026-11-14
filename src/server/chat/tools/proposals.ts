@@ -1,10 +1,11 @@
 // src/server/chat/tools/proposals.ts
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { buildEvidenceSnapshot } from "../../ai/evidence.js";
+import { buildProposalEvidenceSnapshot } from "../../ai/proposal-evidence.js";
 import { previewProposal } from "../../ai/proposal-preview.js";
 import {
   PROPOSAL_KINDS,
+  type Proposal,
   ProposalSchema,
   tryParseProposal,
 } from "../../ai/proposals.js";
@@ -69,22 +70,25 @@ const SUBMIT_SCHEMA = {
 /** Prepare evidence without persisting an empty run across asynchronous validation. */
 async function prepareRun(
   ctx: ChatToolContext,
+  proposal: Proposal,
 ): Promise<{ runId: string; draft: RunDraft | null }> {
   const buildId = activeProjection(ctx.store).buildId;
   const watermark = decisionWatermark(ctx.store);
+  const evidence = buildProposalEvidenceSnapshot(
+    ctx.store,
+    buildId ?? "",
+    proposal,
+  );
   const existingId = ctx.turn.current.proposalRunId;
   const existing = existingId === null ? null : readRun(ctx.store, existingId);
   if (
     existing &&
     existing.evidence.buildId === buildId &&
-    existing.evidence.watermark === watermark
+    existing.evidence.watermark === watermark &&
+    existing.evidence.contentHash === evidence.contentHash
   )
     return { runId: existing.id, draft: null };
   const thread = ctx.thread();
-  const evidence = buildEvidenceSnapshot(ctx.store, {
-    buildId: buildId ?? "",
-    issueKeys: thread.seed?.issueKeys ?? [],
-  });
   const runId = randomUUID();
   return {
     runId,
@@ -152,7 +156,7 @@ export function proposalTools(ctx: ChatToolContext): ChatTool[] {
             return errorResult(
               `At most ${MAX_PROPOSALS_PER_RUN} proposals may be submitted per turn.`,
             );
-          const { runId, draft } = await prepareRun(ctx);
+          const { runId, draft } = await prepareRun(ctx, parsed.proposal);
           const submitted: SubmittedProposal = {
             id: newProposalId(),
             proposal: parsed.proposal,

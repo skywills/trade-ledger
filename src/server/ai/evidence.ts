@@ -62,6 +62,8 @@ export interface EvidenceSnapshot {
 export interface EvidenceInput {
   readonly buildId: Id;
   readonly issueKeys?: readonly string[];
+  /** Explicit selection overrides issue scope; an empty array selects no rows. */
+  readonly executionKeys?: readonly string[];
 }
 
 function sha256(text: string): string {
@@ -165,11 +167,14 @@ export function buildEvidenceSnapshot(
     );
   }
   const issueKeys = [...(input.issueKeys ?? [])].sort();
-  const selected = referencedExecutionKeys(
-    ledger.executions,
-    active.projection?.issues ?? [],
-    issueKeys,
-  );
+  const selected =
+    input.executionKeys === undefined
+      ? referencedExecutionKeys(
+          ledger.executions,
+          active.projection?.issues ?? [],
+          issueKeys,
+        )
+      : new Set(input.executionKeys);
 
   const rows: EvidenceRow[] = [];
   const rejected: RejectedEvidenceRow[] = [];
@@ -198,7 +203,9 @@ export function buildEvidenceSnapshot(
   if (overflowed) {
     throw new AppError(
       "EVIDENCE_TOO_LARGE",
-      `Evidence exceeds the ${MAX_EVIDENCE_ROWS}-row bound; narrow the review selection.`,
+      input.executionKeys === undefined
+        ? `Evidence exceeds the ${MAX_EVIDENCE_ROWS}-row bound; narrow the review selection.`
+        : `Proposal evidence exceeds the ${MAX_EVIDENCE_ROWS}-row bound; split the correction into smaller proposals.`,
       413,
     );
   }
