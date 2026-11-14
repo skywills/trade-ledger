@@ -21,7 +21,12 @@ import {
   snapshotDecisionState,
 } from "./decision-rollback.js";
 import { partition, refKey } from "./membership.js";
-import { availableShares, shareAvailability } from "./project.js";
+import {
+  availableShares,
+  netShareAvailability,
+  shareAvailability,
+  shareLotIds,
+} from "./project.js";
 
 function invalid(message: string): never {
   throw new AppError("INVALID_LIFECYCLE_MEMBERSHIP", message, 409);
@@ -104,7 +109,7 @@ export function applyMembershipChanges(
   };
   // Recheck covered owners so decisions saved out of order cannot overbook shares.
   const validateCallCoverage = () => {
-    const available = shareAvailability(ledger, draft);
+    const held = shareAvailability(ledger, draft, false);
     const ownerIds = new Set(
       decisions.flatMap((d) => {
         if (d.kind === "lifecycle_attachment") {
@@ -140,38 +145,65 @@ export function applyMembershipChanges(
         return [];
       }),
     );
-    for (const id of ownerIds) {
-      const opens = draft.members.filter(
+    const coveredCalls = (ids: ReadonlySet<string>) =>
+      draft.members.filter(
         (m) =>
-          m.lifecycleId === id &&
+          ids.has(m.lifecycleId) &&
           coveredOpenings.has(refKey(m.allocation)) &&
           m.allocation.role === "open" &&
           new Decimal(m.quantity).lt(0) &&
           exec.get(m.allocation.executionKey)?.instrument.putCall === "C",
       );
+    /** Shares the calls opened in the same instant as `opening` need. */
+    const demandAt = (
+      opens: ReturnType<typeof coveredCalls>,
+      open: ReturnType<typeof coveredCalls>[number],
+      opening: Execution,
+    ) =>
+      opens
+        .filter((other) => {
+          const e = exec.get(other.allocation.executionKey);
+          return (
+            e && (other === open || compareLifecycleTime(e, opening) === 0)
+          );
+        })
+        .reduce(
+          (total, m) =>
+            total.plus(
+              new Decimal(m.quantity)
+                .abs()
+                .times(
+                  exec.get(m.allocation.executionKey)?.instrument.multiplier ??
+                    "0",
+                ),
+            ),
+          new Decimal(0),
+        );
+    // Shares are fungible while held: IBKR only picks a lot (FIFO) when shares
+    // are sold or called away. Coverage is therefore counted across all share
+    // lots of the underlying, so a call can sit on the lot its later sale or
+    // assignment actually consumed even while another call also uses that lot.
+    const net = netShareAvailability(ledger, draft);
+    for (const id of ownerIds) {
+      const opens = coveredCalls(new Set([id]));
+      const lots = new Set(shareLotIds(draft, exec, id));
+      const lotOpens = coveredCalls(lots);
+      const coveredByUnderlying = (
+        open: (typeof opens)[number],
+        opening: Execution,
+      ) =>
+        [...lots]
+          .reduce((total, lot) => total.plus(net(lot, opening)), new Decimal(0))
+          .gte(demandAt(lotOpens, open, opening));
       for (const open of opens) {
         const opening = exec.get(open.allocation.executionKey);
         if (!opening) continue;
-        const demand = opens
-          .filter((other) => {
-            const e = exec.get(other.allocation.executionKey);
-            return (
-              e && (other === open || compareLifecycleTime(e, opening) === 0)
-            );
-          })
-          .reduce(
-            (total, m) =>
-              total.plus(
-                new Decimal(m.quantity)
-                  .abs()
-                  .times(
-                    exec.get(m.allocation.executionKey)?.instrument
-                      .multiplier ?? "0",
-                  ),
-              ),
-            new Decimal(0),
-          );
-        if (available(id, opening).lt(demand))
+        // The chosen lot must hold the shares, and the underlying as a whole
+        // must still have them free of every other covered call.
+        if (
+          held(id, opening).lt(demandAt(opens, open, opening)) ||
+          !coveredByUnderlying(open, opening)
+        )
           invalid(
             "These calls overlap an existing reservation of the selected shares.",
           );

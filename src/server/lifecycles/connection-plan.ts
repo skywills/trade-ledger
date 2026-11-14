@@ -16,6 +16,7 @@ import type {
 } from "../../shared/lifecycles.js";
 import { underlyingSymbol } from "../../shared/symbols.js";
 import { compareLifecycleTime } from "./chronology.js";
+import { disposalLot } from "./connection-plan-evidence.js";
 import {
   compareByTime,
   rollReleasedCall,
@@ -24,7 +25,11 @@ import {
 } from "./connection-plan-reasons.js";
 import { scopeTo } from "./connection-plan-scope.js";
 import { refKey } from "./membership.js";
-import { shareAvailability } from "./project.js";
+import {
+  netShareAvailability,
+  shareAvailability,
+  shareLotIds,
+} from "./project.js";
 import { validateLifecycleDecision } from "./validate-decision.js";
 
 export interface PlanInput {
@@ -37,15 +42,15 @@ export interface PlanInput {
   /** Judge every hypothetical against the whole ledger; used to check that scoping changes nothing. */
   unscoped?: boolean;
   /** Receives an unexpected planning failure; defaults to a JSON line on stderr. */
-  onError?: (error: unknown, lifecycleId: string) => void;
+  onError?: (error: unknown, scope: string) => void;
 }
 
-function reportPlanError(error: unknown, lifecycleId: string): void {
+function reportPlanError(error: unknown, scope: string): void {
   process.stderr.write(
     `${JSON.stringify({
       level: "error",
       msg: "Connection planning failed; rows left without a recommendation.",
-      lifecycleId,
+      scope,
       error: error instanceof Error ? error.stack : String(error),
     })}\n`,
   );
@@ -102,6 +107,32 @@ function unreservedPositions(
     .sort();
 }
 
+/**
+ * The lot whose shares this call's assignment or combo buy-back sold, by
+ * IBKR's FIFO on that sale's date, when that lot already held the shares
+ * when the call opened. It decides the row's position over any lot that only
+ * looked free at opening; the user's lots then match IBKR's tax lots.
+ */
+function soldLot(
+  input: PlanInput,
+  exec: Map<string, Execution>,
+  held: ReturnType<typeof shareAvailability>,
+  row: PlanRow,
+  call: { strategyId: string; instrumentKey: string },
+): string | undefined {
+  const lot = disposalLot(
+    call,
+    input.lifecycles.members,
+    input.projection,
+    exec,
+  );
+  if (!lot) return undefined;
+  const needed = row.suggestions
+    .reduce((t, s) => t.plus(new Decimal(s.quantity).abs()), new Decimal(0))
+    .times(row.opening.instrument.multiplier ?? "0");
+  return needed.gt(0) && held(lot, row.opening).gte(needed) ? lot : undefined;
+}
+
 function buildRows(input: PlanInput, exec: Map<string, Execution>): BuiltRows {
   const { lifecycles } = input;
   const grouped = new Map<string, AttachmentSuggestion[]>();
@@ -111,6 +142,7 @@ function buildRows(input: PlanInput, exec: Map<string, Execution>): BuiltRows {
   }
   const byPosition = new Map<string, PlanRow[]>();
   const multiple: BuiltRows["multiple"] = [];
+  const held = shareAvailability(input.ledger, lifecycles, false);
   for (const suggestions of grouped.values()) {
     const first = suggestions[0];
     const instrumentKey =
@@ -138,6 +170,17 @@ function buildRows(input: PlanInput, exec: Map<string, Execution>): BuiltRows {
       )
     )
       candidates = unreservedPositions(input, row, suggestions);
+    const sold = soldLot(input, exec, held, row, {
+      strategyId: first.callOpening.strategyId,
+      instrumentKey,
+    });
+    // The sale only chooses among lots the projection already offers, or the
+    // lot the call's own assignment already merged it into; it never widens them.
+    if (
+      sold &&
+      (candidates.includes(sold) || members.some((m) => m.lifecycleId === sold))
+    )
+      candidates = [sold];
     const [target] = candidates;
     if (!target) continue;
     if (candidates.length > 1) {
@@ -418,47 +461,55 @@ function fillPrefixes(row: PlanRow, exec: Map<string, Execution>): PlanRow[] {
 }
 
 /**
- * Free shares in the target position when the row opens, from the same
- * coverage code the projection uses. The earlier accepted rows are assumed
- * connected (their members moved into the position), so the figure matches
- * what the user will see once those connections are saved, not the saved state.
+ * Free shares of the target's underlying when the row opens, summed over all
+ * its share lots as the coverage check counts them. The earlier accepted rows
+ * are assumed connected (their members moved into their positions), so the
+ * figure matches what the user will see once those connections are saved.
  */
 function freeSharesAt(
   input: PlanInput,
+  exec: Map<string, Execution>,
   target: string,
-  accepted: PlanRow[],
+  accepted: ReadonlyMap<string, PlanRow[]>,
   row: PlanRow,
 ): string {
-  const moved = new Set(
-    accepted.flatMap((a) => a.members.map((m) => refKey(m.allocation))),
+  const rows = [...accepted].flatMap(([id, list]) =>
+    list.flatMap((a) => a.members.map((m) => ({ ...m, lifecycleId: id }))),
   );
+  const moved = new Set(rows.map((m) => refKey(m.allocation)));
   const assumed: LifecycleProjection = {
     ...input.lifecycles,
     members: [
       ...input.lifecycles.members.filter(
         (m) => !moved.has(refKey(m.allocation)),
       ),
-      ...accepted.flatMap((a) =>
-        a.members.map((m) => ({ ...m, lifecycleId: target })),
-      ),
+      ...rows,
     ],
   };
-  return shareAvailability(input.ledger, assumed)(
-    target,
-    row.opening,
+  const net = netShareAvailability(input.ledger, assumed);
+  return Decimal.max(
+    0,
+    shareLotIds(input.lifecycles, exec, target).reduce(
+      (total, id) => total.plus(net(id, row.opening)),
+      new Decimal(0),
+    ),
   ).toFixed();
 }
 
-function planPosition(
+interface CandidateRow {
+  row: PlanRow;
+  candidates: string[];
+}
+
+/** Judge all positions together so an earlier connection reserves its shares
+ * before a later row with several candidate positions is considered. */
+function planScope(
   whole: PlanInput,
   exec: Map<string, Execution>,
-  target: string,
-  rows: PlanRow[],
-  multiple: BuiltRows["multiple"],
+  entries: readonly CandidateRow[],
 ): Map<PlanRow, ConnectionPlan> {
   const plans = new Map<PlanRow, ConnectionPlan>();
-  const first = rows[0];
-  // Hypothetical checks run on this account's trades in this underlying only.
+  const first = entries[0]?.row;
   const input: PlanInput =
     first && !whole.unscoped
       ? {
@@ -470,114 +521,149 @@ function planPosition(
           ),
         }
       : whole;
-  const existing = existingRows(target, input.lifecycles, exec);
-  const separates: PlanRow[] = [];
-  const manuals: PlanRow[] = [];
-  const accepted: PlanRow[] = [];
-  rows.forEach((row, n) => {
-    const choices = multiple
-      .filter(
-        (m) =>
-          m.candidates.includes(target) &&
-          compareOpenings(m.row.opening, row.opening) < 0,
-      )
-      .map((m) => m.row);
-    // Manual rows are assumed kept apart so they do not skew the order check for later rows.
-    const kept = [...separates, ...manuals, ...choices].map((s, i) =>
+  const assumed: Decision[] = [];
+  const accepted = new Map<string, PlanRow[]>();
+  const manuals: CandidateRow[] = [];
+  const sequence = Math.max(0, ...input.decisions.map((d) => d.sequence));
+  const ordered = [...entries].sort((a, b) =>
+    compareOpenings(a.row.opening, b.row.opening),
+  );
+  ordered.forEach(({ row, candidates }, n) => {
+    const judged = (members: PlanRow, target: string) =>
       hypotheticalDecision(
-        `plan:sep:${n}:${i}`,
-        Number.MAX_SAFE_INTEGER - n - i - 1,
-        false,
-        [s],
-        null,
-      ),
-    );
-    const pending = [...choices, ...manuals].flatMap((r) => openRef(r) ?? []);
-    const judged = (members: PlanRow) =>
-      hypotheticalDecision(
-        "__validate__", // the id decisions treat as a live check: failures throw
-        Number.MAX_SAFE_INTEGER,
+        "__validate__",
+        sequence + n + 1,
         true,
-        [...accepted, members],
+        [members],
         target,
       );
-    const others = [...existing, ...rows.filter((r) => r !== row)];
-    const verdicts = orderUnknown(row, others, exec)
-      ? null
-      : fillPrefixes(row, exec).map((p) => connects(input, kept, judged(p)));
-    const manualReason =
-      verdicts === null
-        ? "ORDER_UNKNOWN"
-        : new Set(verdicts).size > 1
-          ? "PARTIAL"
-          : null;
-    if (manualReason) {
-      plans.set(row, {
+    const verdicts = candidates.map((target) => {
+      const existing = existingRows(target, input.lifecycles, exec);
+      const others = [
+        ...existing,
+        ...entries
+          .filter((e) => e.row !== row && e.candidates.includes(target))
+          .map((e) => e.row),
+      ];
+      const fills = orderUnknown(row, others, exec)
+        ? null
+        : fillPrefixes(row, exec).map((p) =>
+            connects(input, assumed, judged(p, target)),
+          );
+      const shares = new Decimal(
+        freeSharesAt(input, exec, target, accepted, row),
+      );
+      const firstFillShares = row.suggestions
+        .filter((s) => s.callOpening.executionKey === row.opening.key)
+        .reduce(
+          (total, s) => total.plus(new Decimal(s.quantity).abs()),
+          new Decimal(0),
+        )
+        .times(row.opening.instrument.multiplier ?? "0");
+      return {
+        target,
+        existing,
+        fills,
+        partialFill: shares.gt(0) && shares.lt(firstFillShares),
+      };
+    });
+    const viable = verdicts.filter((v) => v.fills?.every(Boolean));
+    const unknown = verdicts.some((v) => v.fills === null);
+    const partial = verdicts.some(
+      (v) => v.partialFill || (v.fills && new Set(v.fills).size > 1),
+    );
+    const chosen = viable[0] ?? verdicts[0];
+    if (!chosen) return;
+    const target = chosen.target;
+    const holders = accepted.get(target) ?? [];
+    const pending = manuals
+      .filter((m) => m.candidates.some((id) => candidates.includes(id)))
+      .flatMap((m) => openRef(m.row) ?? []);
+    let plan: ConnectionPlan;
+    if (unknown || partial || viable.length > 1) {
+      plan = {
         action: "manual",
-        lifecycleId: target,
-        reason: manualReason,
+        lifecycleId: candidates.length === 1 ? target : null,
+        reason: unknown
+          ? "ORDER_UNKNOWN"
+          : partial
+            ? "PARTIAL"
+            : "MULTIPLE_POSITIONS",
         ...(pending.length ? { dependsOn: pending } : {}),
-      });
-      manuals.push(row);
-      return;
+      };
+      manuals.push({ row, candidates });
+    } else if (viable.length === 1) {
+      plan = {
+        ...connectPlan(target, row, holders, chosen.existing, exec, pending),
+        sharesAtOpening: freeSharesAt(input, exec, target, accepted, row),
+      };
+      accepted.set(target, [...holders, row]);
+    } else {
+      // Coverage is counted across the underlying's lots, so the call that
+      // took the shares may sit on any of them.
+      const lots = shareLotIds(input.lifecycles, exec, target);
+      plan = separatePlan(
+        target,
+        row,
+        lots.flatMap((id) => accepted.get(id) ?? []),
+        lots.flatMap((id) => existingRows(id, input.lifecycles, exec)),
+        input.lifecycles,
+        exec,
+        pending,
+      );
     }
-    const verdict = verdicts?.at(-1)
-      ? connectPlan(target, row, accepted, existing, exec, pending)
-      : separatePlan(
-          target,
-          row,
-          accepted,
-          existing,
-          input.lifecycles,
-          exec,
-          pending,
-        );
     const pairedWith = spreadLeg(
       row.opening,
       input.ledger.executions,
       input.projection.allocations,
     );
-    const sized =
-      verdict.action === "connect"
-        ? {
-            ...verdict,
-            sharesAtOpening: freeSharesAt(input, target, accepted, row),
-          }
-        : verdict;
-    plans.set(row, pairedWith ? { ...sized, pairedWith } : sized);
-    if (verdict.action === "connect") accepted.push(row);
-    else separates.push(row);
+    plans.set(row, pairedWith ? { ...plan, pairedWith } : plan);
+    // Manual choices stay separate for the hypothetical checks, and remain
+    // explicit dependencies. Recommendations never save real decisions.
+    assumed.push(
+      hypotheticalDecision(
+        `plan:${n}`,
+        sequence + n + 1,
+        plan.action === "connect",
+        [row],
+        plan.action === "connect" ? target : null,
+      ),
+    );
   });
   return plans;
 }
 
-/** Recommends, per review row, connecting to or keeping a call apart from its candidate position. */
+/** Recommends connections in chronology across every share position in a scope. */
 function planAll(input: PlanInput): LifecycleProjection {
   const exec = new Map(input.ledger.executions.map((e) => [e.key, e]));
   const planned = new Map<AttachmentSuggestion, ConnectionPlan>();
   const { byPosition, multiple } = buildRows(input, exec);
-  for (const [target, rows] of byPosition) {
+  const scopes = new Map<string, CandidateRow[]>();
+  const entries = [
+    ...[...byPosition].flatMap(([target, rows]) =>
+      rows.map((row) => ({ row, candidates: [target] })),
+    ),
+    ...multiple,
+  ];
+  for (const entry of entries) {
+    const e = entry.row.opening;
+    const key = JSON.stringify([
+      e.account,
+      e.currency,
+      underlyingSymbol(e.instrument),
+    ]);
+    scopes.set(key, [...(scopes.get(key) ?? []), entry]);
+  }
+  for (const [scope, rows] of scopes) {
     try {
-      for (const [row, plan] of planPosition(
-        input,
-        exec,
-        target,
-        rows,
-        multiple,
-      ))
+      for (const [row, plan] of planScope(input, exec, rows))
         for (const s of row.suggestions) planned.set(s, plan);
     } catch (error) {
-      // A planning bug must never abort a rebuild: those rows simply get no plan.
-      (input.onError ?? reportPlanError)(error, target);
+      // A planning bug must never abort a rebuild: this ticker's rows get no
+      // plan. Its lots share coverage, so they cannot be planned apart.
+      (input.onError ?? reportPlanError)(error, scope);
     }
   }
-  for (const { row } of multiple)
-    for (const s of row.suggestions)
-      planned.set(s, {
-        action: "manual",
-        lifecycleId: null,
-        reason: "MULTIPLE_POSITIONS",
-      });
   return {
     ...input.lifecycles,
     suggestions: input.lifecycles.suggestions.map((s) => {

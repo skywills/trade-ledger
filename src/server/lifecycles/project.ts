@@ -805,6 +805,53 @@ export function shareAvailability(
   p: LifecycleProjection,
   reserveCalls = true,
 ) {
+  const net = netShareAvailability(ledger, p, reserveCalls);
+  return (id: string, before?: Execution): Decimal =>
+    Decimal.max(0, net(id, before));
+}
+
+/**
+ * The lifecycles holding shares in the same account, currency and underlying
+ * as `id` (always including `id`). Call coverage is counted across them,
+ * since IBKR only assigns shares to a lot when they are sold or called away.
+ */
+export function shareLotIds(
+  p: Pick<LifecycleProjection, "lifecycles" | "members">,
+  exec: ReadonlyMap<string, Execution>,
+  id: string,
+): string[] {
+  const l = p.lifecycles.find((x) => x.id === id);
+  if (!l) return [id];
+  const holds = new Set(
+    p.members
+      .filter(
+        (m) =>
+          exec.get(m.allocation.executionKey)?.instrument.assetClass === "STK",
+      )
+      .map((m) => m.lifecycleId),
+  );
+  const ids = p.lifecycles
+    .filter(
+      (x) =>
+        holds.has(x.id) &&
+        x.account === l.account &&
+        x.currency === l.currency &&
+        x.underlyingKey === l.underlyingKey,
+    )
+    .map((x) => x.id);
+  return ids.includes(id) ? ids : [...ids, id];
+}
+
+/**
+ * Shares minus the calls reserving them, unclamped: a lifecycle whose calls
+ * outnumber its own shares reports a negative figure, so balances of several
+ * lifecycles can be summed into the free shares of their whole underlying.
+ */
+export function netShareAvailability(
+  ledger: LedgerSnapshot,
+  p: LifecycleProjection,
+  reserveCalls = true,
+) {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
   const members = new Map<string, LifecycleProjection["members"]>();
   for (const m of p.members) {
@@ -900,7 +947,7 @@ export function shareAvailability(
         s.plus(Decimal.max(0, c.quantity.negated()).times(c.multiplier)),
       new Decimal(0),
     );
-    return Decimal.max(0, shares.minus(reserved));
+    return shares.minus(reserved);
   };
 }
 export function recomputeLifecycles(
