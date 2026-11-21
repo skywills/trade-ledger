@@ -103,6 +103,45 @@ async function waitIdle(store: Store, threadId: string, timeoutMs = 30_000) {
 }
 
 describe("ChatService read-only turns", () => {
+  it("retains partial cost coverage when a previously unpriced conversation starts using explicit rates", async () => {
+    const h = await harness(
+      [
+        { kind: "text", text: "Hello." },
+        { kind: "text", text: "Hello again." },
+      ],
+      {},
+      { empty: true },
+    );
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "unpriced",
+      text: "Hello",
+    });
+    const complete = await waitIdle(h.store, thread.id);
+    expect(complete.usage.costCoverage).toBe("unpriced");
+    await h.chat.close();
+    await saveProfile(
+      h.store,
+      {
+        ...h.profile,
+        pricing: { input: 2, output: 5, cacheRead: 0, cacheWrite: 0 },
+      },
+      h.profile.revision,
+    );
+    const check = await testProfile(
+      h.store,
+      h.profile.id,
+      new AbortController().signal,
+    );
+    expect(check.status).toBe("verified");
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "priced",
+      text: "Hello again",
+    });
+    const mixed = await waitIdle(h.store, thread.id);
+    expect(mixed.usage.costCoverage).toBe("partial");
+  });
+
   it.each(["normal", "empty", "stale"])(
     "offers and executes analytics and lifecycle tools on a %s build",
     async (state) => {

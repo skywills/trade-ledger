@@ -626,6 +626,17 @@ export async function appendDecision(
   rawInput: unknown,
   expectedWatermark: number,
 ): Promise<Decision> {
+  return write(store, () =>
+    appendDecisionInTransaction(store, rawInput, expectedWatermark),
+  );
+}
+
+/** Caller owns the serialized SQLite transaction, including any related proposal state. */
+export function appendDecisionInTransaction(
+  store: Store,
+  rawInput: unknown,
+  expectedWatermark: number,
+): Decision {
   if (
     typeof rawInput === "object" &&
     rawInput !== null &&
@@ -648,118 +659,111 @@ export async function appendDecision(
     );
   }
   const input = parsed.data;
-  return write(store, () => {
-    const current = decisionWatermark(store);
-    const existing = store.db
-      .prepare(`SELECT id, sequence FROM decisions WHERE client_request_id = ?`)
-      .get(input.clientRequestId) as
-      | { id: string; sequence: number }
-      | undefined;
-    if (existing !== undefined) {
-      const row = store.db
-        .prepare(
-          `SELECT id, sequence, kind, source_refs_json, strategy_ids_json,
-                  payload_json, supersedes_id, client_request_id, author, created_at
-           FROM decisions WHERE id = ?`,
-        )
-        .get(existing.id) as DecisionRow;
-      return readDecisionRow(row);
-    }
-    if (current !== expectedWatermark) {
-      throw new AppError(
-        "STALE_INPUT",
-        `Expected watermark ${expectedWatermark} but current watermark is ${current}.`,
-        409,
-      );
-    }
-    validateDecisionInput(store, input, current);
-    if (
-      input.kind.startsWith("lifecycle_") ||
-      input.kind.startsWith("wheel_")
-    ) {
-      const build = readActiveBuild(store.db);
-      if (!build)
-        throw new AppError(
-          "LIFECYCLE_REBUILD_REQUIRED",
-          "Rebuild before editing lifecycles.",
-          409,
-        );
-      const projection = loadProjection(store.db, build.id);
-      if (!projection.lifecycles)
-        throw new AppError(
-          "LIFECYCLE_REBUILD_REQUIRED",
-          "Rebuild before editing lifecycles.",
-          409,
-        );
-      if (
-        retainedNormalizationInputsChanged(
-          store,
-          build.ledger_build_id,
-          current,
-          LEDGER_PARSER_VERSION,
-        )
-      )
-        throw new AppError(
-          "STALE_INPUT",
-          "Rebuild after import changes before editing lifecycles.",
-          409,
-        );
-      const ledger = loadLedgerSnapshot(store.db, build.ledger_build_id);
-      const prior = effectiveDecisions(readDecisions(store, current)).filter(
-        (d) => d.id !== input.supersedesId,
-      );
-      const origins = groupStrategies(
-        ledger,
-        prior.filter((d) => d.kind !== "group_merge"),
-        (account, openingKeys) =>
-          findStrategyId(store, { account, openingKeys }) ??
-          strategyAnchorKey({ account, openingKeys }),
-      );
-      validateLifecycleDecision(
-        ledger,
-        projection,
-        prior,
-        {
-          id: "__validate__",
-          sequence: current + 1,
-          kind: input.kind,
-          payload: input.payload,
-          sources: input.sources,
-          strategyIds: input.strategyIds,
-          supersedesId: input.supersedesId,
-        },
-        origins,
-        readLifecycleAnchors(store.db),
-      );
-    }
-    const id = randomUUID();
-    const sequence = current + 1;
-    store.db
-      .prepare(
-        `INSERT INTO decisions (
-           id, sequence, kind, source_refs_json, strategy_ids_json,
-           payload_json, supersedes_id, client_request_id, author, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        sequence,
-        input.kind,
-        JSON.stringify(input.sources),
-        JSON.stringify(input.strategyIds),
-        JSON.stringify(input.payload),
-        input.supersedesId,
-        input.clientRequestId,
-        input.author,
-        new Date().toISOString(),
-      );
+  const current = decisionWatermark(store);
+  const existing = store.db
+    .prepare(`SELECT id, sequence FROM decisions WHERE client_request_id = ?`)
+    .get(input.clientRequestId) as { id: string; sequence: number } | undefined;
+  if (existing !== undefined) {
     const row = store.db
       .prepare(
         `SELECT id, sequence, kind, source_refs_json, strategy_ids_json,
+                  payload_json, supersedes_id, client_request_id, author, created_at
+           FROM decisions WHERE id = ?`,
+      )
+      .get(existing.id) as DecisionRow;
+    return readDecisionRow(row);
+  }
+  if (current !== expectedWatermark) {
+    throw new AppError(
+      "STALE_INPUT",
+      `Expected watermark ${expectedWatermark} but current watermark is ${current}.`,
+      409,
+    );
+  }
+  validateDecisionInput(store, input, current);
+  if (input.kind.startsWith("lifecycle_") || input.kind.startsWith("wheel_")) {
+    const build = readActiveBuild(store.db);
+    if (!build)
+      throw new AppError(
+        "LIFECYCLE_REBUILD_REQUIRED",
+        "Rebuild before editing lifecycles.",
+        409,
+      );
+    const projection = loadProjection(store.db, build.id);
+    if (!projection.lifecycles)
+      throw new AppError(
+        "LIFECYCLE_REBUILD_REQUIRED",
+        "Rebuild before editing lifecycles.",
+        409,
+      );
+    if (
+      retainedNormalizationInputsChanged(
+        store,
+        build.ledger_build_id,
+        current,
+        LEDGER_PARSER_VERSION,
+      )
+    )
+      throw new AppError(
+        "STALE_INPUT",
+        "Rebuild after import changes before editing lifecycles.",
+        409,
+      );
+    const ledger = loadLedgerSnapshot(store.db, build.ledger_build_id);
+    const prior = effectiveDecisions(readDecisions(store, current)).filter(
+      (d) => d.id !== input.supersedesId,
+    );
+    const origins = groupStrategies(
+      ledger,
+      prior.filter((d) => d.kind !== "group_merge"),
+      (account, openingKeys) =>
+        findStrategyId(store, { account, openingKeys }) ??
+        strategyAnchorKey({ account, openingKeys }),
+    );
+    validateLifecycleDecision(
+      ledger,
+      projection,
+      prior,
+      {
+        id: "__validate__",
+        sequence: current + 1,
+        kind: input.kind,
+        payload: input.payload,
+        sources: input.sources,
+        strategyIds: input.strategyIds,
+        supersedesId: input.supersedesId,
+      },
+      origins,
+      readLifecycleAnchors(store.db),
+    );
+  }
+  const id = randomUUID();
+  const sequence = current + 1;
+  store.db
+    .prepare(
+      `INSERT INTO decisions (
+           id, sequence, kind, source_refs_json, strategy_ids_json,
+           payload_json, supersedes_id, client_request_id, author, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      sequence,
+      input.kind,
+      JSON.stringify(input.sources),
+      JSON.stringify(input.strategyIds),
+      JSON.stringify(input.payload),
+      input.supersedesId,
+      input.clientRequestId,
+      input.author,
+      new Date().toISOString(),
+    );
+  const row = store.db
+    .prepare(
+      `SELECT id, sequence, kind, source_refs_json, strategy_ids_json,
                 payload_json, supersedes_id, client_request_id, author, created_at
          FROM decisions WHERE id = ?`,
-      )
-      .get(id) as DecisionRow;
-    return readDecisionRow(row);
-  });
+    )
+    .get(id) as DecisionRow;
+  return readDecisionRow(row);
 }

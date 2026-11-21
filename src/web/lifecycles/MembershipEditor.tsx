@@ -4,11 +4,14 @@ import { splitAmount } from "../../server/strategies/allocation.js";
 import type {
   AllocationRef,
   AttachmentSuggestion,
+  Lifecycle,
   LifecycleMember,
 } from "../../shared/lifecycles.js";
 import type { Execution } from "../api.js";
 import { Link } from "../navigation.js";
 import type { SaveDecision } from "./api.js";
+import { contractLabel } from "./connection-guidance.js";
+import { lifecycleLabel } from "./connections.js";
 
 function callCashForTarget(
   members: LifecycleMember[],
@@ -98,7 +101,7 @@ export function MembershipEditor({
   executions: Execution[];
   openingCash: string | null;
   callMembers: LifecycleMember[];
-  candidates: string[];
+  candidates: Lifecycle[];
   save: SaveDecision;
   disabled: boolean;
 }) {
@@ -195,9 +198,9 @@ export function MembershipEditor({
                 );
               }}
             >
-              {candidates.map((id) => (
-                <option key={id} value={id}>
-                  {id}
+              {candidates.map((cycle) => (
+                <option key={cycle.id} value={cycle.id}>
+                  {lifecycleLabel(cycle)} · {cycle.id}
                 </option>
               ))}
             </select>
@@ -240,7 +243,7 @@ export function MembershipEditor({
               ...targets,
               {
                 key: crypto.randomUUID(),
-                lifecycleId: candidates[0] ?? "",
+                lifecycleId: candidates[0]?.id ?? "",
                 quantity: "1",
               },
             ]);
@@ -307,7 +310,10 @@ export function MembershipEditor({
                       ?.amount ?? null);
               return (
                 <li key={t.key}>
-                  {t.lifecycleId}: {t.quantity} contracts ·{" "}
+                  {lifecycleLabel(
+                    candidates.find((c) => c.id === t.lifecycleId),
+                  )}{" "}
+                  · {t.lifecycleId}: {t.quantity} contracts ·{" "}
                   {shares ?? "Unknown"} shares reserved · opening cash{" "}
                   {cash ?? "Unavailable"} {execution?.currency} · cash moving
                   now{" "}
@@ -393,17 +399,20 @@ export function MembershipEditor({
 /** Edits one complete source partition, preserving all other source allocations. */
 export function SourcePartitionEditor({
   members,
+  executions,
   candidates,
   save,
   disabled,
 }: {
   members: LifecycleMember[];
-  candidates: string[];
+  executions: Pick<Execution, "key" | "date" | "instrument">[];
+  candidates: Lifecycle[];
   save: SaveDecision;
   disabled: boolean;
 }) {
   const [selected, setSelected] = useState("0");
   const source = members[Number(selected)];
+  const executionsByKey = new Map(executions.map((e) => [e.key, e]));
   const [parts, setParts] = useState(() =>
     members
       .filter(
@@ -458,14 +467,20 @@ export function SourcePartitionEditor({
               setPreview(false);
             }}
           >
-            {members.map((m, i) => (
-              <option
-                key={`${m.lifecycleId}-${m.allocation.strategyId}-${m.allocation.executionKey}-${m.allocation.role}`}
-                value={i}
-              >
-                {m.allocation.executionKey} · {m.allocation.role}
-              </option>
-            ))}
+            {members.map((m, i) => {
+              const execution = executionsByKey.get(m.allocation.executionKey);
+              return (
+                <option
+                  key={`${m.lifecycleId}-${m.allocation.strategyId}-${m.allocation.executionKey}-${m.allocation.role}`}
+                  value={i}
+                >
+                  {execution &&
+                    `${execution.date ?? "Date unknown"} · ${execution.instrument.symbol} ${contractLabel(execution.instrument)} · `}
+                  {m.quantity} units · {m.allocation.role} ·{" "}
+                  {m.allocation.executionKey}
+                </option>
+              );
+            })}
           </select>
         </label>
         <p>
@@ -488,8 +503,10 @@ export function SourcePartitionEditor({
                   );
                 }}
               >
-                {candidates.map((id) => (
-                  <option key={id}>{id}</option>
+                {candidates.map((cycle) => (
+                  <option key={cycle.id} value={cycle.id}>
+                    {lifecycleLabel(cycle)} · {cycle.id}
+                  </option>
                 ))}
               </select>
             </label>
@@ -528,7 +545,7 @@ export function SourcePartitionEditor({
                 ...parts,
                 {
                   key: crypto.randomUUID(),
-                  lifecycleId: candidates[0] ?? "",
+                  lifecycleId: candidates[0]?.id ?? "",
                   quantity: "",
                 },
               ]);
@@ -572,7 +589,10 @@ export function SourcePartitionEditor({
             <ul>
               {parts.map((p) => (
                 <li key={p.key}>
-                  {p.lifecycleId}: {p.quantity} units; cash{" "}
+                  {lifecycleLabel(
+                    candidates.find((c) => c.id === p.lifecycleId),
+                  )}{" "}
+                  · {p.lifecycleId}: {p.quantity} units; cash{" "}
                   {splitAmount(
                     current
                       .reduce((n, m) => n.plus(m.netCash), new Decimal(0))

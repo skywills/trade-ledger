@@ -95,6 +95,9 @@ export function JournalPage() {
   const rows = remote.data?.items ?? [];
   const total = remote.data?.total ?? 0;
   const currencies = remote.data?.currencies ?? [];
+  const buildQuery = remote.data?.buildId
+    ? `?expectedBuildId=${encodeURIComponent(remote.data.buildId)}`
+    : "";
 
   function href(changes: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -198,11 +201,40 @@ export function JournalPage() {
           </p>
         </div>
       )}
+      {!currency &&
+        currencies.length > 1 &&
+        sort &&
+        ["brokerPnl", "reconstructedPnl", "openingAmount"].includes(
+          sort.key,
+        ) && (
+          <p className="muted" role="note">
+            Sorted by the numeric amount in each row’s currency, without
+            conversion.
+          </p>
+        )}
       {rows.length > 0 && (
         <TableScroll label="Journal table">
           <table aria-label="Journal">
             <thead>
               <tr>
+                <SortHeader
+                  label="Symbol / description"
+                  column="description"
+                  sort={sort}
+                  onSort={setSort}
+                />
+                <SortHeader
+                  label="Status"
+                  column="status"
+                  sort={sort}
+                  onSort={setSort}
+                />
+                <SortHeader
+                  label="Broker realized P/L"
+                  column="brokerPnl"
+                  sort={sort}
+                  onSort={setSort}
+                />
                 <SortHeader
                   label="Open date"
                   column="openingDate"
@@ -216,34 +248,16 @@ export function JournalPage() {
                   onSort={setSort}
                 />
                 <SortHeader
-                  label="Status"
-                  column="status"
-                  sort={sort}
-                  onSort={setSort}
-                />
-                <SortHeader
                   label="Expiry"
                   column="expiry"
                   sort={sort}
                   onSort={setSort}
                 />
                 <th>Year</th>
-                <SortHeader
-                  label="Symbol / description"
-                  column="description"
-                  sort={sort}
-                  onSort={setSort}
-                />
                 <th>Quantity / remaining</th>
                 <SortHeader
                   label="Debit / credit"
                   column="openingAmount"
-                  sort={sort}
-                  onSort={setSort}
-                />
-                <SortHeader
-                  label="Broker realized P/L"
-                  column="brokerPnl"
                   sort={sort}
                   onSort={setSort}
                 />
@@ -259,35 +273,40 @@ export function JournalPage() {
             <tbody>
               {rows.map((strategy) => (
                 <tr key={strategy.id}>
-                  <td data-column="openDate">{strategy.openingDate ?? "—"}</td>
-                  <td data-column="closeDate">{strategy.closeDate ?? "—"}</td>
+                  <td data-column="description">
+                    <Link
+                      to={`/strategies/${encodeURIComponent(strategy.id)}${buildQuery}`}
+                    >
+                      {strategy.description}
+                    </Link>
+                  </td>
                   <td data-column="status">
                     <span className={`badge ${STATUS_BADGE[strategy.status]}`}>
                       {STATUS_LABEL[strategy.status]}
                     </span>
                   </td>
-                  <td data-column="expiry">{strategy.expiry ?? "—"}</td>
-                  <td data-column="year">{strategy.expiryYear ?? "—"}</td>
-                  <td data-column="description">
-                    <Link to={`/strategies/${encodeURIComponent(strategy.id)}`}>
-                      {strategy.description}
-                    </Link>
-                  </td>
-                  <td data-column="quantity">{positionsText(strategy)}</td>
-                  <td data-column="debitCredit">
-                    {formatMoney(strategy.openingAmount, strategy.currency)}
-                  </td>
                   <td
                     data-column="brokerPnl"
                     className={pnlClass(strategy.brokerPnl)}
                   >
-                    {formatMoney(strategy.brokerPnl, strategy.currency)}
+                    {formatMoney(strategy.brokerPnl, strategy.currency)}{" "}
+                    {strategy.currency}
+                  </td>
+                  <td data-column="openDate">{strategy.openingDate ?? "—"}</td>
+                  <td data-column="closeDate">{strategy.closeDate ?? "—"}</td>
+                  <td data-column="expiry">{strategy.expiry ?? "—"}</td>
+                  <td data-column="year">{strategy.expiryYear ?? "—"}</td>
+                  <td data-column="quantity">{positionsText(strategy)}</td>
+                  <td data-column="debitCredit">
+                    {formatMoney(strategy.openingAmount, strategy.currency)}{" "}
+                    {strategy.currency}
                   </td>
                   <td
                     data-column="reconstructedPnl"
                     className={pnlClass(strategy.reconstructedPnl)}
                   >
-                    {formatMoney(strategy.reconstructedPnl, strategy.currency)}
+                    {formatMoney(strategy.reconstructedPnl, strategy.currency)}{" "}
+                    {strategy.currency}
                   </td>
                   <td data-column="completeness">
                     <span

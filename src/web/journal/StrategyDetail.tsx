@@ -1,16 +1,11 @@
 import { type KeyboardEvent, useMemo, useState } from "react";
 import { formatMoney } from "../../shared/money.js";
-import {
-  type Execution,
-  LotsEnvelope,
-  StrategyDetailSchema,
-  TransactionsEnvelope,
-  useJson,
-} from "../api.js";
+import { type Execution, StrategyDetailSchema, useJson } from "../api.js";
 import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
 import { Link, useLocation } from "../navigation.js";
-import { DecisionEditor, listDecisions } from "../review/DecisionEditor.js";
+import { DecisionEditor } from "../review/DecisionEditor.js";
+import { DecisionHistory } from "../review/DecisionHistory.js";
 import { collectActualExpiries } from "./expiries.js";
 
 const TABS = ["Summary", "Allocations", "Lots", "History"] as const;
@@ -31,22 +26,21 @@ export function StrategyDetail({ id }: { id: string }) {
     `/api/strategies/${encodeURIComponent(id)}${expected ? `?expectedBuildId=${encodeURIComponent(expected)}` : ""}`,
     StrategyDetailSchema,
   );
-  const transactions = useJson(
-    "/api/transactions?pageSize=100",
-    TransactionsEnvelope,
-  );
-  const lots = useJson("/api/lots?pageSize=100", LotsEnvelope);
   const [tab, setTab] = useState<Tab>("Summary");
 
   const executionByKey = useMemo(() => {
     const map = new Map<string, Execution>();
-    for (const execution of transactions.data?.items ?? []) {
+    for (const execution of detail.data?.executions ?? []) {
       map.set(execution.key, execution);
     }
     return map;
-  }, [transactions.data]);
+  }, [detail.data?.executions]);
 
-  if (detail.status === "loading") {
+  if (
+    detail.status === "loading" &&
+    (detail.data?.strategy.id !== id ||
+      (expected && detail.data.buildId !== expected))
+  ) {
     return <Loading label="Loading strategy…" testId="strategy-loading" />;
   }
   if (detail.status === "error") {
@@ -76,8 +70,6 @@ export function StrategyDetail({ id }: { id: string }) {
   ) {
     return <ErrorPanel message="Strategy not found." />;
   }
-
-  const history = listDecisions(id);
 
   function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = TABS.indexOf(tab);
@@ -262,9 +254,23 @@ export function StrategyDetail({ id }: { id: string }) {
           </TableScroll>
         ) : null}
 
-        {tab === "Lots" ? (
+        {tab === "Lots" && Boolean(detail.data?.ambiguousLotCount) && (
+          <p>
+            {detail.data?.ambiguousLotCount} closing lot rows could not be
+            attributed to this strategy alone.
+          </p>
+        )}
+        {tab === "Lots" &&
+          detail.data?.lots.length === 0 &&
+          !detail.data?.ambiguousLotCount && (
+            <p>No linked closing lots for this strategy.</p>
+          )}
+        {tab === "Lots" && detail.data?.lots.length ? (
           <TableScroll label="Lots table">
             <table aria-label="Lots">
+              <caption>
+                Broker lots linked to this strategy’s closing executions
+              </caption>
               <thead>
                 <tr>
                   <th>Row</th>
@@ -274,23 +280,15 @@ export function StrategyDetail({ id }: { id: string }) {
                 </tr>
               </thead>
               <tbody>
-                {(lots.data?.items ?? []).map((lot) => {
-                  const source = lot.issues[0]?.sources[0];
-                  const target =
-                    source === undefined
-                      ? null
-                      : `/imports?import=${encodeURIComponent(source.importId)}&row=${source.rowNumber}`;
+                {detail.data?.lots.map((lot) => {
+                  const target = `/imports?import=${encodeURIComponent(lot.source.importId)}&row=${lot.source.rowNumber}`;
                   return (
-                    <tr key={lot.rowNumber}>
+                    <tr key={target}>
                       <td>{lot.rowNumber}</td>
                       <td>{lot.kind}</td>
                       <td>{lot.fields.Symbol ?? "—"}</td>
                       <td>
-                        {target === null ? (
-                          "—"
-                        ) : (
-                          <Link to={target}>View source</Link>
-                        )}
+                        <Link to={target}>View source</Link>
                       </td>
                     </tr>
                   );
@@ -303,20 +301,7 @@ export function StrategyDetail({ id }: { id: string }) {
         {tab === "History" ? (
           <div data-testid="strategy-history">
             <h3>Retained revision history</h3>
-            {history.length === 0 ? (
-              <p className="muted">
-                No decisions submitted this session. Retained decisions remain
-                server-side across rebuilds.
-              </p>
-            ) : (
-              <ol>
-                {history.map((entry) => (
-                  <li key={entry.id}>
-                    #{entry.sequence} {entry.kind}: {entry.summary}
-                  </li>
-                ))}
-              </ol>
-            )}
+            <DecisionHistory strategyId={id} />
             <h4>Grouping links</h4>
             <ul>
               {links.map((link) => (
@@ -331,6 +316,7 @@ export function StrategyDetail({ id }: { id: string }) {
 
       <DecisionEditor
         fixedStrategyId={id}
+        onSubmitted={detail.reload}
         initialNotes={detail.data?.metadata.notes ?? null}
         initialStopLoss={detail.data?.metadata.stopLoss ?? null}
       />

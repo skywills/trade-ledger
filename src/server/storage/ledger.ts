@@ -5,7 +5,6 @@ import type {
   Id,
   Issue,
   LedgerSnapshot,
-  RawRow,
 } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import { ensureAccount } from "./accounts.js";
@@ -318,7 +317,8 @@ export function loadLedgerSnapshot(
        ORDER BY i.import_id, i.row_number`,
     )
     .all(ledgerId) as LotRow[];
-  const lots: RawRow[] = lotRows.map((row) => ({
+  const lots: LedgerSnapshot["lots"] = lotRows.map((row) => ({
+    source: { importId: row.import_id, rowNumber: row.row_number },
     rowNumber: row.row_number,
     section: row.section,
     fields: JSON.parse(row.raw_fields_json) as Record<string, string>,

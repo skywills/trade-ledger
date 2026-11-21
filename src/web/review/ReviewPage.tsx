@@ -1,17 +1,53 @@
 import { Decimal } from "decimal.js";
+import { useMemo } from "react";
 import { JournalEnvelope, ReviewEnvelope, useJson } from "../api.js";
-import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
+import {
+  BuildBadge,
+  ErrorPanel,
+  Loading,
+  PageLinks,
+  pageNumber,
+  TableScroll,
+} from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
-import { ConnectionQueue } from "../lifecycles/ConnectionQueue.js";
+import {
+  ConnectionQueue,
+  useConnectionSelection,
+} from "../lifecycles/ConnectionQueue.js";
 import { connectionGroups, reviewLabel } from "../lifecycles/connections.js";
-import { Link } from "../navigation.js";
+import { Link, useQuery } from "../navigation.js";
 import { AskAgent, PastAnalyses } from "./AgentReview.js";
-import { DecisionEditor, listDecisions } from "./DecisionEditor.js";
+import { DecisionEditor } from "./DecisionEditor.js";
+import { DecisionHistory } from "./DecisionHistory.js";
 
 /** Review queue plus the manual reconciliation editor and revision history. */
 export function ReviewPage() {
-  const remote = useJson("/api/review?pageSize=100", ReviewEnvelope);
-  const history = listDecisions();
+  const decisionId = useQuery().get("decisionId");
+  if (!decisionId) return <ReviewQueue />;
+  return (
+    <section>
+      <Link to="/lifecycles">← Lifecycles</Link>
+      <h2>Retained decision</h2>
+      <p>{decisionId}</p>
+      <DecisionHistory key={decisionId} decisionId={decisionId} />
+      <Link to="/review">All review items</Link>
+    </section>
+  );
+}
+
+function ReviewQueue() {
+  const selection = useConnectionSelection();
+  const query = useQuery();
+  const page = pageNumber(query.get("page"));
+  const remote = useJson(
+    `/api/review?pageSize=100&page=${page}`,
+    ReviewEnvelope,
+  );
+  function pageHref(next: number) {
+    const params = new URLSearchParams(query);
+    params.set("page", String(next));
+    return `/review?${params}`;
+  }
   const journal = useJson("/api/journal?pageSize=100", JournalEnvelope);
   const currentJournal =
     journal.data?.buildId === remote.data?.buildId ? journal.data : null;
@@ -20,18 +56,17 @@ export function ReviewPage() {
     connections.data?.buildId === remote.data?.buildId
       ? connections.data
       : null;
-  const grouped =
-    currentConnections?.lifecycles &&
-    connectionGroups(
+  const connectionIssueKeys = useMemo(() => {
+    if (!currentConnections?.lifecycles) return new Set<string>();
+    const groups = connectionGroups(
       currentConnections.lifecycles.suggestions,
       currentConnections.lifecycles.members,
       currentConnections.connectionExecutions,
     );
-  const connectionIssueKeys = new Set(
-    (grouped || []).flatMap((g) =>
-      g.suggestions.map((s) => `lifecycle:${s.id}`),
-    ),
-  );
+    return new Set(
+      groups.flatMap((g) => g.suggestions.map((s) => `lifecycle:${s.id}`)),
+    );
+  }, [currentConnections]);
   const remainingIssues = (remote.data?.items ?? []).filter(
     (issue) => !connectionIssueKeys.has(issue.key),
   );
@@ -44,6 +79,7 @@ export function ReviewPage() {
       )}
       {currentConnections && (
         <ConnectionQueue
+          selection={selection}
           data={currentConnections}
           onChanged={() => {
             connections.reload();
@@ -51,7 +87,8 @@ export function ReviewPage() {
           }}
         />
       )}
-      {remote.status === "loading" ? (
+      {remote.status === "loading" ||
+      (remote.status === "ready" && remote.data?.page !== page) ? (
         <Loading label="Loading review items…" />
       ) : remote.status === "error" ? (
         <ErrorPanel
@@ -189,38 +226,35 @@ export function ReviewPage() {
               </table>
             </TableScroll>
           )}
-          {remote.data?.buildId && remote.data.items.length === 0 ? (
+          {remote.data && <PageLinks {...remote.data} href={pageHref} />}
+          {remote.data &&
+            remote.data.total > 0 &&
+            !remote.data.items.length && <p>No review items on this page.</p>}
+          {remote.data?.buildId && remote.data.total === 0 ? (
             <p className="empty-state">
               No review issues in the active build. Nothing needs attention.
             </p>
           ) : null}
+          {remote.data && (
+            <AskAgent
+              key={page}
+              issueKeys={[
+                ...new Set(
+                  remote.data.items.flatMap((issue) => issue.issueKeys),
+                ),
+              ]}
+            />
+          )}
         </>
       )}
 
-      <AskAgent
-        issueKeys={[
-          ...new Set(
-            (remote.data?.items ?? []).flatMap((issue) => issue.issueKeys),
-          ),
-        ]}
-      />
       <PastAnalyses />
 
       <DecisionEditor />
 
       <section data-testid="revision-history">
-        <h3>Revision history (this session)</h3>
-        {history.length === 0 ? (
-          <p className="muted">No decisions submitted yet.</p>
-        ) : (
-          <ol>
-            {history.map((entry) => (
-              <li key={entry.id}>
-                #{entry.sequence} {entry.kind}: {entry.summary}
-              </li>
-            ))}
-          </ol>
-        )}
+        <h3>Retained revision history</h3>
+        <DecisionHistory />
       </section>
     </section>
   );

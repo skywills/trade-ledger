@@ -2,6 +2,7 @@
 
 import type { AgentSession } from "@nathapp/nax-agent";
 import { Decimal } from "decimal.js";
+import type { CostCoverage } from "../../shared/chat-api.js";
 import { UsageMeter } from "../ai/session-host.js";
 import type { Store } from "../storage/database.js";
 import type { TurnAccumulator } from "./accumulator.js";
@@ -24,6 +25,7 @@ export interface TurnInput {
   readonly assistantMessageId: string;
   readonly prompt: string;
   readonly limits: ChatLimits;
+  readonly hasProfilePricing: boolean;
   readonly accumulator: TurnAccumulator;
   readonly now: () => Date;
 }
@@ -50,7 +52,7 @@ function threadBreach(
 /** Drives one `send()` to completion and persists the outcome. Never throws. */
 export async function runTurn(input: TurnInput): Promise<void> {
   const { store, bus, session, thread, accumulator: acc } = input;
-  const meter = new UsageMeter(input.limits);
+  const meter = new UsageMeter(input.limits, input.hasProfilePricing);
   let cancelReason: string | null = null;
   let failure: ReturnType<typeof publicChatError> | null = null;
   const emit = (frames: ReturnType<TurnAccumulator["apply"]>) => {
@@ -103,6 +105,22 @@ function outcomeOf(
   return { status, error };
 }
 
+function combinedCoverage(thread: ChatThread, turn: CostCoverage | undefined) {
+  // Older journals retained the sum but did not record which turns were priced.
+  const previous =
+    thread.usage.costCoverage ??
+    (new Decimal(thread.cost).greaterThan(0)
+      ? "partial"
+      : thread.usage.rounds > 0 ||
+          thread.usage.inputTokens > 0 ||
+          thread.usage.generatedTokens > 0
+        ? "unpriced"
+        : undefined);
+  if (!previous) return turn;
+  if (!turn || previous === turn) return previous;
+  return "partial";
+}
+
 function addUsage(current: ChatThread["usage"], turn: UsageMeter["usage"]) {
   return {
     rounds: current.rounds + turn.rounds,
@@ -133,7 +151,11 @@ async function finishTurn(
     cost: turnCost,
   }).catch(() => undefined);
   const current = readThread(store, thread.id) ?? thread;
-  const usage = addUsage(current.usage, meter.usage);
+  const coverage = combinedCoverage(current, meter.costCoverage);
+  const usage = {
+    ...addUsage(current.usage, meter.usage),
+    ...(coverage && { costCoverage: coverage }),
+  };
   const cost = new Decimal(current.cost).plus(turnCost).toFixed();
   const threadStatus: ThreadStatus =
     cancelReason?.startsWith("limit:thread_") === true

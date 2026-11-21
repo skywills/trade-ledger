@@ -34,6 +34,10 @@ const MIGRATIONS: ReadonlyArray<Migration> = [
     version: 8,
     url: new URL("./migrations/008_pnl_attribution.sql", import.meta.url),
   },
+  {
+    version: 9,
+    url: new URL("./migrations/009_proposal_rejections.sql", import.meta.url),
+  },
 ];
 
 export const CURRENT_SCHEMA_VERSION =

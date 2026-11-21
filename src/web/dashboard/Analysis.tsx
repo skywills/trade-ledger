@@ -83,6 +83,9 @@ export function Analysis({
           state.detail.expectedBuildId ?? data.buildId ?? undefined,
       })
     : null;
+  const selectedDay = data.daily.find(
+    (point) => point.date === state.detail.date,
+  );
   const back = dashboardHref("analysis", { ...state, detail: {} });
   const chartPoints = (key: "executions" | "netCash") =>
     data.monthly.map((p) => ({
@@ -109,7 +112,25 @@ export function Analysis({
             <Link to={back}>Back to analysis</Link>
             <span>
               {state.detail.outcome ? `Outcome: ${state.detail.outcome}` : ""}
-              {state.detail.date ? ` · ${state.detail.date}` : ""}
+              {state.detail.date && (
+                <>
+                  Trades for {state.detail.date}
+                  {selectedDay && (
+                    <>
+                      {" · "}Daily change{" "}
+                      {formatMoney(selectedDay.pnl, currency)} {currency}
+                      {" · "}Running total{" "}
+                      {formatMoney(
+                        selectedDay.pnl === null
+                          ? null
+                          : selectedDay.cumulative,
+                        currency,
+                      )}{" "}
+                      {currency}
+                    </>
+                  )}
+                </>
+              )}
             </span>
           </div>
           {detail?.success ? (
@@ -280,6 +301,7 @@ export function Analysis({
                 title={title}
                 currency="executions"
                 valueType="count"
+                pointUnit="categories"
                 variant="bar"
                 points={rows.map((r) => ({
                   key: r.key,

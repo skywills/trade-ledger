@@ -41,6 +41,11 @@ test("batch review enforces earlier connections and recovers a lost save respons
   await rows.nth(2).check();
   await section.getByRole("button", { name: "Connect selected", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Connect BATCH connections" });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(rows.nth(2)).toBeChecked();
+  const trigger = section.getByRole("button", { name: "Connect selected", exact: true });
+  await expect(trigger).toBeFocused();
+  await trigger.click();
   await dialog.getByRole("button", { name: "Confirm connections", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("earlier connection");
   expect((await (await request.get("/api/lifecycles")).json()).watermark).toBe(before.watermark);

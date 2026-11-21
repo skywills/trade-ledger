@@ -169,13 +169,35 @@ test("a failed transactions fetch shows an error instead of empty pickers", asyn
   ).toHaveCount(0);
 });
 
-test("pickers say when they show only the first page of a larger list", async ({
+test("pickers can select strategies beyond the first page", async ({
   page,
 }) => {
-  await mockEditor(page, { journalTotal: 250 });
+  await mockEditor(page);
+  await page.route("**/api/journal?*", (route) => {
+    const pageNumber = Number(
+      new URL(route.request().url()).searchParams.get("page") ?? 1,
+    );
+    const items =
+      pageNumber === 1
+        ? Array.from({ length: 100 }, (_, i) => ({
+            ...strategy,
+            id: "s" + i,
+            description: "Contract " + i,
+          }))
+        : [{ ...strategy, id: "s100", description: "Later contract" }];
+    return route.fulfill({
+      json: { ...envelope(items, 101), page: pageNumber },
+    });
+  });
   await page.goto("/review");
-  await expect(page.getByTestId("picker-truncated")).toContainText(
-    "Showing the first 1 of 250 strategies",
+  await page
+    .getByRole("button", { name: "Load more strategies" })
+    .click({ timeout: 3000 });
+  await page
+    .getByLabel("Strategy", { exact: true })
+    .selectOption({ label: "Later contract" });
+  await expect(page.getByLabel("Strategy", { exact: true })).toHaveValue(
+    "s100",
   );
 });
 
@@ -363,4 +385,222 @@ test("review falls back to owner IDs across builds and labels unattributed issue
   );
   await expect(table).not.toContainText("WRONG LABEL");
   await expect(table).toContainText("Unattributed issue");
+});
+
+test("editing a previewed exclusion requires reviewing the changed file", async ({
+  page,
+}) => {
+  const posted = await mockEditor(page);
+  await page.route("**/api/imports?*", (route) =>
+    route.fulfill({
+      json: envelope([
+        importSummary,
+        { ...importSummary, id: "import-two", filename: "other.csv" },
+      ]),
+    }),
+  );
+  await page.goto("/review");
+  await page.getByLabel("Decision kind").selectOption("import_exclusion");
+  await page.getByLabel("Import", { exact: true }).selectOption("import-one");
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await page.getByLabel("Import", { exact: true }).selectOption("import-two");
+  await expect(
+    page.getByRole("button", { name: "Confirm decision" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await expect(page.getByTestId("decision-preview")).toContainText("other.csv");
+  await page.getByRole("button", { name: "Confirm decision" }).click();
+  await expect
+    .poll(() => posted[0])
+    .toMatchObject({ payload: { importId: "import-two" } });
+});
+
+test("refreshing changed picker pages invalidates an exclusion preview", async ({
+  page,
+}) => {
+  const posted = await mockEditor(page);
+  let total = 210;
+  await page.route("**/api/imports?*", (route) => {
+    const n = Number(
+      new URL(route.request().url()).searchParams.get("page") ?? 1,
+    );
+    const start = (n - 1) * 100;
+    const items = Array.from(
+      { length: Math.min(100, total - start) },
+      (_, i) => ({
+        ...importSummary,
+        id: `file-${start + i + 1}`,
+        filename: `file-${start + i + 1}.csv`,
+      }),
+    );
+    return route.fulfill({ json: { ...envelope(items, total), page: n } });
+  });
+  await page.goto("/review");
+  await page.getByLabel("Decision kind").selectOption("import_exclusion");
+  const more = page.getByRole("button", { name: "Load more imports" });
+  await more.click();
+  await page.getByLabel("Import", { exact: true }).selectOption("file-110");
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await expect(page.getByTestId("decision-preview")).toContainText(
+    "file-110.csv",
+  );
+  total++;
+  await more.click();
+  await expect(page.getByLabel("Import", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Confirm decision" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await expect(page.getByTestId("error-summary")).toContainText(
+    "Select an import",
+  );
+  expect(posted).toHaveLength(0);
+});
+
+test("review paging preserves the issue source and older analysis page", async ({
+  page,
+}) => {
+  await mockEditor(page);
+  let showPageTwo!: () => void;
+  const pageTwoAllowed = new Promise<void>((resolve) => {
+    showPageTwo = resolve;
+  });
+  await page.route("**/api/review?*", async (route) => {
+    const n = Number(new URL(route.request().url()).searchParams.get("page"));
+    if (n === 2) await pageTwoAllowed;
+    const issue = {
+      key: "review-" + n,
+      code: n === 2 ? "LATER_ISSUE" : "FIRST_ISSUE",
+      severity: "warning",
+      sources: [{ importId: "import-one", rowNumber: n === 2 ? 101 : 1 }],
+      owners: [],
+      issueKeys: ["issue-" + n],
+    };
+    return route.fulfill({ json: { ...envelope([issue], 101), page: n } });
+  });
+  await page.route("**/api/analysis?*", (route) => {
+    const n = Number(new URL(route.request().url()).searchParams.get("page"));
+    return route.fulfill({
+      json: {
+        ...envelope(
+          [
+            {
+              id: "run-" + n,
+              status: "proposal_ready",
+              createdAt: "2026-10-01T00:00:00Z",
+              threadId: "thread-" + n,
+              pendingProposals: 1,
+            },
+          ],
+          21,
+        ),
+        pageSize: 20,
+        page: n,
+      },
+    });
+  });
+  await page.goto("/review");
+  const analyses = page.getByTestId("past-analyses");
+  await analyses.getByRole("link", { name: "Next" }).click();
+  await expect(
+    analyses.getByRole("link", { name: "conversation" }),
+  ).toHaveAttribute("href", "/chat/thread-2");
+  await page.getByRole("link", { name: "Next", exact: true }).click();
+  await expect(page.getByText("Loading review items…")).toBeVisible();
+  await expect(page.getByTestId("ask-agent")).toHaveCount(0);
+  showPageTwo();
+  const issue = page.getByRole("row").filter({ hasText: "LATER_ISSUE" });
+  const source = issue.getByRole("link", { name: "101" });
+  await expect(source).toHaveAttribute(
+    "href",
+    "/imports?import=import-one&row=101",
+  );
+  await expect(page.getByTestId("ask-agent")).toBeEnabled();
+  await source.click();
+  await page.goBack();
+  await expect(issue).toBeVisible();
+  await expect(
+    analyses.getByRole("link", { name: "conversation" }),
+  ).toHaveAttribute("href", "/chat/thread-2");
+});
+
+test("a later execution, changed allocation quantity and changed target require fresh previews", async ({
+  page,
+}) => {
+  const posted = await mockEditor(page);
+  await page.route("**/api/journal?*", (route) =>
+    route.fulfill({
+      json: envelope([
+        strategy,
+        { ...strategy, id: "next", description: "Other position" },
+      ]),
+    }),
+  );
+  const execution = (i: number) => ({
+    key: "fill-" + i,
+    account: "TEST",
+    instrument: {
+      key: "stock",
+      assetClass: "STK",
+      symbol: "SYM" + i,
+      underlying: null,
+      conid: null,
+      expiry: null,
+      strike: null,
+      putCall: null,
+      multiplier: null,
+    },
+    date: "2026-10-01",
+    rawDateTime: "2026-10-01",
+    timezone: "UTC",
+    quantity: "2",
+    price: "30",
+    currency: "USD",
+    netCash: "-60",
+    proceeds: null,
+    commission: null,
+    taxes: null,
+    basis: null,
+    brokerPnl: null,
+    action: "open",
+    event: "trade",
+    brokerIds: {},
+    codes: [],
+    sources: [{ importId: "import-one", rowNumber: i + 1 }],
+  });
+  await page.route("**/api/transactions?*", (route) => {
+    const n = Number(
+      new URL(route.request().url()).searchParams.get("page") ?? 1,
+    );
+    const items =
+      n === 1
+        ? Array.from({ length: 100 }, (_, i) => execution(i + 1))
+        : Array.from({ length: 10 }, (_, i) => execution(i + 101));
+    return route.fulfill({ json: { ...envelope(items, 110), page: n } });
+  });
+  await page.goto("/review");
+  await page.getByLabel("Decision kind").selectOption("manual_allocation");
+  await page.getByRole("button", { name: "Load more executions" }).click();
+  await page.getByLabel("Source execution").selectOption("fill-110");
+  const preview = page.getByRole("button", { name: "Preview decision" });
+  const confirm = page.getByRole("button", { name: "Confirm decision" });
+  await preview.click();
+  await page.getByLabel("Allocated quantity").fill("1");
+  await expect(confirm).toHaveCount(0);
+  await preview.click();
+  await page.getByLabel("Strategy", { exact: true }).selectOption("next");
+  await expect(confirm).toHaveCount(0);
+  await preview.click();
+  await expect(page.getByTestId("decision-preview")).toContainText(
+    "Allocate 1 of SYM110",
+  );
+  await confirm.click();
+  await expect
+    .poll(() => posted[0])
+    .toMatchObject({
+      payload: {
+        strategyId: "next",
+        allocations: [{ executionKey: "fill-110", quantity: "1" }],
+      },
+    });
 });

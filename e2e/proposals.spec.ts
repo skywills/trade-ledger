@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import Fastify from "fastify";
+import { createThread } from "../src/server/chat/threads.js";
 import { expect, test } from "./fixtures.js";
 import { buildEvidenceSnapshot } from "../src/server/ai/evidence.js";
 import {
@@ -12,27 +12,38 @@ import {
   appendDecision,
   decisionWatermark,
 } from "../src/server/decisions/service.js";
-import { registerAnalysisRoutes } from "../src/server/http/routes-analysis.js";
 import { listImports } from "../src/server/imports/service.js";
 import { localProfile, seedLedger } from "../test/helpers/chat.js";
-import { createTestStore } from "../test/helpers/store.js";
+import { openStore, closeStore } from "../src/server/storage/database.js";
 
 test("proposal actions work after the evidence watermark has advanced", async ({
   page,
-}) => {
-  const fixture = await createTestStore();
-  const app = Fastify();
+  serverScope,
+}, testInfo) => {
+  const server = await serverScope.forFile(testInfo.file);
+  const store = openStore(server.dataDir);
   try {
-    const { store } = fixture;
     const { buildId } = await seedLedger(store);
     const strategyId = activeProjection(store).projection?.strategies[0]?.id;
     if (!strategyId) throw new Error("No seeded strategy");
     const runId = randomUUID();
+    const profile = await localProfile(store);
+    const thread = await createThread(store, {
+      title: "Proposal regression",
+      sessionId: "proposal-regression",
+      profileId: profile.id,
+      modelRef: profile.modelId,
+      cloudConfirmed: false,
+      seed: null,
+      now: new Date(),
+    });
+
     await insertRun(
       store,
       {
         id: runId,
-        profileSnapshot: await localProfile(store),
+        profileSnapshot: profile,
+        threadId: thread.id,
         evidence: buildEvidenceSnapshot(store, { buildId, issueKeys: [] }),
         sessionId: "proposal-regression",
         createdAt: new Date().toISOString(),
@@ -76,27 +87,6 @@ test("proposal actions work after the evidence watermark has advanced", async ({
       },
       0,
     );
-    await registerAnalysisRoutes(app, store);
-    const origin = await app.listen({ port: 0, host: "127.0.0.1" });
-    // Exercise the built UI against real analysis routes and a throwaway database.
-    await page.route("**/api/analysis**", async (route) => {
-      const request = route.request();
-      const url = new URL(request.url());
-      const response = await fetch(origin + url.pathname + url.search, {
-        method: request.method(),
-        ...(request.postData()
-          ? {
-              body: request.postData(),
-              headers: { "content-type": "application/json" },
-            }
-          : {}),
-      });
-      await route.fulfill({
-        status: response.status,
-        contentType: "application/json",
-        body: await response.text(),
-      });
-    });
     await page.goto("/review");
     await page.getByTestId("past-analyses").getByRole("button").click();
     const proposals = page.getByTestId("proposal-list");
@@ -118,31 +108,82 @@ test("proposal actions work after the evidence watermark has advanced", async ({
     ).toHaveCount(2);
     const changes = proposals.getByRole("list", { name: "Proposed changes" });
     const exclusion = changes.filter({ hasText: `Exclude import ${importId}` });
-    await expect(exclusion).toHaveText(`Exclude import ${importId} from the next rebuild.`);
+    await expect(exclusion).toHaveText(
+      `Exclude import ${importId} from the next rebuild.`,
+    );
     // The card exposes the retained import before its individual Accept action.
-    await exclusion.locator("../..").getByRole("button", { name: "Accept", exact: true }).click();
-    await expect(proposals.getByText("(accepted)", { exact: true })).toHaveCount(3);
+    await exclusion
+      .locator("../..")
+      .getByRole("button", { name: "Accept", exact: true })
+      .click();
+    await expect(
+      proposals.getByText("(accepted)", { exact: true }),
+    ).toHaveCount(3);
+    await expect(page.getByTestId("revision-history")).toContainText(
+      "First note",
+    );
     expect(decisionWatermark(store)).toBe(4);
     const rejection = page.waitForResponse((response) =>
       response.url().endsWith(`/api/analysis/${runId}/reject`),
     );
     await proposals.getByRole("button", { name: "Reject all pending" }).click();
+    await proposals
+      .getByRole("button", { name: "Reject 2 proposals" })
+      .click({ timeout: 3000 });
     const response = await rejection;
     expect(response.status()).toBe(200);
     expect(await response.json()).toMatchObject({
       decision: { kind: "rejection", sequence: 5 },
     });
     expect(decisionWatermark(store)).toBe(5);
-    expect(store.db.prepare("SELECT kind FROM decisions ORDER BY sequence").all()).toEqual([
-      { kind: "notes" }, { kind: "notes" }, { kind: "notes" },
-      { kind: "import_exclusion" }, { kind: "rejection" },
+    expect(
+      store.db.prepare("SELECT kind FROM decisions ORDER BY sequence").all(),
+    ).toEqual([
+      { kind: "notes" },
+      { kind: "notes" },
+      { kind: "notes" },
+      { kind: "import_exclusion" },
+      { kind: "rejection" },
     ]);
+    await page.reload();
+    await expect(page.getByTestId("revision-history")).toContainText(
+      "Rejected evidence",
+    );
+    await page
+      .getByTestId("past-analyses")
+      .getByRole("button", { name: /0 pending/ })
+      .click();
+    await expect(
+      proposals.getByText("(rejected)", { exact: true }),
+    ).toHaveCount(2);
+    await expect(
+      proposals.getByRole("button", { name: "Accept", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "conversation", exact: true }).click();
+    await expect(
+      proposals.getByText("(accepted)", { exact: true }),
+    ).toHaveCount(3);
+    await expect(
+      proposals.getByText("(rejected)", { exact: true }),
+    ).toHaveCount(2);
+    await page.reload();
+    await expect(
+      proposals.getByRole("button", { name: "Reject all pending" }),
+    ).toHaveCount(0);
+    await expect(
+      proposals.getByText("(rejected)", { exact: true }),
+    ).toHaveCount(2);
     expect(readRun(store, runId)?.evidence.watermark).toBe(0);
     expect(readRun(store, runId)?.acceptedDecisionIds).toHaveLength(4);
+    const firstId = readRun(store, runId)?.acceptedDecisionIds[0];
+    if (!firstId) throw new Error("Expected the retained first decision");
+    await page.goto("/review?decisionId=" + encodeURIComponent(firstId));
+    await expect(
+      page.getByRole("heading", { name: "Retained decision", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("main")).toContainText("First note");
+    await expect(page.getByRole("main")).not.toContainText("Second note");
   } finally {
-    // Stop new proxy requests and finish active handlers before closing their origin.
-    await page.unrouteAll({ behavior: "wait" });
-    await app.close();
-    await fixture.dispose();
+    await closeStore(store);
   }
 });

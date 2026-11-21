@@ -198,6 +198,9 @@ export const StrategyMetadataSchema = z.object({
 export const StrategyDetailSchema = z.object({
   strategy: StrategySchema,
   allocations: z.array(AllocationSchema),
+  executions: z.array(ExecutionSchema),
+  lots: z.array(LotSchema.extend({ source: SourceRefSchema })),
+  ambiguousLotCount: z.number().int().nonnegative(),
   links: z.array(StrategyLinkSchema),
   metadata: StrategyMetadataSchema,
   buildId: z.string().nullable(),

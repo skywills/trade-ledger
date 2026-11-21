@@ -65,6 +65,7 @@ export interface ChatServiceDeps {
 }
 
 interface LiveThread {
+  readonly hasProfilePricing: boolean;
   readonly hosted: HostedSession;
   readonly limits: ChatLimits;
   readonly turn: { current: TurnScope };
@@ -394,6 +395,7 @@ export class ChatService {
         assistantMessageId,
         prompt,
         limits: live.limits,
+        hasProfilePricing: live.hasProfilePricing,
         accumulator: live.accumulator,
         now: this.now,
       });
@@ -481,6 +483,7 @@ export class ChatService {
       metadata: { threadId: thread.id },
     });
     const live: LiveThread = {
+      hasProfilePricing: profile.pricing != null,
       hosted,
       // Match the same profile snapshot used by the provider connection.
       limits: {

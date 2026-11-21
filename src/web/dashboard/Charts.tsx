@@ -1,3 +1,4 @@
+import { Decimal } from "decimal.js";
 import { useId, useState } from "react";
 import { formatMoney } from "../../shared/money.js";
 import { TableScroll } from "../components.js";
@@ -38,6 +39,8 @@ export function AnalyticsChart({
   }
   const display = (v: string | null) =>
     valueType === "count" ? (v ?? "Unavailable") : formatMoney(v, currency);
+  const cumulative = points.some((point) => point.dailyChange !== undefined);
+  const selectLabel = cumulative ? "View this day’s trades" : "View trades";
   const known = points.filter((p) => p.value !== null).length;
   return (
     <article className="dashboard-panel dashboard-chart">
@@ -118,6 +121,24 @@ export function AnalyticsChart({
                 ),
               )
             )}
+            <g className="chart-scale" textAnchor="end">
+              {model.max !== model.min && (
+                <text x="600" y="17">
+                  {new Decimal(model.max).toSignificantDigits(5).toString()}
+                </text>
+              )}
+              <text x="600" y="197">
+                {new Decimal(model.min).toSignificantDigits(5).toString()}
+              </text>
+              {model.min !== "0" &&
+                model.max !== "0" &&
+                model.zeroY > 37 &&
+                model.zeroY < 180 && (
+                  <text x="600" y={model.zeroY - 3}>
+                    0
+                  </text>
+                )}
+            </g>
             <text x="40" y="227">
               {points[0]?.label}
             </text>
@@ -147,8 +168,16 @@ export function AnalyticsChart({
               ←
             </button>
             <output aria-live="polite">
-              {chosen?.label}: <strong>{display(chosen?.value ?? null)}</strong>{" "}
-              {currency}
+              {chosen?.label} · {cumulative && "Running total: "}
+              <strong>{display(chosen?.value ?? null)}</strong> {currency}
+              {cumulative && (
+                <>
+                  {" "}
+                  · Daily change:{" "}
+                  <strong>{display(chosen?.dailyChange ?? null)}</strong>{" "}
+                  {currency}
+                </>
+              )}
             </output>
             <button
               type="button"
@@ -162,7 +191,7 @@ export function AnalyticsChart({
             </button>
             {onSelect && chosen && (
               <button type="button" onClick={() => onSelect(chosen.key)}>
-                View trades
+                {selectLabel}
               </button>
             )}
           </fieldset>
@@ -189,7 +218,10 @@ export function AnalyticsChart({
               <thead>
                 <tr>
                   <th>{pointUnit === "categories" ? "Category" : "Period"}</th>
-                  <th>Value ({currency})</th>
+                  <th>
+                    {cumulative ? "Running total" : "Value"} ({currency})
+                  </th>
+                  {cumulative && <th>Daily change ({currency})</th>}
                   {onSelect && <th>Details</th>}
                 </tr>
               </thead>
@@ -198,10 +230,11 @@ export function AnalyticsChart({
                   <tr key={p.key}>
                     <td>{p.label}</td>
                     <td>{p.value ?? "Unavailable"}</td>
+                    {cumulative && <td>{p.dailyChange ?? "Unavailable"}</td>}
                     {onSelect && (
                       <td>
                         <button type="button" onClick={() => onSelect(p.key)}>
-                          View trades
+                          {selectLabel}
                         </button>
                       </td>
                     )}

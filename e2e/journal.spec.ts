@@ -118,6 +118,12 @@ test("drills from a strategy allocation to the source import row", async ({
 }) => {
   await page.goto("/journal");
   await page.getByRole("link", { name: /AXON/ }).first().click();
+  await page.getByRole("tab", { name: "Lots" }).click();
+  const lots = page.getByRole("table", { name: "Lots", exact: true });
+  await expect(lots.getByRole("link", { name: "View source" })).toHaveCount(2);
+  await expect(
+    lots.getByRole("link", { name: "View source" }).first(),
+  ).toHaveAttribute("href", /row=6$/);
   await page.getByRole("tab", { name: "Allocations" }).click();
   await page.getByRole("link", { name: "View source" }).first().click();
   await expect(page.getByTestId("import-row-detail")).toBeVisible();
@@ -316,6 +322,13 @@ test("notes and stop loss survive a full rebuild", async ({ page }) => {
   await page.getByRole("button", { name: "Record decision" }).click();
   const first = await page.getByTestId("decision-result").textContent();
   const firstSequence = Number(/Sequence (\d+)/.exec(first ?? "")?.[1]);
+  await expect(page.getByTestId("revision-history")).toContainText(
+    "first note",
+  );
+  await page.reload();
+  await expect(page.getByTestId("revision-history")).toContainText(
+    "first note",
+  );
 
   await page.getByLabel("Decision kind").selectOption("stop_loss");
   await page.getByLabel("Stop loss price").fill("1.25");
@@ -604,14 +617,31 @@ test("strategy tabs are operable with the arrow keys", async ({ page }) => {
   );
 });
 
-test("rollback requires an explicit confirmation", async ({ page }) => {
+test("rollback requires an explicit confirmation", async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  for (const mode of ["full", "projection"]) {
+    const response = await request.post("/api/builds", {
+      headers: { origin: baseURL! },
+      data: { mode },
+    });
+    const { jobId } = await response.json();
+    await expect
+      .poll(
+        async () =>
+          (await (await request.get(`/api/jobs/${jobId}`)).json()).job.status,
+      )
+      .toBe("complete");
+  }
   await page.goto("/maintenance");
-  await page.getByRole("button", { name: "Rollback" }).click();
-  await expect(page.getByTestId("error-panel").or(page.getByRole("alert")).first()).toContainText(
-    "Enter the id",
-  );
-
-  await page.getByLabel("Build id to restore").fill("does-not-matter");
+  const picker = page.getByRole("combobox", { name: "Build to restore" });
+  await expect(page.getByRole("button", { name: "Rollback" })).toBeDisabled();
+  const previous = picker.locator("option:not([disabled])").last();
+  const buildId = await previous.getAttribute("value");
+  expect(buildId).toBeTruthy();
+  await picker.selectOption(buildId!);
   await page.getByRole("button", { name: "Rollback" }).click();
   await expect(
     page.getByRole("button", { name: "Confirm rollback" }),
@@ -675,7 +705,9 @@ test("browses retained rows beyond the first hundred on a phone", async ({ page 
   await expect(page.getByTestId("import-row-detail")).toBeVisible();
 });
 
-test("searches and ranks the full journal and restores a filtered page on Back", async ({ page }) => {
+test("searches and ranks the full journal and restores a filtered page on Back", async ({
+  page,
+}) => {
   const rows = Array.from({ length: 150 }, (_, i) => {
     const symbol = i === 149 ? "GLOBALNEEDLE" : `GLOBAL${i}`;
     const contract = {
@@ -686,20 +718,50 @@ test("searches and ranks the full journal and restores a filtered page on Back",
     };
     return [
       optionLeg(`GLOBAL-OPEN-${i}`, `GLOBAL-O-${i}`, {
-        ...contract, TradeDate: i === 149 ? "2026-09-10" : "2026-09-01",
+        ...contract,
+        TradeDate: i === 149 ? "2026-09-10" : "2026-09-01",
+        TradePrice: "10.123456789",
       }),
       optionLeg(`GLOBAL-CLOSE-${i}`, `GLOBAL-C-${i}`, {
-        ...contract, TradeDate: "2026-09-11", Quantity: "-1",
-        NetCash: String(200 + i), FifoPnlRealized: String(i), "Notes/Codes": "C",
+        ...contract,
+        TradeDate: "2026-09-11",
+        Quantity: "-1",
+        NetCash: String(200 + i),
+        FifoPnlRealized: String(i),
+        "Notes/Codes": "C",
       }),
     ];
   }).flat();
-  await confirmImport(page, [csvFile("large-journal.csv", buildExecutionTable(rows))]);
+  await confirmImport(page, [
+    csvFile("large-journal.csv", buildExecutionTable(rows)),
+  ]);
   await page.goto("/journal");
   const search = page.getByLabel("Search strategies");
   await search.fill("GLOBALNEEDLE");
   const needle = page.getByRole("link", { name: /GLOBALNEEDLE/ });
   await expect(needle).toBeVisible();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(needle).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('[data-column="brokerPnl"]')).toContainText("GBP");
+  await needle.click();
+  await page.getByRole("tab", { name: "Lots", exact: true }).click();
+  await expect(
+    page.getByText("No linked closing lots for this strategy."),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Allocations", exact: true }).click();
+  const evidence = page.getByRole("table", {
+    name: "Allocations",
+    exact: true,
+  });
+  await expect(evidence.getByRole("link", { name: "View source" })).toHaveCount(
+    2,
+  );
+  await evidence.getByRole("link", { name: "View source" }).first().click();
+  await expect(page.getByTestId("import-row-detail")).toContainText(
+    "GLOBALNEEDLE",
+  );
+  await page.goBack();
+  await page.goBack();
   await page.getByLabel("Currency", { exact: true }).selectOption("GBP");
   await page.getByLabel("Status", { exact: true }).selectOption("closed");
   await expect(page.getByRole("status")).toContainText("1 matching strategy");
@@ -710,7 +772,9 @@ test("searches and ranks the full journal and restores a filtered page on Back",
   await sort.click();
   const table = page.getByRole("table", { name: "Journal", exact: true });
   await expect(table.locator("tbody tr").first()).toContainText("GLOBALNEEDLE");
-  await expect(page.getByRole("status")).toContainText("150 matching strategies");
+  await expect(page.getByRole("status")).toContainText(
+    "150 matching strategies",
+  );
   await page.getByRole("link", { name: "Next", exact: true }).click();
   await expect(table.locator("tbody tr")).toHaveCount(50);
   const url = page.url();
@@ -722,4 +786,27 @@ test("searches and ranks the full journal and restores a filtered page on Back",
   await expect(search).toHaveValue("GLOBAL");
   await expect(table.getByRole("link").first()).toHaveText(label);
   await expect(page.getByText("Page 2 of 2")).toBeVisible();
+});
+
+test("preserves fill precision in the ledger and the matching analysis drilldown", async ({
+  page,
+}) => {
+  await page.goto("/transactions?page=2");
+  const ledger = page.getByRole("table", { name: "Transactions", exact: true });
+  const fill = ledger
+    .getByRole("row")
+    .filter({ hasText: "10.123456789" })
+    .first();
+  await expect(fill).toBeVisible();
+  await expect(fill.getByRole("link", { name: "View source" })).toHaveAttribute(
+    "href",
+    /row=\d+/,
+  );
+  await page.goto(
+    "/dashboard/analysis?kind=transactions&currency=GBP&symbol=GLOBALNEEDLE&preset=all&section=transactions",
+  );
+  const details = page.getByRole("table", { name: "Transaction details" });
+  await expect(
+    details.getByRole("cell", { name: "10.123456789", exact: true }),
+  ).toBeVisible();
 });

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { ChatThreadDto } from "../../shared/chat-api.js";
 import { ThreadsEnvelope } from "../../shared/chat-api.js";
 import { useJson } from "../api.js";
+import { ErrorPanel, Loading } from "../components.js";
 import { Link } from "../navigation.js";
 import { AgentHome } from "./AgentHome.js";
 import { ListIcon, PlusIcon } from "./icons.js";
@@ -40,9 +41,11 @@ function ThreadLinks({
           >
             <span className="thread-title">{t.title}</span>
             <span className="thread-meta">
-              {t.status === "running" || t.status === "waiting"
-                ? "Replying… · "
-                : ""}
+              {t.status === "waiting"
+                ? "Needs your answer · "
+                : t.status === "running"
+                  ? "Replying… · "
+                  : ""}
               {relativeTime(t.updatedAt)}
             </span>
           </Link>
@@ -55,11 +58,11 @@ function ThreadLinks({
 const NARROW = "(max-width: 768px)";
 
 function Sidebar({
-  items,
-  threadId,
+  children,
+  total,
 }: {
-  items: ChatThreadDto[];
-  threadId: string | undefined;
+  children: ReactNode;
+  total: number | undefined;
 }) {
   // Phones start with the list folded so the conversation comes first.
   const [open] = useState(
@@ -78,9 +81,10 @@ function Sidebar({
       <details className="thread-drawer" open={open}>
         <summary>
           <ListIcon />
-          Conversations <span className="muted">({items.length})</span>
+          Conversations{" "}
+          {total !== undefined && <span className="muted">({total})</span>}
         </summary>
-        <ThreadLinks items={items} threadId={threadId} />
+        {children}
       </details>
     </aside>
   );
@@ -88,14 +92,48 @@ function Sidebar({
 
 /** Agent-first landing: the home composer, or one conversation, beside the list. */
 export function ChatPage({ threadId }: { threadId: string | undefined }) {
-  const threads = useJson("/api/chat/threads?pageSize=100", ThreadsEnvelope);
-  const items = threads.data?.items ?? [];
+  const [page, setPage] = useState(1);
+  const threads = useJson(
+    `/api/chat/threads?pageSize=100&page=${page}`,
+    ThreadsEnvelope,
+  );
+  const list = threads.data;
   return (
     <section className="chat-page" data-testid="chat-page">
-      <Sidebar items={items} threadId={threadId} />
+      <Sidebar total={list?.total}>
+        {threads.error ? (
+          <ErrorPanel
+            message={threads.error.message}
+            onRetry={threads.reload}
+          />
+        ) : threads.status === "loading" ? (
+          <Loading label="Loading conversations…" />
+        ) : (
+          list && (
+            <>
+              <ThreadLinks items={list.items} threadId={threadId} />
+              {page > 1 && (
+                <button type="button" onClick={() => setPage(page - 1)}>
+                  Newer conversations
+                </button>
+              )}
+              {page * list.pageSize < list.total && (
+                <button type="button" onClick={() => setPage(page + 1)}>
+                  Older conversations
+                </button>
+              )}
+            </>
+          )
+        )}
+      </Sidebar>
       <div className="chat-main">
         {threadId === undefined ? (
-          <AgentHome onStarted={threads.reload} />
+          <AgentHome
+            onStarted={() => {
+              setPage(1);
+              threads.reload();
+            }}
+          />
         ) : (
           <ThreadView
             key={threadId}

@@ -15,6 +15,7 @@ import {
   listImports,
   previewImport,
   readImportRow,
+  readImportSummary,
 } from "../imports/service.js";
 import type { Store } from "../storage/database.js";
 
@@ -126,6 +127,11 @@ export async function registerImportRoutes(
       meta.buildId,
       meta.stale,
     );
+  });
+
+  app.get("/api/imports/:id", async (request) => {
+    const { id } = request.params as { id: string };
+    return readImportSummary(store, id);
   });
 
   app.get("/api/imports/:id/rows/:rowNumber", async (request) => {

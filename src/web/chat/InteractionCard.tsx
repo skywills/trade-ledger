@@ -9,7 +9,7 @@ function secondsLeft(expiresAt: string): number | null {
   const at = Date.parse(expiresAt);
   return Number.isNaN(at)
     ? null
-    : Math.max(0, Math.round((at - Date.now()) / 1000));
+    : Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
 /** Remaining time before nax-agent auto-denies; null when the timestamp is unusable. */
@@ -47,8 +47,7 @@ function useAnswer(onAnswer: (reply: Reply) => Promise<unknown>) {
   return { busy, error, run };
 }
 
-function Expiry({ expiresAt }: { expiresAt: string }) {
-  const left = useCountdown(expiresAt);
+function Expiry({ left }: { left: number | null }) {
   if (left === null) return null;
   return (
     <p className="interaction-expiry">
@@ -67,6 +66,7 @@ export function InteractionCard({
   onAnswer: (reply: Reply) => Promise<unknown>;
 }) {
   const [text, setText] = useState("");
+  const left = useCountdown(pending.expiresAt);
   const { busy, error, run } = useAnswer(onAnswer);
   const card = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -79,6 +79,7 @@ export function InteractionCard({
   const approval = pending.kind === "approval";
   return (
     <section
+      id="pending-request"
       ref={card}
       tabIndex={-1}
       className="interaction-card"
@@ -93,7 +94,7 @@ export function InteractionCard({
         ) : null}
       </p>
       <p className="interaction-text">{pending.text}</p>
-      <Expiry expiresAt={pending.expiresAt} />
+      <Expiry left={left} />
       {error !== null ? (
         <p className="error-text" role="alert">
           {error}
@@ -105,7 +106,7 @@ export function InteractionCard({
             type="button"
             className="primary"
             data-testid="approval-allow"
-            disabled={busy}
+            disabled={busy || left === 0}
             onClick={() => void run({ decision: "allow" })}
           >
             Allow
@@ -114,7 +115,7 @@ export function InteractionCard({
             type="button"
             className="secondary"
             data-testid="approval-deny"
-            disabled={busy}
+            disabled={busy || left === 0}
             onClick={() => void run({ decision: "deny" })}
           >
             Deny
@@ -125,7 +126,7 @@ export function InteractionCard({
           className="actions"
           onSubmit={(e) => {
             e.preventDefault();
-            if (text.trim() !== "") void run({ text });
+            if (!busy && left !== 0 && text.trim() !== "") void run({ text });
           }}
         >
           <input
@@ -134,7 +135,10 @@ export function InteractionCard({
             maxLength={4096}
             onChange={(e) => setText(e.target.value)}
           />
-          <button type="submit" disabled={busy || text.trim() === ""}>
+          <button
+            type="submit"
+            disabled={busy || left === 0 || text.trim() === ""}
+          >
             Answer
           </button>
         </form>

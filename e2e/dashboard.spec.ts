@@ -720,3 +720,115 @@ test("saved Berkshire alias URLs select canonical dashboard filters", async ({ p
     await expect(page.getByRole("button", { name: "Remove underlying filter" })).toContainText("BRK.B");
   }
 });
+
+test("keeps transaction analysis and identifies campaign and account scope", async ({
+  page,
+}) => {
+  await stub(page);
+  await page.goto(
+    "/dashboard/analysis?section=transactions&currency=USD&account=SIM-A&campaignId=wheel-one",
+  );
+  await expect(
+    page.getByRole("button", { name: "Remove campaign filter" }),
+  ).toContainText("wheel-one");
+  await expect(
+    page.getByRole("button", { name: "Remove account filter" }),
+  ).toContainText("SIM-A");
+  await page
+    .getByRole("combobox", { name: "Period", exact: true })
+    .selectOption("last-month");
+  await expect(
+    page.getByRole("link", { name: "Transactions", exact: true }).last(),
+  ).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Reset filters" }).click();
+  await expect(page).toHaveURL(/section=transactions/);
+});
+
+test("restores the draft for each report period", async ({ page }) => {
+  await page.route("**/api/analytics?*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    return route.fulfill({
+      json: {
+        ...data,
+        filters: { ...data.filters, ...Object.fromEntries(params) },
+      },
+    });
+  });
+  await page.goto("/dashboard/reports?preset=all&unit=strategy&currency=USD");
+  const notes = page.getByLabel("Unsaved review notes");
+  await notes.fill("All-time review");
+  await page
+    .getByRole("combobox", { name: "Period", exact: true })
+    .selectOption("last-month");
+  await expect(notes).toHaveValue("");
+  await notes.fill("Monthly review");
+  await page
+    .getByRole("combobox", { name: "Period", exact: true })
+    .selectOption("all");
+  await expect(notes).toHaveValue("All-time review");
+});
+
+test("explains a daily contribution to cumulative lifecycle results on screen and in print", async ({
+  page,
+}) => {
+  const daily = [
+    {
+      date: "2026-09-01",
+      pnl: "100",
+      cumulative: "100",
+      drawdown: "0",
+      eligible: 1,
+      missing: 0,
+    },
+    {
+      date: "2026-09-02",
+      pnl: "20",
+      cumulative: "120",
+      drawdown: "0",
+      eligible: 1,
+      missing: 0,
+    },
+  ];
+  await page.route("**/api/analytics?*", (route) =>
+    route.fulfill({
+      json: {
+        ...data,
+        filters: { ...data.filters, unit: "lifecycle" },
+        daily,
+      },
+    }),
+  );
+  await page.goto("/dashboard?currency=USD");
+  const chart = page
+    .locator("article")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Cumulative completed lifecycle P&L",
+        exact: true,
+      }),
+    });
+  await chart.getByRole("button", { name: /Next point/ }).click();
+  await expect(chart.locator("output")).toContainText(
+    "Running total: 120.00 USD",
+  );
+  await expect(chart.locator("output")).toContainText(
+    "Daily change: 20.00 USD",
+  );
+  await chart.getByRole("button", { name: "View this day’s trades" }).click();
+  await expect(page.getByText(/Trades for 2026-09-02/)).toContainText(
+    "Daily change 20.00 USD",
+  );
+  await page.getByRole("link", { name: "Reports", exact: true }).click();
+  await page.emulateMedia({ media: "print" });
+  await expect(
+    page
+      .locator(".dashboard-chart")
+      .filter({
+        has: page.getByRole("heading", {
+          name: "Cumulative completed lifecycle P&L",
+          exact: true,
+        }),
+      })
+      .locator("svg .chart-scale"),
+  ).toContainText("120");
+});

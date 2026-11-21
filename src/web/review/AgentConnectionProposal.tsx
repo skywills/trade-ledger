@@ -208,6 +208,7 @@ export function usesGuidedConnectionView(
   const proposal = entry.proposal;
   return (
     !entry.accepted &&
+    !entry.rejected &&
     (proposal.kind === "lifecycle_attachment" ||
       (proposal.kind === "lifecycle_membership" &&
         proposal.payload.requireCallCoverage === true))

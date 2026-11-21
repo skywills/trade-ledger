@@ -24,6 +24,7 @@ const Basis = z.object({
 const CampaignDetailSchema = z.object({
   campaign: CampaignSchema,
   cycles: z.array(LifecycleSchema),
+  missingPriceCycleIds: z.array(z.string()).default([]),
   summary: z.object({
     campaignId: z.string(),
     completed: z.number(),
@@ -108,8 +109,10 @@ export function CampaignDetail({ id }: { id: string }) {
           {s.openValuation.known < s.openValuation.total && (
             <p>
               Available subtotal:{" "}
-              {formatMoney(s.openValuation.knownValue, c.currency)}. Add
-              complete dated prices to the remaining cycles.
+              {formatMoney(s.openValuation.knownValue, c.currency)}.{" "}
+              {p.missingPriceCycleIds.length
+                ? "Add dated prices to the cycles flagged below."
+                : "Open a cycle to review its valuation evidence."}
             </p>
           )}
         </section>
@@ -131,6 +134,17 @@ export function CampaignDetail({ id }: { id: string }) {
               {l.description || l.id}
             </Link>{" "}
             · {l.stage.replaceAll("_", " ")} · {l.status.replaceAll("_", " ")}
+            {p.missingPriceCycleIds.includes(l.id) && (
+              <>
+                {" "}
+                ·{" "}
+                <Link
+                  to={`/lifecycles/${encodeURIComponent(l.id)}?expectedBuildId=${encodeURIComponent(p.buildId ?? "")}&editor=valuation`}
+                >
+                  Add dated prices for {l.description || l.id}
+                </Link>
+              </>
+            )}
           </li>
         ))}
       </ul>

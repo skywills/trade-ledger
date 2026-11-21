@@ -37,6 +37,7 @@ export function selectedPnl(s: Strategy, q: AnalyticsQuery): string | null {
   return q.basis === "broker" ? s.brokerPnl : s.reconstructedPnl;
 }
 export interface AnalyticsOptions {
+  campaignName?: string | undefined;
   currencies: string[];
   symbols: string[];
   underlyings: { key: string; label: string }[];
@@ -115,6 +116,13 @@ export function resolveScope(
       .concat(executions.map((e) => `value:${underlyingSymbol(e.instrument)}`)),
   );
   const options: AnalyticsOptions = {
+    ...(input.campaignId
+      ? {
+          campaignName: lifecycleData?.campaigns.find(
+            (c) => c.id === input.campaignId,
+          )?.name,
+        }
+      : {}),
     currencies: sorted([
       ...all.map((s) => s.currency),
       ...executions.map((e) => e.currency),

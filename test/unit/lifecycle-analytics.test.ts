@@ -9,6 +9,7 @@ import {
   parseDetailQuery,
   parseExportQuery,
 } from "../../src/server/analytics/query.js";
+import { selectCampaignDetail } from "../../src/server/lifecycles/queries.js";
 import type { Lifecycle } from "../../src/shared/lifecycles.js";
 import {
   changeDashboard,
@@ -395,6 +396,44 @@ describe("lifecycle analytics", () => {
       aggregateAnalytics(s, parseAnalyticsQuery({ campaignId: "wheel" }))
         .performance,
     ).toMatchObject({ closed: 2, eligible: 1, open: 1 });
+  });
+  it("offers prices only for campaign holdings with usable contract multipliers, including legacy valuations", () => {
+    const s = fixture();
+    const l = cycle(s);
+    l.status = "open";
+    l.positions = [{ instrumentKey: "contract", quantity: "1" }];
+    const fill = execution();
+    fill.instrument = {
+      ...fill.instrument,
+      key: "contract",
+      assetClass: "OPT",
+      multiplier: null,
+    };
+    s.ledger.executions = [fill];
+    data(s).valuations = [
+      {
+        lifecycleId: l.id,
+        asOf: null,
+        source: null,
+        cashflow: "0",
+        realizedBrokerPnl: null,
+        unrealizedPnl: null,
+        totalPnl: null,
+        estimated: true,
+        reasons: ["VALUATION_MARKS_INCOMPLETE"],
+      },
+    ];
+    expect(selectCampaignDetail(s, "wheel").missingPriceCycleIds).toEqual([]);
+    fill.instrument.multiplier = "100";
+    expect(selectCampaignDetail(s, "wheel").missingPriceCycleIds).toEqual([
+      l.id,
+    ]);
+    fill.instrument.multiplier = "garbled";
+    expect(selectCampaignDetail(s, "wheel").missingPriceCycleIds).toEqual([]);
+    fill.instrument.assetClass = "STK";
+    expect(selectCampaignDetail(s, "wheel").missingPriceCycleIds).toEqual([
+      l.id,
+    ]);
   });
   it("preserves unit/campaign/account in URLs and clears campaign when selecting components", () => {
     const state = readDashboardQuery(

@@ -150,6 +150,14 @@ export function LifecycleDetail({ id }: { id: string }) {
   const l = d.lifecycle;
   const projection =
     all.data?.buildId === d.buildId ? all.data.lifecycles : null;
+  const relatedCycles =
+    projection?.lifecycles.filter(
+      (x) =>
+        x.account === l.account &&
+        x.currency === l.currency &&
+        x.underlyingKey === l.underlyingKey,
+    ) ?? [];
+  const relatedIds = new Set(relatedCycles.map((c) => c.id));
   const eligibleCampaigns = d.campaigns.filter(
     (c) =>
       c.account === l.account &&
@@ -428,7 +436,9 @@ export function LifecycleDetail({ id }: { id: string }) {
                     )?.instrument.key,
               ) ?? []
             }
-            candidates={s.candidateLifecycleIds}
+            candidates={relatedCycles.filter((x) =>
+              s.candidateLifecycleIds.includes(x.id),
+            )}
             save={save}
             disabled={disabled || !projection}
           />
@@ -437,22 +447,10 @@ export function LifecycleDetail({ id }: { id: string }) {
           <SourcePartitionEditor
             key={d.buildId}
             members={projection.members.filter((m) =>
-              projection.lifecycles.some(
-                (x) =>
-                  x.id === m.lifecycleId &&
-                  x.account === l.account &&
-                  x.currency === l.currency &&
-                  x.underlyingKey === l.underlyingKey,
-              ),
+              relatedIds.has(m.lifecycleId),
             )}
-            candidates={projection.lifecycles
-              .filter(
-                (x) =>
-                  x.account === l.account &&
-                  x.currency === l.currency &&
-                  x.underlyingKey === l.underlyingKey,
-              )
-              .map((x) => x.id)}
+            candidates={relatedCycles}
+            executions={d.membershipExecutions ?? d.executions}
             save={save}
             disabled={disabled}
           />
@@ -524,6 +522,9 @@ export function LifecycleDetail({ id }: { id: string }) {
         <p>Create a campaign, then select it above to attach this cycle.</p>
       </fieldset>
       <ValuationEditor
+        openOnArrival={
+          new URLSearchParams(search).get("editor") === "valuation"
+        }
         key={d.buildId}
         lifecycle={l}
         executions={d.executions}

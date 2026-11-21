@@ -8,9 +8,14 @@ import { ApiError, requestJson } from "../api.js";
 import { ErrorPanel } from "../components.js";
 import { BuildAction } from "../lifecycles/BuildAction.js";
 import { AgentConnectionProposal } from "./AgentConnectionProposal.js";
+import { notifyDecisionSaved } from "./DecisionHistory.js";
 import { proposalSummary } from "./proposalSummary.js";
 
-async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
+async function recordDecision(
+  run: AnalysisRunDto,
+  proposalId: string | null,
+  pendingIds: string[],
+) {
   // Evidence is immutable; let the server use the current decision watermark.
   if (proposalId !== null) {
     await requestJson(
@@ -25,7 +30,7 @@ async function recordDecision(run: AnalysisRunDto, proposalId: string | null) {
     `/api/analysis/${run.id}/reject`,
     RejectAnalysisResponseSchema,
     "POST",
-    { reason: "Rejected in chat" },
+    { reason: "Rejected pending proposals", pendingIds },
   );
 }
 
@@ -40,15 +45,29 @@ export function ProposalList({
   const [busy, setBusy] = useState(false);
   const [needsUpdate, setNeedsUpdate] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pending = run.proposals.filter((p) => !p.accepted).length;
+  const pendingIds = run.proposals
+    .filter((p) => !p.accepted && !p.rejected)
+    .map((p) => p.id);
+  const pending = pendingIds.length;
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const selection = JSON.stringify(pendingIds);
+  function refresh() {
+    notifyDecisionSaved();
+    onChanged();
+  }
 
   async function decide(proposalId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      await recordDecision(run, proposalId);
-      onChanged();
+      await recordDecision(run, proposalId, pendingIds);
+      setConfirming(null);
+      refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.code === "PROPOSALS_CHANGED") {
+        setConfirming(null);
+        onChanged();
+      }
       setError(
         err instanceof ApiError
           ? err.message
@@ -85,13 +104,19 @@ export function ProposalList({
             <AgentConnectionProposal
               run={run}
               entry={entry}
-              onChanged={onChanged}
+              onChanged={refresh}
               onRecoveryNeeded={() => setNeedsUpdate(true)}
             >
               <div>
                 <strong>{entry.proposal.kind}</strong>{" "}
                 <span className="muted">
-                  ({entry.accepted ? "accepted" : "pending"})
+                  (
+                  {entry.accepted
+                    ? "accepted"
+                    : entry.rejected
+                      ? "rejected"
+                      : "pending"}
+                  )
                 </span>
                 {entry.proposal.rationale ? (
                   <p>{entry.proposal.rationale}</p>
@@ -106,7 +131,7 @@ export function ProposalList({
                   ))}
                 </ul>
               </div>
-              {entry.accepted ? null : (
+              {entry.accepted || entry.rejected ? null : (
                 <button
                   type="button"
                   onClick={() => void decide(entry.id)}
@@ -119,11 +144,32 @@ export function ProposalList({
           </li>
         ))}
       </ul>
-      {pending > 0 ? (
+      {pending > 0 && confirming === selection ? (
+        <section className="preview" aria-label="Confirm rejection">
+          <p>
+            Reject {pending} pending {pending === 1 ? "proposal" : "proposals"}{" "}
+            from this analysis?
+          </p>
+          <button
+            type="button"
+            disabled={busy || needsUpdate}
+            onClick={() => void decide(null)}
+          >
+            Reject {pending} {pending === 1 ? "proposal" : "proposals"}
+          </button>{" "}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConfirming(null)}
+          >
+            Cancel
+          </button>
+        </section>
+      ) : pending > 0 ? (
         <button
           type="button"
           className="secondary"
-          onClick={() => void decide(null)}
+          onClick={() => setConfirming(selection)}
           disabled={busy || needsUpdate}
         >
           Reject all pending

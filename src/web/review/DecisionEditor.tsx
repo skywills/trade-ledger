@@ -7,27 +7,11 @@ import {
   JournalEnvelope,
   requestJson,
   TransactionsEnvelope,
-  useJson,
 } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
 
-export interface DecisionRecord {
-  id: string;
-  sequence: number;
-  kind: string;
-  summary: string;
-  strategyIds: string[];
-  at: string;
-}
-
-/** Session-scoped revision history. Retained decisions themselves live server-side. */
-const log: DecisionRecord[] = [];
-
-export function listDecisions(strategyId?: string): DecisionRecord[] {
-  return strategyId
-    ? log.filter((entry) => entry.strategyIds.includes(strategyId))
-    : [...log];
-}
+import { notifyDecisionSaved } from "./DecisionHistory.js";
+import { useDecisionOptions } from "./useDecisionOptions.js";
 
 const KINDS = [
   { value: "notes", label: "Notes", consequential: false },
@@ -52,11 +36,6 @@ const KINDS = [
 
 type Kind = (typeof KINDS)[number]["value"];
 
-interface Preview {
-  payload: Record<string, unknown>;
-  summary: string;
-}
-
 interface Built {
   payload: Record<string, unknown>;
   summary: string;
@@ -79,21 +58,29 @@ export function DecisionEditor({
   fixedStrategyId,
   initialNotes,
   initialStopLoss,
+  onSubmitted,
 }: {
   fixedStrategyId?: string;
   initialNotes?: string | null;
   initialStopLoss?: string | null;
+  onSubmitted?: () => void;
 }) {
-  const journal = useJson("/api/journal?pageSize=100", JournalEnvelope);
-  const imports = useJson("/api/imports?pageSize=100", ImportsEnvelope);
-  const transactions = useJson(
+  const journal = useDecisionOptions(
+    "/api/journal?pageSize=100",
+    JournalEnvelope,
+  );
+  const imports = useDecisionOptions(
+    "/api/imports?pageSize=100",
+    ImportsEnvelope,
+  );
+  const transactions = useDecisionOptions(
     "/api/transactions?pageSize=100",
     TransactionsEnvelope,
   );
 
-  const strategies = journal.data?.items ?? [];
-  const importList = imports.data?.items ?? [];
-  const executions = transactions.data?.items ?? [];
+  const strategies = journal.items;
+  const importList = imports.items;
+  const executions = transactions.items;
 
   const [kind, setKind] = useState<Kind>("notes");
   const [strategyId, setStrategyId] = useState(fixedStrategyId ?? "");
@@ -114,7 +101,7 @@ export function DecisionEditor({
   const [allocQuantity, setAllocQuantity] = useState("");
   const [allocCash, setAllocCash] = useState("");
 
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const [preview, setPreview] = useState<Built | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     sequence: number;
@@ -135,10 +122,29 @@ export function DecisionEditor({
   }, [error]);
 
   useEffect(() => {
-    if (fixedStrategyId !== undefined || strategyId !== "") return;
-    const first = journal.data?.items[0];
-    if (first !== undefined) setStrategyId(first.id);
-  }, [fixedStrategyId, strategyId, journal.data]);
+    if (!journal.data) return;
+    const ids = new Set(journal.data.items.map((s) => s.id));
+    const firstId = journal.data.items[0]?.id ?? "";
+    setStrategyId(
+      (id) => fixedStrategyId ?? (id === "" ? firstId : ids.has(id) ? id : ""),
+    );
+    setChosenId((id) => (ids.has(id) ? id : ""));
+    setMergedIds((current) => current.filter((id) => ids.has(id)));
+    setPreview(null);
+  }, [fixedStrategyId, journal.data]);
+  useEffect(() => {
+    if (!imports.data) return;
+    const ids = new Set(imports.data.items.map((i) => i.id));
+    setImportId((id) => (ids.has(id) ? id : ""));
+    setPreview(null);
+  }, [imports.data]);
+  useEffect(() => {
+    if (!transactions.data) return;
+    const keys = new Set(transactions.data.items.map((e) => e.key));
+    setSourceKey((key) => (keys.has(key) ? key : ""));
+    setTargetKey((key) => (keys.has(key) ? key : ""));
+    setPreview(null);
+  }, [transactions.data]);
 
   const kindDef = KINDS.find((entry) => entry.value === kind) ?? KINDS[0];
   const selectedExecution = executions.find((entry) => entry.key === sourceKey);
@@ -185,8 +191,8 @@ export function DecisionEditor({
       }
       case "import_exclusion":
       case "import_inclusion": {
-        if (importId === "") throw new Error("Select an import.");
         const entry = importList.find((item) => item.id === importId);
+        if (!entry) throw new Error("Select an import.");
         const verb = kind === "import_exclusion" ? "Exclude" : "Reinstate";
         return {
           payload: {
@@ -195,7 +201,7 @@ export function DecisionEditor({
             strategyIds: [],
             payload: { importId },
           },
-          summary: `${verb} import ${entry?.filename ?? importId}`,
+          summary: `${verb} import ${entry.filename}`,
         };
       }
       case "rejection": {
@@ -370,17 +376,8 @@ export function DecisionEditor({
       setLastSequence(sequence);
       setResult({ sequence, kind: response.decision.kind });
       setPreview(null);
-      const strategyIds = Array.isArray(built.payload.strategyIds)
-        ? (built.payload.strategyIds as string[])
-        : [];
-      log.unshift({
-        id: response.decision.id,
-        sequence,
-        kind: response.decision.kind,
-        summary: built.summary,
-        strategyIds,
-        at: new Date().toISOString(),
-      });
+      notifyDecisionSaved();
+      onSubmitted?.();
     } catch (caught) {
       if (
         caught instanceof ApiError &&
@@ -388,6 +385,7 @@ export function DecisionEditor({
       ) {
         // Drop the cached water mark so the retry re-reads the server state.
         setLastSequence(null);
+        setPreview(null);
         setError("Inputs changed; the view was refreshed. Please try again.");
         journal.reload();
         imports.reload();
@@ -435,21 +433,11 @@ export function DecisionEditor({
     );
   }
 
-  // The pickers read one page (the API maximum). Say so when a list is longer
-  // rather than silently hiding the rest.
-  const truncated = [
-    {
-      label: "strategies",
-      shown: strategies.length,
-      total: journal.data?.total,
-    },
-    { label: "imports", shown: importList.length, total: imports.data?.total },
-    {
-      label: "executions",
-      shown: executions.length,
-      total: transactions.data?.total,
-    },
-  ].filter((entry) => entry.total !== undefined && entry.total > entry.shown);
+  const optionLists = [
+    { label: "strategies", source: journal },
+    { label: "imports", source: imports },
+    { label: "executions", source: transactions },
+  ];
 
   const toggle = (
     list: string[],
@@ -462,11 +450,19 @@ export function DecisionEditor({
   };
 
   return (
-    <section className="decision-editor" aria-label="Manual decisions">
+    <section
+      className="decision-editor"
+      aria-label="Manual decisions"
+      onChangeCapture={() => {
+        setPreview(null);
+        setError(null);
+        setResult(null);
+      }}
+    >
       <h3>Manual decisions</h3>
 
-      <div data-testid="candidates" className="candidates">
-        <h4>Stable references</h4>
+      <details data-testid="candidates" className="candidates">
+        <summary>Stable references</summary>
         <ul>
           {strategies.map((strategy) => (
             <li key={strategy.id}>
@@ -477,18 +473,27 @@ export function DecisionEditor({
             </li>
           ))}
         </ul>
-      </div>
+      </details>
 
-      {truncated.length > 0 ? (
-        <div className="muted" data-testid="picker-truncated" role="status">
-          {truncated.map((entry) => (
-            <p key={entry.label}>
-              Showing the first {entry.shown} of {entry.total} {entry.label}.
-              Later {entry.label} cannot be picked here yet.
+      {optionLists.map(({ label, source }) => (
+        <div key={label}>
+          {source.moreError && <p role="alert">{source.moreError}</p>}
+          {source.data && source.items.length < source.data.total && (
+            <p>
+              <span role="status">
+                {source.items.length} of {source.data.total} {label} available.{" "}
+              </span>
+              <button
+                type="button"
+                disabled={source.busy}
+                onClick={() => void source.loadMore()}
+              >
+                {source.busy ? "Loading…" : `Load more ${label}`}
+              </button>
             </p>
-          ))}
+          )}
         </div>
-      ) : null}
+      ))}
 
       <p>
         <label>

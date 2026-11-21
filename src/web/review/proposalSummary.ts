@@ -28,6 +28,36 @@ export function proposalSummary(
   const p = proposal.payload;
   let lines: string[];
   switch (proposal.kind) {
+    case "rejection":
+      lines = [
+        "Rejected evidence " +
+          text(p.evidenceHash) +
+          (p.reason ? ` · ${text(p.reason)}` : ""),
+      ];
+      break;
+    case "group_split":
+      lines = [
+        "Split " +
+          text(p.parentStrategyId) +
+          " into " +
+          strings(p.childStrategyIds).join(", ") +
+          ".",
+      ];
+      break;
+    case "lifecycle_valuation":
+      lines = [
+        "Price snapshot for " +
+          text(p.account) +
+          " at " +
+          text(p.asOf) +
+          " (" +
+          text(p.currency) +
+          ").",
+        ...records(p.marks).map(
+          (m) => `${text(m.instrumentKey)}: ${text(m.price)}`,
+        ),
+      ];
+      break;
     case "notes":
       lines = [`Strategy ${text(p.strategyId)}: ${text(p.text)}`];
       break;

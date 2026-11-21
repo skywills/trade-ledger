@@ -4,10 +4,11 @@ import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { Link } from "../navigation.js";
 import { LifecycleListSchema } from "./api.js";
 import { BuildAction } from "./BuildAction.js";
-import { ConnectionQueue } from "./ConnectionQueue.js";
-import { reviewLabel } from "./connections.js";
+import { ConnectionQueue, useConnectionSelection } from "./ConnectionQueue.js";
+import { LifecycleIssues } from "./LifecycleIssues.js";
 import "./lifecycles.css";
 export function LifecyclesPage() {
+  const selection = useConnectionSelection();
   const remote = useJson("/api/lifecycles", LifecycleListSchema);
   if (remote.status === "loading")
     return <Loading label="Loading lifecycles…" />;
@@ -38,7 +39,11 @@ export function LifecyclesPage() {
           <BuildAction onBuilt={remote.reload} />
         </div>
       )}
-      <ConnectionQueue data={data} onChanged={remote.reload} />
+      <ConnectionQueue
+        selection={selection}
+        data={data}
+        onChanged={remote.reload}
+      />
       {projection && (
         <>
           <TableScroll label="Trade lifecycles">
@@ -104,20 +109,10 @@ export function LifecyclesPage() {
               </li>
             ))}
           </ul>
-          {projection.issues.some(
-            (i) => i.code !== "PENDING_CALL_ATTACHMENT",
-          ) && (
-            <aside aria-label="Lifecycle issues">
-              <h3>Needs review</h3>
-              <ul>
-                {projection.issues
-                  .filter((i) => i.code !== "PENDING_CALL_ATTACHMENT")
-                  .map((i) => (
-                    <li key={i.key}>{reviewLabel([i.code])}</li>
-                  ))}
-              </ul>
-            </aside>
-          )}
+          <LifecycleIssues
+            projection={projection}
+            buildId={data.buildId ?? ""}
+          />
         </>
       )}
     </section>

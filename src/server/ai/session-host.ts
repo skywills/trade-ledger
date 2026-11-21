@@ -10,6 +10,7 @@ import {
   resumeAgentSession,
   type SessionEvent,
 } from "@nathapp/nax-agent";
+import type { CostCoverage } from "../../shared/chat-api.js";
 import type { Id } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import type { Store } from "../storage/database.js";
@@ -167,8 +168,12 @@ export class UsageMeter {
   private cost = 0;
   private source: string | null = null;
   private sawPriced = false;
+  private sawUnpriced = false;
 
-  constructor(private readonly limits: TurnLimits) {}
+  constructor(
+    private readonly limits: TurnLimits,
+    private readonly hasProfilePricing = true,
+  ) {}
 
   get usage(): RunUsage {
     return this.totals;
@@ -176,11 +181,25 @@ export class UsageMeter {
   get costUsd(): number {
     return this.cost;
   }
+  get costCoverage(): CostCoverage | undefined {
+    if (this.sawPriced) return this.sawUnpriced ? "partial" : "priced";
+    return this.sawUnpriced ? "unpriced" : undefined;
+  }
   get costSource(): string | null {
     return this.source;
   }
 
   observe(event: SessionEvent): string | null {
+    if (event.type !== "usage" && event.type !== "turn_end") return null;
+    // Unconfigured catalog rates use zero as a transport placeholder.
+    const priced =
+      event.costSource === "reported" ||
+      (this.hasProfilePricing && event.costSource !== "unpriced");
+    if (priced) this.markPriced(event.costSource);
+    else {
+      this.sawUnpriced = true;
+      if (!this.sawPriced) this.source = "unpriced";
+    }
     if (event.type === "usage") {
       this.totals = {
         rounds: Math.max(this.totals.rounds, event.round),
@@ -191,10 +210,7 @@ export class UsageMeter {
         cacheWriteTokens:
           this.totals.cacheWriteTokens + (event.cacheWrite ?? 0),
       };
-      if (event.costSource !== "unpriced") {
-        this.cost += event.costUsd;
-        this.markPriced(event.costSource);
-      } else if (!this.sawPriced) this.source = "unpriced";
+      if (priced) this.cost += event.costUsd;
       if (event.round > this.limits.maxModelRounds) return "limit:max_rounds";
       if (event.outputTokens > this.limits.maxOutputTokens)
         return "limit:max_output_tokens";
@@ -218,10 +234,7 @@ export class UsageMeter {
         cacheReadTokens: end.cacheReadTokens ?? 0,
         cacheWriteTokens: end.cacheWriteTokens ?? 0,
       };
-      if (event.costSource !== "unpriced") {
-        this.cost = event.costUsd;
-        this.markPriced(event.costSource);
-      } else if (!this.sawPriced) this.source = "unpriced";
+      if (priced) this.cost = event.costUsd;
     }
     return null;
   }

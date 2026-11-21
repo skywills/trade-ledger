@@ -246,6 +246,7 @@ export const AnalyticsResponseSchema = ProvenanceSchema.extend({
   unit: z.enum(["lifecycle", "strategy"]).default("lifecycle"),
   filters: AnalyticsQuerySchema,
   options: z.object({
+    campaignName: z.string().optional(),
     currencies: z.array(z.string()),
     symbols: z.array(z.string()),
     underlyings: z.array(z.object({ key: z.string(), label: z.string() })),

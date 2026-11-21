@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { CostCoverage } from "../../shared/chat-api.js";
 import type { Id } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import type { RunUsage } from "../ai/runs.js";
@@ -41,7 +42,7 @@ export interface ChatThread {
   readonly status: ThreadStatus;
   readonly pending: PendingInteraction | null;
   readonly seed: { issueKeys: string[] } | null;
-  readonly usage: RunUsage;
+  readonly usage: RunUsage & { costCoverage?: CostCoverage };
   readonly cost: string;
   readonly nextSeq: number;
   readonly createdAt: string;
@@ -76,7 +77,7 @@ export interface ThreadPatch {
   readonly title?: string;
   readonly status?: ThreadStatus;
   readonly pending?: PendingInteraction | null;
-  readonly usage?: RunUsage;
+  readonly usage?: ChatThread["usage"];
   readonly cost?: string;
   readonly now: Date;
 }

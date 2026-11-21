@@ -22,6 +22,7 @@ import {
 import {
   appendRunProposal,
   insertRun,
+  listRunSummaries,
   newProposalId,
   readRun,
 } from "../../src/server/ai/runs.js";
@@ -44,6 +45,7 @@ import {
   openStore,
   type Store,
 } from "../../src/server/storage/database.js";
+import { applyMigrations } from "../../src/server/storage/migrations.js";
 import type { Execution, LedgerSnapshot } from "../../src/shared/domain.js";
 import {
   buildExecutionTable,
@@ -507,7 +509,75 @@ describe("proposal acceptance and rejection", () => {
     const decision = await rejectProposal(store, run.id, "wrong strategy", 0);
     expect(decision.kind).toBe("rejection");
     expect(decision.payload.evidenceHash).toBe(run.evidence.contentHash);
+    expect(readRun(store, run.id)?.proposals[0]).toMatchObject({
+      accepted: false,
+      rejected: true,
+    });
+    expect(listRunSummaries(store)[0]?.pendingProposals).toBe(0);
+    await expect(
+      acceptProposal(store, run.id, run.proposals[0]?.id ?? "", 1),
+    ).rejects.toMatchObject({ code: "PROPOSAL_REJECTED" });
+    expect((await rejectProposal(store, run.id, "retry", 0)).id).toBe(
+      decision.id,
+    );
+    expect(
+      (
+        await rejectProposal(
+          store,
+          run.id,
+          "retry",
+          0,
+          run.proposals.map((p) => p.id),
+        )
+      ).id,
+    ).toBe(decision.id);
     expect(decisionWatermark(store)).toBe(1);
+  });
+  it("restores only previously pending cards from a legacy retained rejection", async () => {
+    const store = await testStore();
+    const { buildId, execution } = await seedLedgerOnce(store);
+    const run = await seededRun(
+      store,
+      buildId,
+      Array.from({ length: 3 }, () => conservingProposal(execution)),
+    );
+    const decision = await rejectProposal(store, run.id, "old review", 0);
+    // Legacy runs kept the decision reference but only stored an accepted boolean per card.
+    const cards = run.proposals.map((p, i) => ({
+      ...p,
+      accepted: i === 0,
+      submittedAt:
+        i === 2 ? "2099-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
+    }));
+    store.db
+      .prepare(
+        "UPDATE ai_runs SET proposal_json=?, status='proposal_ready', decision_references_json=? WHERE id=?",
+      )
+      .run(
+        JSON.stringify({ proposals: cards }),
+        JSON.stringify([decision.id]),
+        run.id,
+      );
+    store.db.prepare("DELETE FROM schema_migrations WHERE version=9").run();
+    applyMigrations(store.db);
+    expect(
+      readRun(store, run.id)?.proposals.map((p) => [
+        p.accepted,
+        p.rejected ?? false,
+      ]),
+    ).toEqual([
+      [true, false],
+      [false, true],
+      [false, false],
+    ]);
+    expect(listRunSummaries(store)[0]?.pendingProposals).toBe(1);
+    const later = cards[2];
+    if (!later) throw new Error("Missing later proposal");
+    await acceptProposal(store, run.id, later.id, 1);
+    await expect(
+      rejectProposal(store, run.id, "stale review", 2, [later.id]),
+    ).rejects.toMatchObject({ code: "PROPOSALS_CHANGED" });
+    expect(decisionWatermark(store)).toBe(2);
   });
 });
 

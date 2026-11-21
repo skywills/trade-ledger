@@ -8,6 +8,7 @@ import {
 } from "../../shared/api.js";
 import { AppError } from "../../shared/errors.js";
 import { activeProjection } from "../builds/service.js";
+import { selectDecisionHistory } from "../decisions/history.js";
 import { appendDecision, decisionWatermark } from "../decisions/service.js";
 import { groupReviewIssues } from "../review/group-issues.js";
 import type { Store } from "../storage/database.js";
@@ -57,6 +58,25 @@ export async function registerReviewRoutes(
       active.buildId,
       active.stale,
     );
+  });
+
+  app.get("/api/decisions", async (request) => {
+    const params = parsePageParams(request.query);
+    const { strategyId, decisionId } = request.query as {
+      strategyId?: unknown;
+      decisionId?: unknown;
+    };
+    if (decisionId !== undefined && typeof decisionId !== "string")
+      throw new AppError("INVALID_INPUT", "Expected a decision ID.", 400);
+    if (strategyId !== undefined && typeof strategyId !== "string")
+      throw new AppError("INVALID_INPUT", "Expected a strategy ID.", 400);
+    const history = selectDecisionHistory(store, decisionWatermark(store), {
+      strategyId,
+      decisionId,
+      offset: (params.page - 1) * params.pageSize,
+      limit: params.pageSize,
+    });
+    return toEnvelope(history.items, params, history.total, null, false);
   });
 
   app.post("/api/decisions", async (request, reply) => {

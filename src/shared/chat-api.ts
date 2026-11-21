@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { AnalysisRunSchema, listEnvelopeSchema } from "./api.js";
 
+export const CostCoverageSchema = z.enum(["priced", "partial", "unpriced"]);
+export type CostCoverage = z.infer<typeof CostCoverageSchema>;
+
 export const UsageSchema = z.object({
+  costCoverage: CostCoverageSchema.optional(),
   rounds: z.number(),
   inputTokens: z.number(),
   outputTokens: z.number(),

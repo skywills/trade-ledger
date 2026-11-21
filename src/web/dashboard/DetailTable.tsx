@@ -117,7 +117,7 @@ export function DetailTable({
   return (
     <article className="dashboard-panel">
       <div className="dashboard-panel-heading">
-        <h3>{title}</h3>
+        <h3>{openPositions ? "Holdings" : title}</h3>
         <span className="dashboard-unit">
           {data.total} records · {currency}
         </span>
@@ -245,7 +245,7 @@ export function DetailTable({
                       {e.action} / {e.event.replaceAll("_", " ")}
                     </td>
                     <td>{e.quantity}</td>
-                    <td>{formatMoney(e.price, currency)}</td>
+                    <td>{e.price ?? "Unavailable"}</td>
                     <td>{formatMoney(e.netCash, currency)}</td>
                     <td>{formatMoney(e.commission, currency)}</td>
                     <td>{formatMoney(e.taxes, currency)}</td>
