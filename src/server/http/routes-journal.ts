@@ -7,6 +7,12 @@ import {
   toEnvelope,
 } from "../../shared/api.js";
 import { AppError } from "../../shared/errors.js";
+import {
+  filterStrategies,
+  isJournalSortKey,
+  JOURNAL_SORT_KEYS,
+  sortStrategies,
+} from "../../shared/journal-view.js";
 import { normalizeStrategyDescription } from "../../shared/symbols.js";
 import {
   activeBuildMeta,
@@ -66,7 +72,7 @@ export async function registerJournalRoutes(
     const params = parsePageParams(request.query);
     const sort = parseSortSpec(
       request.query,
-      ["id", "openingDate", "status", "currency", "type"],
+      ["id", "currency", "type", ...JOURNAL_SORT_KEYS],
       "openingDate",
     );
     const active = activeProjection(store);
@@ -76,20 +82,45 @@ export async function registerJournalRoutes(
         description: normalizeStrategyDescription(strategy.description),
       }),
     );
-    const all = sortWithAllowlist(strategies, sort, {
-      id: (entry) => entry.id,
-      openingDate: (entry) => entry.openingDate ?? "",
-      status: (entry) => entry.status,
-      currency: (entry) => entry.currency,
-      type: (entry) => entry.type,
+    const query = request.query as Record<string, unknown>;
+    const { q = "", currency = "", status = "" } = query;
+    if (
+      typeof q !== "string" ||
+      typeof currency !== "string" ||
+      typeof status !== "string"
+    ) {
+      throw new AppError(
+        "INVALID_INPUT",
+        "Journal filters must be strings.",
+        400,
+      );
+    }
+    const matches = filterStrategies(strategies, {
+      query: q,
+      currency,
+      status,
     });
-    return toEnvelope(
-      pageSlice(all, params),
-      params,
-      all.length,
-      active.buildId,
-      active.stale,
-    );
+    const sorted =
+      query.sort !== undefined && isJournalSortKey(sort.key)
+        ? sortStrategies(matches, { key: sort.key, direction: sort.direction })
+        : sortWithAllowlist(matches, sort, {
+            id: (entry) => entry.id,
+            openingDate: (entry) => entry.openingDate ?? "",
+            currency: (entry) => entry.currency,
+            type: (entry) => entry.type,
+          });
+    return {
+      ...toEnvelope(
+        pageSlice(sorted, params),
+        params,
+        sorted.length,
+        active.buildId,
+        active.stale,
+      ),
+      currencies: [
+        ...new Set(strategies.map((entry) => entry.currency)),
+      ].sort(),
+    };
   });
 
   app.get("/api/strategies/:id", async (request) => {

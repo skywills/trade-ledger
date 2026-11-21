@@ -217,6 +217,9 @@ export type Job = z.infer<typeof JobSchema>;
 export type StrategyDetail = z.infer<typeof StrategyDetailSchema>;
 
 export const JournalEnvelope = listEnvelopeSchema(StrategySchema);
+export const JournalPageEnvelope = JournalEnvelope.extend({
+  currencies: z.array(z.string()),
+});
 export const TransactionsEnvelope = listEnvelopeSchema(ExecutionSchema);
 export const LotsEnvelope = listEnvelopeSchema(LotSchema);
 export const ImportsEnvelope = listEnvelopeSchema(ImportSummarySchema);

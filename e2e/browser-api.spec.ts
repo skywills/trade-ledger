@@ -171,6 +171,7 @@ test.beforeAll(async ({ browser }) => {
               res.setHeader("content-type", "application/json");
               res.end(
                 JSON.stringify({
+                  ...(req.url.startsWith("/api/journal") ? { currencies: ["USD"] } : {}),
                   items: req.url.startsWith("/api/journal")
                     ? [strategy({ id: reservedId })]
                     : [],
@@ -406,7 +407,7 @@ test("imports query IDs remain decoded exactly once", async () => {
   await expect
     .poll(() => paths)
     .toContain(
-      `/api/imports/${encodeURIComponent(reservedId)}/rows?pageSize=100`,
+      `/api/imports/${encodeURIComponent(reservedId)}/rows/1`,
     );
 });
 

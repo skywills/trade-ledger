@@ -21,11 +21,12 @@ function readLocation(): Location {
   return { pathname: window.location.pathname, search: window.location.search };
 }
 
-export function navigate(to: string): void {
+export function navigate(to: string, { replace = false } = {}): void {
   const url = new URL(to, window.location.origin);
   const next = `${url.pathname}${url.search}`;
   if (next === `${window.location.pathname}${window.location.search}`) return;
-  window.history.pushState({}, "", next);
+  if (replace) window.history.replaceState({}, "", next);
+  else window.history.pushState({}, "", next);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

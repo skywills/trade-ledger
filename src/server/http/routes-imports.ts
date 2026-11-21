@@ -14,6 +14,7 @@ import {
   listImportRows,
   listImports,
   previewImport,
+  readImportRow,
 } from "../imports/service.js";
 import type { Store } from "../storage/database.js";
 
@@ -125,6 +126,21 @@ export async function registerImportRoutes(
       meta.buildId,
       meta.stale,
     );
+  });
+
+  app.get("/api/imports/:id/rows/:rowNumber", async (request) => {
+    const { id, rowNumber } = request.params as {
+      id: string;
+      rowNumber: string;
+    };
+    if (!/^\d+$/.test(rowNumber) || !Number.isSafeInteger(Number(rowNumber))) {
+      throw new AppError(
+        "INVALID_INPUT",
+        "Enter a valid source row number.",
+        400,
+      );
+    }
+    return readImportRow(store, id, Number(rowNumber));
   });
 
   app.get("/api/imports/:id/rows", async (request) => {

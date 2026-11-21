@@ -3,7 +3,7 @@ import {
   filterStrategies,
   nextSort,
   sortStrategies,
-} from "../../src/web/journal/journalView.js";
+} from "../../src/shared/journal-view.js";
 
 const rows = [
   {

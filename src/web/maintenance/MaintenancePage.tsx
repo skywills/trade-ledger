@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
   BackupStartResponseSchema,
@@ -36,6 +36,13 @@ export function MaintenancePage() {
     "/api/maintenance/restore",
     RestoreInstructionsSchema,
   );
+
+  useEffect(() => {
+    if (window.location.hash === "#model-profiles") {
+      document.getElementById("model-profiles")?.focus();
+      document.getElementById("model-profiles")?.scrollIntoView();
+    }
+  }, []);
 
   async function startBuild(mode: "full" | "projection") {
     const signal = jobSignal();
@@ -121,10 +128,9 @@ export function MaintenancePage() {
   return (
     <section>
       <h2>Maintenance</h2>
-      <BuildBadge
-        buildId={journal.data?.buildId ?? null}
-        stale={journal.data?.stale ?? false}
-      />
+      {journal.data && (
+        <BuildBadge buildId={journal.data.buildId} stale={journal.data.stale} />
+      )}
 
       <section className="card">
         <h3>Rebuild</h3>
@@ -161,7 +167,7 @@ export function MaintenancePage() {
           ) : null}
         </p>
         {job !== null ? (
-          <p>
+          <p role="status">
             <span data-testid="job-status">Job {job.status}</span>
             {job.progress !== null ? (
               <span data-testid="job-progress"> · {job.progress}</span>
@@ -242,7 +248,7 @@ export function MaintenancePage() {
           </button>
         </p>
         {backupJob !== null ? (
-          <p>
+          <p role="status">
             <span data-testid="backup-status">Backup {backupJob.status}</span>
             {backupJob.status === "complete" ? (
               <>

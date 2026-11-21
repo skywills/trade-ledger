@@ -282,7 +282,6 @@ thead th {
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -598,6 +597,7 @@ label {
 /* ---------- Tabs ---------- */
 [role="tablist"] {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
   margin: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
@@ -615,6 +615,13 @@ label {
   font-weight: 700;
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+@media (max-width: 480px) {
+  [role="tab"] {
+    padding-inline: var(--space-2);
+    font-size: var(--text-sm);
+  }
 }
 
 /* ---------- Motion ---------- */
@@ -1003,21 +1010,6 @@ dd.num {
 .agent-hero > p {
   margin: 0;
   max-width: 60ch;
-}
-
-.agent-mark {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.agent-mark .icon {
-  width: 26px;
-  height: 26px;
 }
 
 .agent-status {
@@ -1627,4 +1619,55 @@ button.chip-remove {
 
 .thread-actions p {
   overflow-wrap: anywhere;
+}
+
+#model-profiles {
+  scroll-margin-top: 7rem;
+}
+.ledger-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ledger-paging {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-block: var(--space-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-toggle {
+  display: none;
+}
+@media (max-width: 720px) {
+  .app-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .app-header nav {
+    display: none;
+  }
+  .app-header nav[data-open="true"] {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 60dvh;
+    overflow-y: auto;
+    padding: var(--space-1);
+  }
+  .app-header .nav-spacer {
+    display: none;
+  }
+}
+
+.table-scroll > .source-rows {
+  min-width: 0;
 }

@@ -24,9 +24,8 @@ export function LifecyclesPage() {
     <section className="lifecycles">
       <h2>Trade lifecycles</h2>
       <p>
-        Follow each trade from its first options through assignment, covered
-        calls and final disposal. A lifecycle completes when every holding is
-        closed and its history is complete.
+        Track holdings, assignments and covered calls from the first trade to
+        the final close.
       </p>
       <BuildBadge buildId={data.buildId} stale={data.stale} />
       {(data.stale || data.rebuildRequired) && (

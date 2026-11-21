@@ -17,7 +17,7 @@ import {
   legOf,
   recomputePresentation,
 } from "../../src/server/strategies/projection.js";
-import { filterStrategies } from "../../src/web/journal/journalView.js";
+import { filterStrategies } from "../../src/shared/journal-view.js";
 import { execution, snapshot, strategy } from "../fixtures/analytics.js";
 
 function berkshireSnapshot() {

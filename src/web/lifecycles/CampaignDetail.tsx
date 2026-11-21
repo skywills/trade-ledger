@@ -56,7 +56,9 @@ export function CampaignDetail({ id }: { id: string }) {
           navigate(`/campaigns/${encodeURIComponent(id)}`);
           remote.reload();
         }}
-      />
+      >
+        <Link to="/lifecycles">Back to lifecycles</Link>
+      </ErrorPanel>
     );
   const { campaign: c, cycles, summary: s } = remote.data;
   const p = remote.data;

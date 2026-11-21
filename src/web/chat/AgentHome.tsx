@@ -6,9 +6,8 @@ import {
   ThreadEnvelopeSchema,
 } from "../../shared/chat-api.js";
 import { ApiError, JournalEnvelope, requestJson, useJson } from "../api.js";
-import { Link, navigate } from "../navigation.js";
+import { navigate } from "../navigation.js";
 import { Composer } from "./Composer.js";
-import { SparkleIcon } from "./icons.js";
 
 const SUGGESTIONS = [
   "What is my realised P&L by month this year?",
@@ -49,7 +48,7 @@ function StatusLine({ model }: { model: Model }) {
   const data = journal.data;
   return (
     <p className="agent-status">
-      <span className="status-dot" aria-hidden="true" />
+      {model.ready && <span className="status-dot" aria-hidden="true" />}
       {model.name} <span className="muted">({model.modelId})</span>
       {data !== null ? (
         <span className="muted">
@@ -70,9 +69,9 @@ function NoModel() {
         <strong>Set up a model to start.</strong> The agent needs a verified,
         enabled default model profile.
       </p>
-      <Link to="/maintenance" className="button-link">
+      <a href="/maintenance#model-profiles" className="button-link">
         Open Maintenance → Models
-      </Link>
+      </a>
     </div>
   );
 }
@@ -148,14 +147,10 @@ export function AgentHome({ onStarted }: { onStarted: () => void }) {
   return (
     <section className="agent-home" aria-labelledby="agent-home-title">
       <div className="agent-hero">
-        <span className="agent-mark" aria-hidden="true">
-          <SparkleIcon />
-        </span>
         <h2 id="agent-home-title">Ask about your journal</h2>
         <p className="muted">
-          Questions about P&amp;L, positions and review issues are answered from
-          your active build. Imports, rebuilds and backups always ask for your
-          approval first.
+          Ask about P&amp;L, open positions or items awaiting review. You
+          approve imports, rebuilds and backups before they run.
         </p>
         {model !== null ? <StatusLine model={model} /> : null}
       </div>
