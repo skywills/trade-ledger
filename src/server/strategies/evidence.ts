@@ -4,6 +4,7 @@ import type {
   LedgerSnapshot,
 } from "../../shared/domain.js";
 import { normalizeTimestamp } from "../../shared/timestamps.js";
+import { roleOf } from "./grouping-common.js";
 
 /** Closed-lot records sometimes omit TradeID. A unique account, currency,
  * contract and closing timestamp can still identify the signed execution. */
@@ -24,16 +25,17 @@ export function selectStrategyEvidence(
   );
   if (!closeKeys.size)
     return { allocations, executions, lots: [], ambiguousLotCount: 0 };
-  const sharedCloses = new Set(
-    allAllocations
-      .filter(
-        (row) =>
-          row.role === "close" &&
-          row.strategyId !== strategyId &&
-          closeKeys.has(row.executionKey),
-      )
-      .map((row) => row.executionKey),
-  );
+  const allocatedCloses = new Set<string>();
+  const sharedCloses = new Set<string>();
+  for (const allocation of allAllocations) {
+    if (allocation.role !== "close") continue;
+    allocatedCloses.add(allocation.executionKey);
+    if (
+      allocation.strategyId !== strategyId &&
+      closeKeys.has(allocation.executionKey)
+    )
+      sharedCloses.add(allocation.executionKey);
+  }
   let ambiguousLotCount = 0;
   const byTrade = new Map<string, Execution[]>();
   const byContractTime = new Map<string, Execution[]>();
@@ -50,7 +52,7 @@ export function selectStrategyEvidence(
     if (row.brokerIds.TradeID) index(byTrade, row.brokerIds.TradeID, row);
     if (
       row.instrument.conid &&
-      (row.action === "close" || row.action === "mixed")
+      (allocatedCloses.has(row.key) || roleOf(row) === "close")
     )
       index(
         byContractTime,

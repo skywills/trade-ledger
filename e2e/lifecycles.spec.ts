@@ -164,6 +164,7 @@ async function setup(page: Page, closeQuantity = "2") {
     campaignId: null as string | null,
     valuation: { ...valuation } as Record<string, unknown>,
     lifecycle: { ...lifecycle } as Record<string, unknown>,
+    executions: [...executions],
   };
   const meta = () => ({
     buildId: `build-${state.build}`,
@@ -221,7 +222,7 @@ async function setup(page: Page, closeQuantity = "2") {
               ...meta(),
               lifecycle: { ...state.lifecycle, campaignId: state.campaignId },
               members,
-              executions: executions.map((e) =>
+              executions: state.executions.map((e) =>
                 e.key === "call-close" ? { ...e, quantity: closeQuantity } : e,
               ),
               suggestions: state.suggestions,
@@ -419,6 +420,39 @@ test("campaign creation and cycle membership remain separate retained decisions"
   expect(state.decisions[2]?.payload.campaignId).toBeNull();
 });
 
+test("distinguishes contracts with identical descriptions in a valuation preview", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  state.executions.push(
+    execution(
+      "adjusted-put-open",
+      { ...put, key: "adjusted-put" },
+      "1",
+      "-100",
+    ),
+  );
+  state.lifecycle.positions = [
+    { instrumentKey: "put", quantity: "1" },
+    { instrumentKey: "adjusted-put", quantity: "1" },
+  ];
+  await page.goto("/lifecycles/cycle-one?editor=valuation");
+  await page
+    .getByLabel("Price for ABC protective put Nov20'26 100P (put)", {
+      exact: true,
+    })
+    .fill("2");
+  await page
+    .getByLabel("Price for ABC protective put Nov20'26 100P (adjusted-put)", {
+      exact: true,
+    })
+    .fill("3");
+  await page.getByRole("button", { name: "Preview valuation" }).click();
+  const marks = page.getByRole("list", { name: "Prices to save" });
+  await expect(marks).toContainText("100P (put) · 1 unit at 2 USD");
+  await expect(marks).toContainText("100P (adjusted-put) · 1 unit at 3 USD");
+});
+
 test("manual valuation requires a complete dated snapshot and shows its timestamp after rebuild", async ({
   page,
 }) => {
@@ -426,8 +460,12 @@ test("manual valuation requires a complete dated snapshot and shows its timestam
   await page.goto("/lifecycles/cycle-one");
   await page.getByText("Add dated manual prices", { exact: true }).click();
   await page.getByLabel("Valuation time (UTC)").fill("2026-10-17T12:00");
-  await page.getByLabel("Price for stock").fill("95");
-  await page.getByLabel("Price for put").fill("1");
+  await page.getByLabel("Price for ABC (stock)", { exact: true }).fill("95");
+  await page
+    .getByLabel("Price for ABC protective put Nov20'26 100P (put)", {
+      exact: true,
+    })
+    .fill("1");
   await page.getByRole("button", { name: "Preview valuation" }).click();
   await expect(
     page.getByText(
@@ -436,7 +474,7 @@ test("manual valuation requires a complete dated snapshot and shows its timestam
   ).toBeVisible();
   const marks = page.getByRole("list", { name: "Prices to save" });
   await expect(marks).toContainText("200 units at 95 USD");
-  await expect(marks).toContainText("1 unit at 1 USD");
+  await expect(marks).toContainText("Nov20'26 100P · 1 unit at 1 USD");
   await page.getByRole("button", { name: "Save prices and rebuild" }).click();
   await expect(page.getByText("2026-10-17T12:00:00Z · manual")).toBeVisible();
   expect(state.decisions[0]).toMatchObject({

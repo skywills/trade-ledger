@@ -415,12 +415,59 @@ test("editing a previewed exclusion requires reviewing the changed file", async 
     .toMatchObject({ payload: { importId: "import-two" } });
 });
 
+test("refreshing changed picker pages invalidates an exclusion preview", async ({
+  page,
+}) => {
+  const posted = await mockEditor(page);
+  let total = 210;
+  await page.route("**/api/imports?*", (route) => {
+    const n = Number(
+      new URL(route.request().url()).searchParams.get("page") ?? 1,
+    );
+    const start = (n - 1) * 100;
+    const items = Array.from(
+      { length: Math.min(100, total - start) },
+      (_, i) => ({
+        ...importSummary,
+        id: `file-${start + i + 1}`,
+        filename: `file-${start + i + 1}.csv`,
+      }),
+    );
+    return route.fulfill({ json: { ...envelope(items, total), page: n } });
+  });
+  await page.goto("/review");
+  await page.getByLabel("Decision kind").selectOption("import_exclusion");
+  const more = page.getByRole("button", { name: "Load more imports" });
+  await more.click();
+  await page.getByLabel("Import", { exact: true }).selectOption("file-110");
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await expect(page.getByTestId("decision-preview")).toContainText(
+    "file-110.csv",
+  );
+  total++;
+  await more.click();
+  await expect(page.getByLabel("Import", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Confirm decision" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Preview decision" }).click();
+  await expect(page.getByTestId("error-summary")).toContainText(
+    "Select an import",
+  );
+  expect(posted).toHaveLength(0);
+});
+
 test("review paging preserves the issue source and older analysis page", async ({
   page,
 }) => {
   await mockEditor(page);
-  await page.route("**/api/review?*", (route) => {
+  let showPageTwo!: () => void;
+  const pageTwoAllowed = new Promise<void>((resolve) => {
+    showPageTwo = resolve;
+  });
+  await page.route("**/api/review?*", async (route) => {
     const n = Number(new URL(route.request().url()).searchParams.get("page"));
+    if (n === 2) await pageTwoAllowed;
     const issue = {
       key: "review-" + n,
       code: n === 2 ? "LATER_ISSUE" : "FIRST_ISSUE",
@@ -459,12 +506,16 @@ test("review paging preserves the issue source and older analysis page", async (
     analyses.getByRole("link", { name: "conversation" }),
   ).toHaveAttribute("href", "/chat/thread-2");
   await page.getByRole("link", { name: "Next", exact: true }).click();
+  await expect(page.getByText("Loading review items…")).toBeVisible();
+  await expect(page.getByTestId("ask-agent")).toHaveCount(0);
+  showPageTwo();
   const issue = page.getByRole("row").filter({ hasText: "LATER_ISSUE" });
   const source = issue.getByRole("link", { name: "101" });
   await expect(source).toHaveAttribute(
     "href",
     "/imports?import=import-one&row=101",
   );
+  await expect(page.getByTestId("ask-agent")).toBeEnabled();
   await source.click();
   await page.goBack();
   await expect(issue).toBeVisible();

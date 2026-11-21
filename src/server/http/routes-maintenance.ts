@@ -49,22 +49,25 @@ export async function registerMaintenanceRoutes(
       ? await readdir(backupsDir, { withFileTypes: true })
       : [];
     const archives = [];
+    const unverifiedArchives = [];
     for (const file of files) {
       if (!file.isFile() || !/^[0-9a-fA-F-]{1,64}\.tar$/.test(file.name))
         continue;
       const id = file.name.slice(0, -4);
       const job = jobs.read(id);
-      // Reset retains archives even when it clears their old job records.
-      if (job && job.status !== "complete") continue;
+      if (job && (job.kind !== "backup" || job.status !== "complete")) continue;
       const createdAt =
         job?.finishedAt ??
         (await stat(join(backupsDir, file.name))).mtime.toISOString();
-      archives.push({ id, createdAt });
+      if (job) archives.push({ id, createdAt });
+      else unverifiedArchives.push({ id, createdAt });
     }
     archives.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    unverifiedArchives.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return {
       latest,
       archives: archives.slice(0, 20),
+      unverifiedArchives: unverifiedArchives.slice(0, 20),
     };
   });
 

@@ -36,11 +36,6 @@ const KINDS = [
 
 type Kind = (typeof KINDS)[number]["value"];
 
-interface Preview {
-  payload: Record<string, unknown>;
-  summary: string;
-}
-
 interface Built {
   payload: Record<string, unknown>;
   summary: string;
@@ -106,7 +101,7 @@ export function DecisionEditor({
   const [allocQuantity, setAllocQuantity] = useState("");
   const [allocCash, setAllocCash] = useState("");
 
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const [preview, setPreview] = useState<Built | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     sequence: number;
@@ -127,10 +122,29 @@ export function DecisionEditor({
   }, [error]);
 
   useEffect(() => {
-    if (fixedStrategyId !== undefined || strategyId !== "") return;
-    const first = journal.data?.items[0];
-    if (first !== undefined) setStrategyId(first.id);
-  }, [fixedStrategyId, strategyId, journal.data]);
+    if (!journal.data) return;
+    const ids = new Set(journal.data.items.map((s) => s.id));
+    const firstId = journal.data.items[0]?.id ?? "";
+    setStrategyId(
+      (id) => fixedStrategyId ?? (id === "" ? firstId : ids.has(id) ? id : ""),
+    );
+    setChosenId((id) => (ids.has(id) ? id : ""));
+    setMergedIds((current) => current.filter((id) => ids.has(id)));
+    setPreview(null);
+  }, [fixedStrategyId, journal.data]);
+  useEffect(() => {
+    if (!imports.data) return;
+    const ids = new Set(imports.data.items.map((i) => i.id));
+    setImportId((id) => (ids.has(id) ? id : ""));
+    setPreview(null);
+  }, [imports.data]);
+  useEffect(() => {
+    if (!transactions.data) return;
+    const keys = new Set(transactions.data.items.map((e) => e.key));
+    setSourceKey((key) => (keys.has(key) ? key : ""));
+    setTargetKey((key) => (keys.has(key) ? key : ""));
+    setPreview(null);
+  }, [transactions.data]);
 
   const kindDef = KINDS.find((entry) => entry.value === kind) ?? KINDS[0];
   const selectedExecution = executions.find((entry) => entry.key === sourceKey);
@@ -177,8 +191,8 @@ export function DecisionEditor({
       }
       case "import_exclusion":
       case "import_inclusion": {
-        if (importId === "") throw new Error("Select an import.");
         const entry = importList.find((item) => item.id === importId);
+        if (!entry) throw new Error("Select an import.");
         const verb = kind === "import_exclusion" ? "Exclude" : "Reinstate";
         return {
           payload: {
@@ -187,7 +201,7 @@ export function DecisionEditor({
             strategyIds: [],
             payload: { importId },
           },
-          summary: `${verb} import ${entry?.filename ?? importId}`,
+          summary: `${verb} import ${entry.filename}`,
         };
       }
       case "rejection": {

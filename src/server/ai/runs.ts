@@ -31,6 +31,7 @@ export interface SubmittedProposal {
   readonly submittedAt: string;
   readonly accepted: boolean;
   readonly rejected?: boolean;
+  readonly rejectionDecisionId?: Id;
 }
 
 export interface RunUsage {

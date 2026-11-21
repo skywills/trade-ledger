@@ -2,7 +2,7 @@
 
 This report records the interface at `834f87f`, before the fixes on `fix/ui-ux-audit`. The screenshots show the original behavior.
 
-**Follow-up verification.** The fix branch passed 1,171 unit and integration tests and all 135 Chromium tests. Regression cases cover changed decision previews, both orders of a mixed-validity import batch, evidence and history beyond page one, report drafts, model pricing, and 375px layouts at doubled text size. The production smoke test also verified database migration, startup and shutdown.
+**Follow-up verification.** After code review, the fix branch passed 1,172 unit and integration tests and all 137 Chromium tests. Regression cases cover changed decision previews, both orders of a mixed-validity import batch, evidence and history beyond page one, report drafts, model pricing, and 375px layouts at doubled text size. The production smoke test also verified database migration, startup and shutdown.
 
 The highest-risk findings were in decision preview and strategy evidence. In a temporary journal, changing an exclusion from one CSV to another still submitted the first file. Opening a BIDU stock strategy showed two AXON option lots. In a separate 110-execution journal, a trade on Transactions page 2 had a working source link, but opening that trade's strategy showed a dash for the same source.
 

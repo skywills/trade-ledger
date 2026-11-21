@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "./fixtures.js";
 
 const usage = {
@@ -101,7 +103,12 @@ test("displays known and missing cost coverage after reopening a conversation", 
   }
 });
 
-test("recovers an archive download after navigation", async ({ page }) => {
+test("recovers completed backups across navigation and reset and identifies unverified files", async ({
+  page,
+  serverScope,
+  request,
+  baseURL,
+}, testInfo) => {
   await page.goto("/maintenance");
   await page.getByRole("button", { name: "Create backup" }).click();
   const archive = page.getByRole("link", { name: /Download archive/ }).first();
@@ -110,6 +117,23 @@ test("recovers an archive download after navigation", async ({ page }) => {
   await page.goto("/journal");
   await page.goto("/maintenance");
   await expect(page.locator('a[href="' + href + '"]')).toBeVisible();
+  const server = await serverScope.forFile(testInfo.file);
+  await writeFile(
+    join(server.dataDir, "backups", "deadbeef.tar"),
+    "incomplete archive",
+  );
+  const response = await request.post("/api/maintenance/reset", {
+    headers: { origin: baseURL },
+    data: { confirmation: "RESET" },
+  });
+  expect(response.ok()).toBe(true);
+  await page.reload();
+  await expect(page.locator('a[href="' + href + '"]')).toBeVisible();
+  await expect(page.getByTestId("backup-download")).toHaveCount(1);
+  await page.getByText("Archive files without a completion record").click();
+  await expect(
+    page.getByRole("link", { name: /Download unverified file/ }),
+  ).toHaveAttribute("href", "/api/maintenance/backups/deadbeef/download");
 });
 
 test("keeps model rates and table actions reachable on a phone", async ({

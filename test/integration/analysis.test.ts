@@ -520,6 +520,17 @@ describe("proposal acceptance and rejection", () => {
     expect((await rejectProposal(store, run.id, "retry", 0)).id).toBe(
       decision.id,
     );
+    expect(
+      (
+        await rejectProposal(
+          store,
+          run.id,
+          "retry",
+          0,
+          run.proposals.map((p) => p.id),
+        )
+      ).id,
+    ).toBe(decision.id);
     expect(decisionWatermark(store)).toBe(1);
   });
   it("restores only previously pending cards from a legacy retained rejection", async () => {
@@ -560,6 +571,13 @@ describe("proposal acceptance and rejection", () => {
       [false, false],
     ]);
     expect(listRunSummaries(store)[0]?.pendingProposals).toBe(1);
+    const later = cards[2];
+    if (!later) throw new Error("Missing later proposal");
+    await acceptProposal(store, run.id, later.id, 1);
+    await expect(
+      rejectProposal(store, run.id, "stale review", 2, [later.id]),
+    ).rejects.toMatchObject({ code: "PROPOSALS_CHANGED" });
+    expect(decisionWatermark(store)).toBe(2);
   });
 });
 

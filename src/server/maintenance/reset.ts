@@ -132,9 +132,12 @@ export function registerJournalReset(
           "imports",
           "import_previews",
           "accounts",
-          "jobs",
         ])
           store.db.exec(`DELETE FROM ${table}`);
+        // Retained archives keep their completion receipts across a journal reset.
+        store.db.exec(
+          "DELETE FROM jobs WHERE kind <> 'backup' OR status <> 'complete'",
+        );
       });
       try {
         rmSync(store.sourceRoot, { recursive: true, force: true });

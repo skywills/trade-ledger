@@ -10,9 +10,11 @@ import {
 import { ErrorPanel } from "../components.js";
 
 const path = "/api/maintenance/backups";
+const Archives = z.array(z.object({ id: z.string(), createdAt: z.string() }));
 const History = z.object({
   latest: JobSchema.nullable(),
-  archives: z.array(z.object({ id: z.string(), createdAt: z.string() })),
+  archives: Archives,
+  unverifiedArchives: Archives.default([]),
 });
 
 export function BackupsPanel() {
@@ -78,6 +80,26 @@ export function BackupsPanel() {
         </>
       )}
       {error && <ErrorPanel message={error.message} onRetry={reload} />}
+      {!!data?.unverifiedArchives.length && (
+        <details>
+          <summary>Archive files without a completion record</summary>
+          <p>
+            These files may be incomplete. Offline restore validates their
+            contents before replacing journal data.
+          </p>
+          <ul>
+            {data.unverifiedArchives.map((archive) => (
+              <li key={archive.id}>
+                <a href={`/api/maintenance/backups/${archive.id}/download`}>
+                  Download unverified file ·{" "}
+                  {new Date(archive.createdAt).toLocaleString()} ·{" "}
+                  {archive.id.slice(0, 8)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {startError && <ErrorPanel message={startError} />}
     </section>
   );

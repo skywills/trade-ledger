@@ -3,6 +3,7 @@ import type { Lifecycle } from "../../shared/lifecycles.js";
 import { ValuationSnapshotSchema } from "../../shared/lifecycles.js";
 import type { Execution } from "../api.js";
 import type { SaveDecision } from "./api.js";
+import { contractLabel } from "./connection-guidance.js";
 export function ValuationEditor({
   lifecycle,
   openOnArrival,
@@ -27,10 +28,29 @@ export function ValuationEditor({
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
-  const positions = lifecycle.positions.filter(
-    (p) => !/^[-+]?0(?:\.0*)?$/.test(p.quantity),
+  const instruments = new Map(
+    executions.map((e) => [e.instrument.key, e.instrument]),
   );
+  const positions = lifecycle.positions
+    .filter((p) => !/^[-+]?0(?:\.0*)?$/.test(p.quantity))
+    .map((position) => {
+      const instrument = instruments.get(position.instrumentKey);
+      const label = instrument
+        ? [instrument.symbol, contractLabel(instrument)]
+            .filter(Boolean)
+            .join(" ")
+        : position.instrumentKey;
+      return { ...position, label };
+    });
   if (!positions.length) return null;
+  const seen = new Set<string>();
+  const duplicateLabels = new Set<string>();
+  for (const { label } of positions) {
+    if (seen.has(label)) duplicateLabels.add(label);
+    seen.add(label);
+  }
+  const displayLabel = (p: (typeof positions)[number]) =>
+    duplicateLabels.has(p.label) ? `${p.label} (${p.instrumentKey})` : p.label;
   return (
     <details open={openOnArrival || undefined}>
       <summary ref={summary}>Add dated manual prices</summary>
@@ -81,11 +101,9 @@ export function ValuationEditor({
           </label>
           {positions.map((p) => (
             <label key={p.instrumentKey}>
-              {executions.find((e) => e.instrument.key === p.instrumentKey)
-                ?.instrument.symbol ?? p.instrumentKey}{" "}
-              · {p.quantity} units
+              {displayLabel(p)} · {p.quantity} units
               <input
-                aria-label={`Price for ${p.instrumentKey}`}
+                aria-label={`Price for ${p.label} (${p.instrumentKey})`}
                 inputMode="decimal"
                 required
                 value={prices[p.instrumentKey] ?? ""}
@@ -106,10 +124,8 @@ export function ValuationEditor({
               <ul aria-label="Prices to save">
                 {positions.map((p) => (
                   <li key={p.instrumentKey}>
-                    {executions.find(
-                      (e) => e.instrument.key === p.instrumentKey,
-                    )?.instrument.symbol ?? p.instrumentKey}{" "}
-                    · {p.quantity} {p.quantity === "1" ? "unit" : "units"} at{" "}
+                    {displayLabel(p)} · {p.quantity}{" "}
+                    {p.quantity === "1" ? "unit" : "units"} at{" "}
                     {prices[p.instrumentKey]} {lifecycle.currency}
                   </li>
                 ))}

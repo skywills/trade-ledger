@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { useMemo } from "react";
 import { JournalEnvelope, ReviewEnvelope, useJson } from "../api.js";
 import {
   BuildBadge,
@@ -55,18 +56,17 @@ function ReviewQueue() {
     connections.data?.buildId === remote.data?.buildId
       ? connections.data
       : null;
-  const grouped =
-    currentConnections?.lifecycles &&
-    connectionGroups(
+  const connectionIssueKeys = useMemo(() => {
+    if (!currentConnections?.lifecycles) return new Set<string>();
+    const groups = connectionGroups(
       currentConnections.lifecycles.suggestions,
       currentConnections.lifecycles.members,
       currentConnections.connectionExecutions,
     );
-  const connectionIssueKeys = new Set(
-    (grouped || []).flatMap((g) =>
-      g.suggestions.map((s) => `lifecycle:${s.id}`),
-    ),
-  );
+    return new Set(
+      groups.flatMap((g) => g.suggestions.map((s) => `lifecycle:${s.id}`)),
+    );
+  }, [currentConnections]);
   const remainingIssues = (remote.data?.items ?? []).filter(
     (issue) => !connectionIssueKeys.has(issue.key),
   );
@@ -87,7 +87,8 @@ function ReviewQueue() {
           }}
         />
       )}
-      {remote.status === "loading" ? (
+      {remote.status === "loading" ||
+      (remote.status === "ready" && remote.data?.page !== page) ? (
         <Loading label="Loading review items…" />
       ) : remote.status === "error" ? (
         <ErrorPanel
@@ -234,16 +235,19 @@ function ReviewQueue() {
               No review issues in the active build. Nothing needs attention.
             </p>
           ) : null}
+          {remote.data && (
+            <AskAgent
+              key={page}
+              issueKeys={[
+                ...new Set(
+                  remote.data.items.flatMap((issue) => issue.issueKeys),
+                ),
+              ]}
+            />
+          )}
         </>
       )}
 
-      <AskAgent
-        issueKeys={[
-          ...new Set(
-            (remote.data?.items ?? []).flatMap((issue) => issue.issueKeys),
-          ),
-        ]}
-      />
       <PastAnalyses />
 
       <DecisionEditor />

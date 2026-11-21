@@ -558,12 +558,38 @@ export async function rejectProposal(
         404,
       );
     }
-    if (!run.proposals.some((p) => !p.accepted && !p.rejected)) {
+    function requireSameSelection(ids: string[]) {
+      if (
+        expectedPendingIds &&
+        (ids.length === 0 ||
+          ids.length !== expectedPendingIds.length ||
+          !ids.every((id) => expectedPendingIds.includes(id)))
+      )
+        throw new AppError(
+          "PROPOSALS_CHANGED",
+          "The pending proposals changed. Review the updated list before rejecting it.",
+          409,
+        );
+    }
+    const pending = run.proposals.filter((p) => !p.accepted && !p.rejected);
+    if (!pending.length) {
+      const receipt = run.proposals.find(
+        (p) => p.id === expectedPendingIds?.[0],
+      )?.rejectionDecisionId;
+      if (expectedPendingIds) {
+        const rejectedTogether = receipt
+          ? run.proposals.filter((p) => p.rejectionDecisionId === receipt)
+          : [];
+        requireSameSelection(rejectedTogether.map((p) => p.id));
+      }
       const prior = readDecisions(store, decisionWatermark(store))
         .reverse()
         .find(
           (d) =>
-            d.kind === "rejection" && run.acceptedDecisionIds.includes(d.id),
+            d.kind === "rejection" &&
+            (receipt
+              ? d.id === receipt
+              : run.acceptedDecisionIds.includes(d.id)),
         );
       if (prior) return prior;
       throw new AppError(
@@ -572,18 +598,7 @@ export async function rejectProposal(
         409,
       );
     }
-    if (expectedPendingIds) {
-      const pending = run.proposals.filter((p) => !p.accepted && !p.rejected);
-      if (
-        pending.length !== expectedPendingIds.length ||
-        pending.some((p) => !expectedPendingIds.includes(p.id))
-      )
-        throw new AppError(
-          "PROPOSALS_CHANGED",
-          "The pending proposals changed. Review the updated list before rejecting it.",
-          409,
-        );
-    }
+    requireSameSelection(pending.map((p) => p.id));
     const decision = appendDecisionInTransaction(
       store,
       rejectionInput({
@@ -595,7 +610,11 @@ export async function rejectProposal(
     saveProposalDecisions(
       store,
       run,
-      run.proposals.map((p) => (p.accepted ? p : { ...p, rejected: true })),
+      run.proposals.map((p) =>
+        p.accepted || p.rejected
+          ? p
+          : { ...p, rejected: true, rejectionDecisionId: decision.id },
+      ),
       decision.id,
     );
     return decision;
