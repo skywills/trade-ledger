@@ -80,16 +80,17 @@ export function DashboardPage({ view }: { view: DashboardView }) {
   return (
     <section className="dashboard">
       <div className="dashboard-title">
-        <div>
-          <p className="dashboard-eyebrow">TRADING PERFORMANCE</p>
-          <h2>Dashboard</h2>
-          <p className="dashboard-subtitle">
-            Your trading story, backed by the numbers.
-          </p>
-        </div>
+        <h2>Dashboard</h2>
         <span className="dashboard-date">
-          {state.query.from ?? "All available history"}
-          {state.query.to ? ` — ${state.query.to}` : ""}
+          {openPositions
+            ? "Current holdings"
+            : state.query.from && state.query.to
+              ? `${state.query.from} — ${state.query.to}`
+              : state.query.from
+                ? `From ${state.query.from}`
+                : state.query.to
+                  ? `Through ${state.query.to}`
+                  : "All available history"}
         </span>
       </div>
       <nav className="dashboard-tabs" aria-label="Dashboard views">
@@ -122,12 +123,14 @@ export function DashboardPage({ view }: { view: DashboardView }) {
           onRefresh={refreshAnalytics}
         />
       )}
-      <DashboardFilters
-        key={`${state.query.from}|${state.query.to}`}
-        state={state}
-        view={view}
-        data={data}
-      />
+      {data?.buildId !== null && (
+        <DashboardFilters
+          key={`${state.query.from}|${state.query.to}`}
+          state={state}
+          view={view}
+          data={data}
+        />
+      )}
       {state.error ? (
         <p role="alert" className="dashboard-warning">
           {state.error}
@@ -147,33 +150,38 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         </ErrorPanel>
       ) : data ? (
         <>
-          <div className="dashboard-provenance">
-            <BuildBadge buildId={data.buildId} stale={data.stale} />
-            <span>
-              {openPositions ? (
-                <>
-                  Current open positions ·{" "}
-                  {data.filters.currency ?? "No currency"}
-                </>
-              ) : (
-                <>
-                  {data.performance.eligible} / {data.performance.closed}{" "}
-                  {data.filters.unit === "strategy"
-                    ? "closed strategy components"
-                    : "completed lifecycles"}{" "}
-                  with{" "}
-                  {data.filters.basis === "broker" ? "broker" : "reconstructed"}{" "}
-                  P&amp;L · {data.filters.currency ?? "No currency"}
-                </>
-              )}
-            </span>
-          </div>
-          <DataQuality data={data} />
+          {data.buildId && (
+            <div className="dashboard-provenance">
+              <BuildBadge buildId={data.buildId} stale={data.stale} />
+              <span>
+                {openPositions ? (
+                  <>
+                    Current open positions ·{" "}
+                    {data.filters.currency ?? "No currency"}
+                  </>
+                ) : (
+                  <>
+                    {data.performance.eligible} / {data.performance.closed}{" "}
+                    {data.filters.unit === "strategy"
+                      ? "closed strategy components"
+                      : "completed lifecycles"}{" "}
+                    with{" "}
+                    {data.filters.basis === "broker"
+                      ? "broker"
+                      : "reconstructed"}{" "}
+                    P&amp;L · {data.filters.currency ?? "No currency"}
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+          {data.buildId && <DataQuality data={data} />}
           {!data.buildId ? (
             <div className="dashboard-empty">
-              <h3>Start your trading story</h3>
+              <h3>No active build</h3>
               <p>
-                Import your trades and build the journal to see performance.
+                Import an IBKR Flex CSV to build your journal and view trading
+                performance.
               </p>
               <Link to="/imports">Import trades</Link>
             </div>

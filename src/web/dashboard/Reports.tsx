@@ -10,7 +10,6 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
     <article className="dashboard-report">
       <header className="dashboard-report-heading">
         <div>
-          <p className="dashboard-eyebrow">TRADELEDGER · PERIOD REVIEW</p>
           <h3>Trading report</h3>
           <p>
             {data.filters.from ?? "First available trade"} —{" "}

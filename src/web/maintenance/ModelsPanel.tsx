@@ -224,7 +224,9 @@ export function ModelsPanel() {
 
   return (
     <section>
-      <h3>Model profiles</h3>
+      <h3 id="model-profiles" tabIndex={-1}>
+        Model profiles
+      </h3>
       <ModelConfiguration onImported={models.reload} />
       <p>
         Local inference is the default; no cloud provider is selected

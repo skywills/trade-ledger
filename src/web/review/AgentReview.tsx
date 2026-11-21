@@ -78,9 +78,9 @@ export function AskAgent({ issueKeys }: { issueKeys: string[] }) {
       {error !== null ? (
         <ErrorPanel message={error.message}>
           {error.code !== null && PROFILE_CODES.has(error.code) ? (
-            <Link to="/maintenance">
+            <a href="/maintenance#model-profiles">
               Configure a model in Maintenance → Models
-            </Link>
+            </a>
           ) : null}
         </ErrorPanel>
       ) : null}

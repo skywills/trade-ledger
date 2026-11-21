@@ -588,6 +588,9 @@ test("journal columns sort with aria-sort feedback", async ({ page }) => {
 test("strategy tabs are operable with the arrow keys", async ({ page }) => {
   await page.goto("/journal");
   await page.getByRole("link", { name: /AXON/ }).first().click();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole("tab", { name: "History" })).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   const summary = page.getByRole("tab", { name: "Summary" });
   await summary.focus();
   await page.keyboard.press("ArrowRight");
@@ -641,4 +644,82 @@ test("Berkshire aliases find the journal entry while transactions retain the con
   const row = table.getByRole("row").filter({ has: page.getByRole("cell", { name: symbol, exact: true }) });
   await expect(row.getByRole("cell", { name: symbol, exact: true })).toBeVisible();
   await expect(row.getByRole("cell", { name: "BRK.B", exact: true })).toBeVisible();
+});
+
+test("browses retained rows beyond the first hundred on a phone", async ({ page }) => {
+  const rows = Array.from({ length: 106 }, (_, i) =>
+    optionLeg(`PAGE-${i}`, `PAGE-${i}`),
+  );
+  await page.setViewportSize({ width: 375, height: 812 });
+  await confirmImport(page, [csvFile("paged.csv", buildExecutionTable(rows))]);
+  await page.getByRole("row").filter({ hasText: "paged.csv" })
+    .getByRole("link", { name: "View rows" }).click();
+  await page.getByRole("link", { name: "Next", exact: true }).click();
+  await page.getByRole("link", { name: "Next", exact: true }).click();
+  const rowLink = page.getByRole("link", { name: /^Row \d+$/ }).last();
+  const label = await rowLink.innerText();
+  await rowLink.click();
+  await expect(page.getByTestId("import-row-detail")).toContainText(label.replace("Row", "Import row"));
+  await page.getByRole("link", { name: "Browse source rows" }).click();
+  await expect(page.getByText("Page 3 of 3")).toBeVisible();
+
+  const menu = page.getByRole("button", { name: "Menu", exact: true });
+  await menu.click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeFocused();
+  await menu.click();
+  await page.getByRole("link", { name: "Transactions", exact: true }).click();
+  await page.getByRole("link", { name: "Next", exact: true }).click();
+  await expect(page.getByText("Page 2 of 2")).toBeVisible();
+  await page.getByRole("link", { name: "View source" }).last().click();
+  await expect(page.getByTestId("import-row-detail")).toBeVisible();
+});
+
+test("searches and ranks the full journal and restores a filtered page on Back", async ({ page }) => {
+  const rows = Array.from({ length: 150 }, (_, i) => {
+    const symbol = i === 149 ? "GLOBALNEEDLE" : `GLOBAL${i}`;
+    const contract = {
+      Symbol: symbol,
+      UnderlyingSymbol: symbol,
+      Conid: String(800000 + i),
+      CurrencyPrimary: i === 149 ? "GBP" : "USD",
+    };
+    return [
+      optionLeg(`GLOBAL-OPEN-${i}`, `GLOBAL-O-${i}`, {
+        ...contract, TradeDate: i === 149 ? "2026-09-10" : "2026-09-01",
+      }),
+      optionLeg(`GLOBAL-CLOSE-${i}`, `GLOBAL-C-${i}`, {
+        ...contract, TradeDate: "2026-09-11", Quantity: "-1",
+        NetCash: String(200 + i), FifoPnlRealized: String(i), "Notes/Codes": "C",
+      }),
+    ];
+  }).flat();
+  await confirmImport(page, [csvFile("large-journal.csv", buildExecutionTable(rows))]);
+  await page.goto("/journal");
+  const search = page.getByLabel("Search strategies");
+  await search.fill("GLOBALNEEDLE");
+  const needle = page.getByRole("link", { name: /GLOBALNEEDLE/ });
+  await expect(needle).toBeVisible();
+  await page.getByLabel("Currency", { exact: true }).selectOption("GBP");
+  await page.getByLabel("Status", { exact: true }).selectOption("closed");
+  await expect(page.getByRole("status")).toContainText("1 matching strategy");
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await search.fill("GLOBAL");
+  const sort = page.getByRole("button", { name: /Broker realized P.L/ });
+  await sort.click();
+  await sort.click();
+  const table = page.getByRole("table", { name: "Journal", exact: true });
+  await expect(table.locator("tbody tr").first()).toContainText("GLOBALNEEDLE");
+  await expect(page.getByRole("status")).toContainText("150 matching strategies");
+  await page.getByRole("link", { name: "Next", exact: true }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(50);
+  const url = page.url();
+  const first = table.getByRole("link").first();
+  const label = await first.innerText();
+  await first.click();
+  await page.goBack();
+  await expect(page).toHaveURL(url);
+  await expect(search).toHaveValue("GLOBAL");
+  await expect(table.getByRole("link").first()).toHaveText(label);
+  await expect(page.getByText("Page 2 of 2")).toBeVisible();
 });

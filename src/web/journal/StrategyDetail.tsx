@@ -7,7 +7,7 @@ import {
   TransactionsEnvelope,
   useJson,
 } from "../api.js";
-import { BuildBadge, ErrorPanel, Loading } from "../components.js";
+import { BuildBadge, ErrorPanel, Loading, TableScroll } from "../components.js";
 import { LifecycleListSchema } from "../lifecycles/api.js";
 import { Link, useLocation } from "../navigation.js";
 import { DecisionEditor, listDecisions } from "../review/DecisionEditor.js";
@@ -54,13 +54,17 @@ export function StrategyDetail({ id }: { id: string }) {
       <ErrorPanel
         message={detail.error?.message ?? "Failed to load the strategy."}
         onRetry={detail.reload}
-      />
+      >
+        <Link to="/journal">Back to journal</Link>
+      </ErrorPanel>
     );
   }
 
   if (expected && detail.data?.buildId !== expected) {
     return (
-      <ErrorPanel message="The active build changed. Refresh before continuing." />
+      <ErrorPanel message="The active build changed. Choose a strategy from the current journal.">
+        <Link to="/journal">Back to journal</Link>
+      </ErrorPanel>
     );
   }
 
@@ -152,7 +156,7 @@ export function StrategyDetail({ id }: { id: string }) {
               <h3>Position</h3>
               <dl>
                 <dt>Type</dt>
-                <dd>{strategy.type}</dd>
+                <dd>{strategy.type.replaceAll("_", " ")}</dd>
                 <dt>Status</dt>
                 <dd>{strategy.status.replaceAll("_", " ")}</dd>
                 <dt>Currency</dt>
@@ -217,79 +221,83 @@ export function StrategyDetail({ id }: { id: string }) {
         ) : null}
 
         {tab === "Allocations" ? (
-          <table aria-label="Allocations">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Execution</th>
-                <th>Quantity</th>
-                <th>Net cash</th>
-                <th>Broker P/L</th>
-                <th>Estimated</th>
-                <th>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allocations.map((allocation) => {
-                const target = sourceTarget(
-                  executionByKey.get(allocation.executionKey),
-                );
-                return (
-                  <tr key={`${allocation.executionKey}-${allocation.role}`}>
-                    <td>{allocation.role}</td>
-                    <td>{allocation.executionKey}</td>
-                    <td>{allocation.quantity}</td>
-                    <td>{allocation.netCash}</td>
-                    <td>{allocation.brokerPnl ?? "Unavailable"}</td>
-                    <td>{allocation.pnlEstimated ? "Yes" : "No"}</td>
-                    <td>
-                      {target === null ? (
-                        "—"
-                      ) : (
-                        <Link to={target}>View source</Link>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <TableScroll label="Allocations table">
+            <table aria-label="Allocations">
+              <thead>
+                <tr>
+                  <th>Role</th>
+                  <th>Execution</th>
+                  <th>Quantity</th>
+                  <th>Net cash</th>
+                  <th>Broker P/L</th>
+                  <th>Estimated</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allocations.map((allocation) => {
+                  const target = sourceTarget(
+                    executionByKey.get(allocation.executionKey),
+                  );
+                  return (
+                    <tr key={`${allocation.executionKey}-${allocation.role}`}>
+                      <td>{allocation.role}</td>
+                      <td>{allocation.executionKey}</td>
+                      <td>{allocation.quantity}</td>
+                      <td>{allocation.netCash}</td>
+                      <td>{allocation.brokerPnl ?? "Unavailable"}</td>
+                      <td>{allocation.pnlEstimated ? "Yes" : "No"}</td>
+                      <td>
+                        {target === null ? (
+                          "—"
+                        ) : (
+                          <Link to={target}>View source</Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </TableScroll>
         ) : null}
 
         {tab === "Lots" ? (
-          <table aria-label="Lots">
-            <thead>
-              <tr>
-                <th>Row</th>
-                <th>Kind</th>
-                <th>Symbol</th>
-                <th>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(lots.data?.items ?? []).map((lot) => {
-                const source = lot.issues[0]?.sources[0];
-                const target =
-                  source === undefined
-                    ? null
-                    : `/imports?import=${encodeURIComponent(source.importId)}&row=${source.rowNumber}`;
-                return (
-                  <tr key={lot.rowNumber}>
-                    <td>{lot.rowNumber}</td>
-                    <td>{lot.kind}</td>
-                    <td>{lot.fields.Symbol ?? "—"}</td>
-                    <td>
-                      {target === null ? (
-                        "—"
-                      ) : (
-                        <Link to={target}>View source</Link>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <TableScroll label="Lots table">
+            <table aria-label="Lots">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Kind</th>
+                  <th>Symbol</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(lots.data?.items ?? []).map((lot) => {
+                  const source = lot.issues[0]?.sources[0];
+                  const target =
+                    source === undefined
+                      ? null
+                      : `/imports?import=${encodeURIComponent(source.importId)}&row=${source.rowNumber}`;
+                  return (
+                    <tr key={lot.rowNumber}>
+                      <td>{lot.rowNumber}</td>
+                      <td>{lot.kind}</td>
+                      <td>{lot.fields.Symbol ?? "—"}</td>
+                      <td>
+                        {target === null ? (
+                          "—"
+                        ) : (
+                          <Link to={target}>View source</Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </TableScroll>
         ) : null}
 
         {tab === "History" ? (

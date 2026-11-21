@@ -39,10 +39,9 @@ export function ReviewPage() {
   return (
     <section>
       <h2>Review</h2>
-      <BuildBadge
-        buildId={remote.data?.buildId ?? null}
-        stale={remote.data?.stale ?? false}
-      />
+      {remote.data && (
+        <BuildBadge buildId={remote.data.buildId} stale={remote.data.stale} />
+      )}
       {currentConnections && (
         <ConnectionQueue
           data={currentConnections}
@@ -190,7 +189,7 @@ export function ReviewPage() {
               </table>
             </TableScroll>
           )}
-          {(remote.data?.items.length ?? 0) === 0 ? (
+          {remote.data?.buildId && remote.data.items.length === 0 ? (
             <p className="empty-state">
               No review issues in the active build. Nothing needs attention.
             </p>

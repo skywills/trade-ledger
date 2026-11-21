@@ -1,16 +1,23 @@
-import { normalizeStrategyDescription } from "../../shared/symbols.js";
+import { Decimal } from "decimal.js";
+import { normalizeStrategyDescription } from "./symbols.js";
 
 /** Pure filter/sort helpers for the journal table (no React, no I/O). */
 
-export type SortKey =
-  | "openingDate"
-  | "closeDate"
-  | "status"
-  | "expiry"
-  | "description"
-  | "openingAmount"
-  | "brokerPnl"
-  | "reconstructedPnl";
+export const JOURNAL_SORT_KEYS = [
+  "openingDate",
+  "closeDate",
+  "status",
+  "expiry",
+  "description",
+  "openingAmount",
+  "brokerPnl",
+  "reconstructedPnl",
+] as const;
+export type SortKey = (typeof JOURNAL_SORT_KEYS)[number];
+
+export function isJournalSortKey(key: string | null): key is SortKey {
+  return JOURNAL_SORT_KEYS.some((value) => value === key);
+}
 
 export type SortDirection = "asc" | "desc";
 
@@ -63,9 +70,7 @@ export function filterStrategies<T extends JournalRowLike>(
 
 function compareValues(key: SortKey, a: string, b: string): number {
   if (NUMERIC_KEYS.has(key)) {
-    const left = Number(a);
-    const right = Number(b);
-    if (!Number.isNaN(left) && !Number.isNaN(right)) return left - right;
+    return new Decimal(a).cmp(b);
   }
   return a.localeCompare(b, undefined, { numeric: true });
 }

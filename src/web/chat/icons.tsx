@@ -25,12 +25,6 @@ function Svg({ children }: { children: ReactNode }) {
   );
 }
 
-export const SparkleIcon = () => (
-  <Svg>
-    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5" />
-  </Svg>
-);
-
 export const SendIcon = () => (
   <Svg>
     <path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" />

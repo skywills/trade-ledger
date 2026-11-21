@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link } from "./navigation.js";
 
 /** Small shared presentational primitives driven by server buildId/stale. */
 
@@ -47,7 +48,8 @@ export function BuildBadge({
   if (buildId === null) {
     return (
       <p className="build-badge" data-testid="build-none">
-        No active build yet. Import a flex CSV to create one.
+        No active build yet. <Link to="/imports">Import an IBKR Flex CSV</Link>{" "}
+        to create one.
       </p>
     );
   }
@@ -87,4 +89,34 @@ export function pnlClass(value: string | null): string | undefined {
   const trimmed = value.trim();
   if (trimmed.startsWith("-")) return "pnl-loss";
   return /[1-9]/.test(trimmed) ? "pnl-gain" : undefined;
+}
+
+/** URL-backed paging keeps a ledger position when returning from a detail. */
+export function pageNumber(raw: string | null) {
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
+}
+
+export function PageLinks({
+  page,
+  pageSize,
+  total,
+  href,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  href: (page: number) => string;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if (pages === 1 && page === 1) return null;
+  return (
+    <nav className="ledger-paging" aria-label="Result pages">
+      {page > 1 && <Link to={href(Math.min(page - 1, pages))}>Previous</Link>}
+      <span>
+        Page {page} of {pages}
+      </span>
+      {page < pages && <Link to={href(page + 1)}>Next</Link>}
+    </nav>
+  );
 }

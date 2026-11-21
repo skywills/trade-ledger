@@ -4,6 +4,7 @@ import {
   CommitResponseSchema,
   type ImportPreview,
   ImportRowsEnvelope,
+  ImportRowViewSchema,
   ImportsEnvelope,
   PreviewResponseSchema,
   pollJob,
@@ -12,7 +13,13 @@ import {
   useJobSignal,
   useJson,
 } from "../api.js";
-import { ErrorPanel, Loading } from "../components.js";
+import {
+  ErrorPanel,
+  Loading,
+  PageLinks,
+  pageNumber,
+  TableScroll,
+} from "../components.js";
 import { Link, useQuery } from "../navigation.js";
 
 function ImportRowDetail({
@@ -22,17 +29,20 @@ function ImportRowDetail({
   importId: string;
   rowNumber: number;
 }) {
-  const rows = useJson(
-    `/api/imports/${encodeURIComponent(importId)}/rows?pageSize=100`,
-    ImportRowsEnvelope,
+  const remote = useJson(
+    `/api/imports/${encodeURIComponent(importId)}/rows/${rowNumber}`,
+    ImportRowViewSchema,
   );
-  if (rows.status === "loading") return <Loading label="Loading source row…" />;
-  if (rows.status === "error")
-    return <ErrorPanel message="Failed to load the source row." />;
-  const row = (rows.data?.items ?? []).find(
-    (entry) => entry.rowNumber === rowNumber,
-  );
-  if (row === undefined) return <p>Source row {rowNumber} not found.</p>;
+  if (remote.status === "loading")
+    return <Loading label="Loading source row…" />;
+  if (!remote.data)
+    return (
+      <ErrorPanel
+        message={remote.error?.message ?? "Failed to load the source row."}
+        onRetry={remote.reload}
+      />
+    );
+  const row = remote.data;
   return (
     <div data-testid="import-row-detail" className="row-detail">
       <h3>
@@ -49,6 +59,57 @@ function ImportRowDetail({
           ))}
       </dl>
     </div>
+  );
+}
+
+function ImportRows({ importId, page }: { importId: string; page: number }) {
+  const remote = useJson(
+    `/api/imports/${encodeURIComponent(importId)}/rows?pageSize=50&page=${page}`,
+    ImportRowsEnvelope,
+  );
+  if (remote.status === "loading")
+    return <Loading label="Loading source rows…" />;
+  if (!remote.data)
+    return (
+      <ErrorPanel
+        message={remote.error?.message ?? "Failed to load source rows."}
+        onRetry={remote.reload}
+      />
+    );
+  const href = (n: number) =>
+    `/imports?import=${encodeURIComponent(importId)}&page=${n}`;
+  return (
+    <>
+      {remote.data.items.length ? (
+        <TableScroll label="Source rows">
+          <table className="source-rows" aria-label="Source rows">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Section</th>
+                <th>Kind</th>
+              </tr>
+            </thead>
+            <tbody>
+              {remote.data.items.map((row) => (
+                <tr key={row.id}>
+                  <td>
+                    <Link to={`${href(page)}&row=${row.rowNumber}`}>
+                      Row {row.rowNumber}
+                    </Link>
+                  </td>
+                  <td>{row.section ?? "—"}</td>
+                  <td>{row.kind}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      ) : (
+        <p>No retained rows on this page.</p>
+      )}
+      <PageLinks {...remote.data} href={href} />
+    </>
   );
 }
 
@@ -172,6 +233,40 @@ export function ImportsPage() {
     if (!busy) addFiles(event.dataTransfer.files);
   }
 
+  if (selectedImport !== null) {
+    const page = pageNumber(query.get("page"));
+    const filename = imports.data?.items.find(
+      (entry) => entry.id === selectedImport,
+    )?.filename;
+    return (
+      <section>
+        <p>
+          <Link to="/imports">← Imports</Link>
+        </p>
+        <h2>{filename ?? "Import source rows"}</h2>
+        {query.has("row") ? (
+          <>
+            <Link
+              to={`/imports?import=${encodeURIComponent(selectedImport)}&page=${page}`}
+            >
+              Browse source rows
+            </Link>
+            <ImportRowDetail
+              key={`${selectedImport}/${selectedRow}`}
+              importId={selectedImport}
+              rowNumber={selectedRow}
+            />
+          </>
+        ) : (
+          <ImportRows
+            key={`${selectedImport}/${page}`}
+            importId={selectedImport}
+            page={page}
+          />
+        )}
+      </section>
+    );
+  }
   return (
     <section>
       <h2>Imports</h2>
@@ -299,38 +394,40 @@ export function ImportsPage() {
           message="Failed to load imports."
           onRetry={imports.reload}
         />
+      ) : !imports.data?.items.length ? (
+        <p className="empty-state">No files imported yet.</p>
       ) : (
-        <table aria-label="Imports">
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Status</th>
-              <th>Imported at</th>
-              <th>Hash</th>
-              <th>Rows</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(imports.data?.items ?? []).map((entry) => (
-              <tr key={entry.id}>
-                <td>{entry.filename}</td>
-                <td>{entry.status}</td>
-                <td>{entry.importedAt}</td>
-                <td>{entry.sha256.slice(0, 12)}</td>
-                <td>
-                  <a href={`/imports?import=${encodeURIComponent(entry.id)}`}>
-                    View rows
-                  </a>
-                </td>
+        <TableScroll label="Committed imports">
+          <table aria-label="Imports">
+            <thead>
+              <tr>
+                <th>Filename</th>
+                <th>Status</th>
+                <th>Imported at</th>
+                <th>Hash</th>
+                <th>Rows</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(imports.data?.items ?? []).map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.filename}</td>
+                  <td>{entry.status}</td>
+                  <td>{entry.importedAt}</td>
+                  <td>{entry.sha256.slice(0, 12)}</td>
+                  <td>
+                    <Link
+                      to={`/imports?import=${encodeURIComponent(entry.id)}`}
+                    >
+                      View rows
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
-
-      {selectedImport !== null && query.has("row") ? (
-        <ImportRowDetail importId={selectedImport} rowNumber={selectedRow} />
-      ) : null}
     </section>
   );
 }

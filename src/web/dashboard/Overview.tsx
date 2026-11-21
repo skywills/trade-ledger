@@ -165,7 +165,7 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
       </article>
       <article className="dashboard-activity-strip">
         <div>
-          <span className="dashboard-eyebrow">TRANSACTION ACTIVITY</span>
+          <span className="dashboard-eyebrow">Transaction activity</span>
           <p>
             <strong>{data.transactions.executions}</strong> executions across{" "}
             <strong>{data.transactions.tradedSymbols}</strong> symbols

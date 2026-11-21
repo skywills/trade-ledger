@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatPage } from "./chat/ChatPage.js";
 import { DashboardPage } from "./dashboard/DashboardPage.js";
 import { ImportsPage } from "./imports/ImportsPage.js";
@@ -17,6 +17,7 @@ function NotFound() {
     <section>
       <h2>Not found</h2>
       <p>No page matches this address.</p>
+      <Link to="/dashboard">Return to dashboard</Link>
     </section>
   );
 }
@@ -111,13 +112,16 @@ const SETTINGS_ITEM = {
 function NavLink({
   item,
   section,
+  onNavigate,
 }: {
   item: { to: string; label: string; match: readonly string[] };
   section: string;
+  onNavigate: () => void;
 }) {
   return (
     <Link
       to={item.to}
+      onClick={onNavigate}
       aria-current={item.match.includes(section) ? "page" : undefined}
     >
       {item.label}
@@ -128,15 +132,30 @@ function NavLink({
 /** Application shell with the history-driven navigation and route switch. */
 export function App() {
   const { pathname } = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const firstRender = useRef(true);
   const section =
     pathname.split("/").filter((part) => part !== "")[0] ?? "chat";
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    function dismiss(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        menuRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [menuOpen]);
+
   // Move focus to the main region after client-side navigation so keyboard
   // and screen-reader users land on the new page content.
   // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the trigger
   useEffect(() => {
+    setMenuOpen(false);
     if (firstRender.current) {
       firstRender.current = false;
       return;
@@ -152,12 +171,31 @@ export function App() {
       </a>
       <header className="app-header">
         <h1>TradeLedger</h1>
-        <nav aria-label="Primary">
+        <button
+          type="button"
+          className="nav-toggle"
+          ref={menuRef}
+          aria-expanded={menuOpen}
+          aria-controls="primary-nav"
+          onClick={() => setMenuOpen(!menuOpen)}
+        >
+          Menu
+        </button>
+        <nav id="primary-nav" aria-label="Primary" data-open={menuOpen}>
           {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} item={item} section={section} />
+            <NavLink
+              key={item.to}
+              item={item}
+              section={section}
+              onNavigate={() => setMenuOpen(false)}
+            />
           ))}
           <span className="nav-spacer" aria-hidden="true" />
-          <NavLink item={SETTINGS_ITEM} section={section} />
+          <NavLink
+            item={SETTINGS_ITEM}
+            section={section}
+            onNavigate={() => setMenuOpen(false)}
+          />
         </nav>
       </header>
       <main id="main-content" className="app-main" ref={mainRef} tabIndex={-1}>
