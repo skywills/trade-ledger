@@ -97,7 +97,33 @@ export async function registerLifecycleRoutes(
   app.get("/api/lifecycles/:id", (request) => {
     const { snapshot: s, meta } = snapshot(request);
     const { id } = request.params as { id: string };
-    return { ...meta, ...selectLifecycleDetail(s, id) };
+    const detail = selectLifecycleDetail(s, id);
+    const projection = s.projection?.lifecycles;
+    const { account, currency, underlyingKey } = detail.lifecycle;
+    const related = new Set(
+      projection?.lifecycles
+        .filter(
+          (l) =>
+            l.account === account &&
+            l.currency === currency &&
+            l.underlyingKey === underlyingKey,
+        )
+        .map((l) => l.id),
+    );
+    const memberKeys = new Set(
+      projection?.members
+        .filter((m) => related.has(m.lifecycleId))
+        .map((m) => m.allocation.executionKey),
+    );
+    const membershipExecutions =
+      s.ledger?.executions
+        .filter((e) => memberKeys.has(e.key))
+        .map((e) => ({
+          key: e.key,
+          date: e.date,
+          instrument: e.instrument,
+        })) ?? [];
+    return { ...meta, ...detail, membershipExecutions };
   });
   app.get("/api/campaigns/:id", (request) => {
     const { snapshot: s, meta } = snapshot(request);

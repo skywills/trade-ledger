@@ -198,6 +198,8 @@ export const AnalysisStatusSchema = z.enum([
   "failed",
   "cancelled",
   "accepted",
+  "reviewed",
+  "rejected",
 ]);
 
 export const RunSummarySchema = z.object({
@@ -225,6 +227,7 @@ export const SubmittedProposalSchema = z.object({
   proposal: ProposalDraftSchema,
   submittedAt: z.string(),
   accepted: z.boolean(),
+  rejected: z.boolean().optional(),
 });
 
 export const AnalysisRunSchema = z.object({

@@ -607,12 +607,31 @@ export function listImports(store: Store): ImportSummary[] {
        FROM imports ORDER BY imported_at, id`,
     )
     .all() as ImportRecord[];
-  return rows.map((row) => ({
+  return rows.map(importSummary);
+}
+
+function importSummary(row: ImportRecord): ImportSummary {
+  return {
     id: row.id,
     filename: row.filename,
     sha256: row.sha256,
     originalFilePath: row.original_file_path,
     importedAt: row.imported_at,
     status: row.status,
-  }));
+  };
+}
+
+export function readImportSummary(store: Store, id: string): ImportSummary {
+  const row = store.db
+    .prepare(
+      "SELECT id, filename, sha256, original_file_path, imported_at, status FROM imports WHERE id = ?",
+    )
+    .get(id) as ImportRecord | undefined;
+  if (!row)
+    throw new AppError(
+      "IMPORT_NOT_FOUND",
+      "This import could not be found.",
+      404,
+    );
+  return importSummary(row);
 }

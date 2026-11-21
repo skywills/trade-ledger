@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
+import { z } from "zod";
 import {
   ApiError,
-  BackupStartResponseSchema,
   BuildResponseSchema,
   type Job,
   JobEnvelopeSchema,
@@ -14,8 +14,20 @@ import {
   useJson,
 } from "../api.js";
 import { BuildBadge, ErrorPanel } from "../components.js";
+import { BackupsPanel } from "./BackupsPanel.js";
 import { ModelsPanel } from "./ModelsPanel.js";
 import { ResetJournal } from "./ResetJournal.js";
+
+const RetainedBuilds = z.object({
+  builds: z.array(
+    z.object({
+      id: z.string(),
+      createdAt: z.string(),
+      status: z.string(),
+      active: z.number(),
+    }),
+  ),
+});
 
 /**
  * Maintenance owns rebuild/rollback, backup, and offline restore controls, plus
@@ -30,8 +42,10 @@ export function MaintenancePage() {
   const [rollbackId, setRollbackId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
-  const [backupJob, setBackupJob] = useState<Job | null>(null);
-  const [backupBusy, setBackupBusy] = useState(false);
+  const retained = useJson("/api/maintenance/builds", RetainedBuilds);
+  const target = retained.data?.builds.find(
+    (b) => b.id === rollbackId && !b.active,
+  );
   const restore = useJson(
     "/api/maintenance/restore",
     RestoreInstructionsSchema,
@@ -61,6 +75,7 @@ export function MaintenancePage() {
       signal.throwIfAborted();
       setJob(finished);
       journal.reload();
+      retained.reload();
     } catch (caught) {
       if (!signal.aborted)
         setError(caught instanceof Error ? caught.message : String(caught));
@@ -83,36 +98,14 @@ export function MaintenancePage() {
     }
   }
 
-  async function startBackup() {
-    const signal = jobSignal();
-    setBackupBusy(true);
-    setError(null);
-    setBackupJob(null);
-    try {
-      const { jobId } = await requestJson(
-        "/api/maintenance/backups",
-        BackupStartResponseSchema,
-        "POST",
-      );
-      const finished = await pollJob(jobId, setBackupJob, { signal });
-      signal.throwIfAborted();
-      setBackupJob(finished);
-    } catch (caught) {
-      if (!signal.aborted)
-        setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (!signal.aborted) setBackupBusy(false);
-    }
-  }
-
   async function rollback() {
     setConfirmingRollback(false);
-    if (rollbackId.trim() === "") return;
+    if (!target) return;
     setError(null);
     setNotice(null);
     try {
       const response = await requestJson(
-        `/api/builds/${rollbackId.trim()}/rollback`,
+        `/api/builds/${encodeURIComponent(target.id)}/rollback`,
         RollbackResponseSchema,
         "POST",
       );
@@ -120,6 +113,7 @@ export function MaintenancePage() {
         `Restored build ${response.buildId ?? "unknown"}${response.stale ? " (stale)" : ""}.`,
       );
       journal.reload();
+      retained.reload();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : String(caught));
     }
@@ -183,13 +177,31 @@ export function MaintenancePage() {
         </p>
         <p>
           <label>
-            Build id to restore{" "}
-            <input
+            Build to restore{" "}
+            <select
               value={rollbackId}
-              onChange={(event) => setRollbackId(event.target.value)}
-            />
+              onChange={(event) => {
+                setRollbackId(event.target.value);
+                setConfirmingRollback(false);
+              }}
+            >
+              <option value="" disabled>
+                Choose a retained build
+              </option>
+              {retained.data?.builds.map((build) => (
+                <option
+                  key={build.id}
+                  value={build.id}
+                  disabled={Boolean(build.active)}
+                >
+                  {new Date(build.createdAt).toLocaleString()} ·{" "}
+                  {build.id.slice(0, 8)}
+                  {build.active ? " (current)" : ""}
+                </option>
+              ))}
+            </select>
           </label>{" "}
-          {confirmingRollback ? (
+          {confirmingRollback && target ? (
             <>
               <button
                 type="button"
@@ -208,11 +220,8 @@ export function MaintenancePage() {
           ) : (
             <button
               type="button"
+              disabled={!target}
               onClick={() => {
-                if (rollbackId.trim() === "") {
-                  setError("Enter the id of the build to restore.");
-                  return;
-                }
                 setError(null);
                 setConfirmingRollback(true);
               }}
@@ -221,49 +230,30 @@ export function MaintenancePage() {
             </button>
           )}
         </p>
-        {confirmingRollback ? (
+        {confirmingRollback && target ? (
           <p role="alert" className="muted">
-            Restore build {rollbackId.trim()}? The active build will be
-            replaced.
+            Restore build {target.id} created{" "}
+            {new Date(target.createdAt).toLocaleString()}? The active build will
+            be replaced.
           </p>
         ) : null}
+        {retained.error && (
+          <ErrorPanel
+            message={retained.error.message}
+            onRetry={retained.reload}
+          />
+        )}
+        {retained.status === "ready" &&
+          !retained.data?.builds.some((build) => !build.active) && (
+            <p>No previous builds are available to restore.</p>
+          )}
         {notice !== null ? (
           <p data-testid="rollback-notice" role="status">
             {notice}
           </p>
         ) : null}
       </section>
-      <section className="card">
-        <h3>Backup</h3>
-        <p className="muted">
-          Create a downloadable archive of the journal data.
-        </p>
-        <p>
-          <button
-            type="button"
-            onClick={() => void startBackup()}
-            disabled={backupBusy}
-          >
-            Create backup
-          </button>
-        </p>
-        {backupJob !== null ? (
-          <p role="status">
-            <span data-testid="backup-status">Backup {backupJob.status}</span>
-            {backupJob.status === "complete" ? (
-              <>
-                {" "}
-                <a
-                  data-testid="backup-download"
-                  href={`/api/maintenance/backups/${backupJob.id}/download`}
-                >
-                  Download archive
-                </a>
-              </>
-            ) : null}
-          </p>
-        ) : null}
-      </section>
+      <BackupsPanel />
       <section className="card">
         <h3>Restore</h3>
 
@@ -283,8 +273,9 @@ export function MaintenancePage() {
       <ResetJournal
         onReset={() => {
           journal.reload();
+          retained.reload();
           setJob(null);
-          setBackupJob(null);
+          setConfirmingRollback(false);
           setRollbackId("");
           setNotice(null);
           setError(null);

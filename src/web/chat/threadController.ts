@@ -17,6 +17,7 @@ export interface ThreadState {
   readonly liveThinking: Readonly<Record<string, string>>;
   readonly liveTools: Readonly<Record<string, ToolRecordDto[]>>;
   readonly pending: PendingDto | null;
+  readonly expiredRequestId: string | null;
   readonly error: string | null;
   readonly needsRefetch: boolean;
 }
@@ -30,6 +31,7 @@ export function initialThreadState(): ThreadState {
     liveRevision: {},
     liveTools: {},
     pending: null,
+    expiredRequestId: null,
     error: null,
     needsRefetch: false,
   };
@@ -99,7 +101,10 @@ const Question = z.object({
   text: z.string(),
   expiresAt: z.string(),
 });
-const Resolved = z.object({ requestId: z.string() });
+const Resolved = z.object({
+  requestId: z.string(),
+  decidedBy: z.string().optional(),
+});
 const ErrorFrame = z.object({ code: z.string(), message: z.string() });
 
 type ToolFrame = z.infer<typeof Tool>;
@@ -185,7 +190,7 @@ function applyApproval(state: ThreadState, data: unknown): ThreadState {
     text: f.data.summary,
     expiresAt: f.data.expiresAt,
   };
-  return { ...state, pending };
+  return { ...state, pending, expiredRequestId: null };
 }
 
 function applyQuestion(state: ThreadState, data: unknown): ThreadState {
@@ -198,13 +203,18 @@ function applyQuestion(state: ThreadState, data: unknown): ThreadState {
     text: f.data.text,
     expiresAt: f.data.expiresAt,
   };
-  return { ...state, pending };
+  return { ...state, pending, expiredRequestId: null };
 }
 
 function applyResolved(state: ThreadState, data: unknown): ThreadState {
   const f = Resolved.safeParse(data);
   return f.success && state.pending?.requestId === f.data.requestId
-    ? { ...state, pending: null }
+    ? {
+        ...state,
+        pending: null,
+        expiredRequestId:
+          f.data.decidedBy === "timeout" ? f.data.requestId : null,
+      }
     : state;
 }
 

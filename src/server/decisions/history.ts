@@ -2,6 +2,7 @@ import type { Store } from "../storage/database.js";
 import { type Decision, effectiveDecisions, readDecisions } from "./service.js";
 
 export interface DecisionHistoryQuery {
+  decisionId?: string | undefined;
   kind?: string | undefined;
   strategyId?: string | undefined;
   lifecycleId?: string | undefined;
@@ -99,6 +100,7 @@ export function selectDecisionHistory(
     if (d.supersedesId !== null) superseders.set(d.supersedesId, d.id);
   const rows = all
     .filter((d) => {
+      if (query.decisionId && d.id !== query.decisionId) return false;
       if (query.kind && d.kind !== query.kind) return false;
       const refs = references(d);
       return (

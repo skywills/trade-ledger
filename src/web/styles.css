@@ -141,6 +141,7 @@ main:focus {
 
 /* ---------- Shell ---------- */
 .app-shell {
+  container-type: inline-size;
   min-height: 100dvh;
 }
 
@@ -1641,7 +1642,7 @@ button.chip-remove {
 .nav-toggle {
   display: none;
 }
-@media (max-width: 720px) {
+@container (max-width: 66rem) {
   .app-header {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -1665,6 +1666,15 @@ button.chip-remove {
   }
   .app-header .nav-spacer {
     display: none;
+  }
+}
+@container (max-width: 15rem) {
+  .app-header,
+  .app-header nav[data-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nav-toggle {
+    justify-self: start;
   }
 }
 

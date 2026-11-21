@@ -66,11 +66,7 @@ export function TransactionsPage() {
                     <td>{execution.action}</td>
                     <td>{execution.event}</td>
                     <td className="ledger-number">{execution.quantity}</td>
-                    <td className="ledger-number">
-                      {execution.price === null
-                        ? "—"
-                        : formatMoney(execution.price, execution.currency)}
-                    </td>
+                    <td className="ledger-number">{execution.price ?? "—"}</td>
                     <td>{execution.currency}</td>
                     <td className="ledger-number">
                       {formatMoney(execution.netCash, execution.currency)}

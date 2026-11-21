@@ -47,6 +47,7 @@ describe("UsageMeter", () => {
       outputTokens: 150,
       generatedTokens: 150,
     });
+    expect(meter.costCoverage).toBe("priced");
     expect(meter.costUsd).toBeCloseTo(0.03);
     expect(meter.costSource).toBe("computed");
   });
@@ -55,6 +56,7 @@ describe("UsageMeter", () => {
     const meter = new UsageMeter(DEFAULT_TURN_LIMITS);
     meter.observe(usage(1, 10, 99, "unpriced"));
     expect(meter.costUsd).toBe(0);
+    expect(meter.costCoverage).toBe("unpriced");
     expect(meter.costSource).toBe("unpriced");
   });
 
@@ -62,6 +64,7 @@ describe("UsageMeter", () => {
     const meter = new UsageMeter(DEFAULT_TURN_LIMITS);
     meter.observe(usage(1, 10, 0.05));
     meter.observe(usage(2, 10, 99, "unpriced"));
+    expect(meter.costCoverage).toBe("partial");
     expect(meter.costUsd).toBeCloseTo(0.05);
     expect(meter.costSource).toBe("computed");
   });
@@ -100,6 +103,7 @@ describe("UsageMeter", () => {
       outputTokens: 30,
       generatedTokens: 30,
     });
+    expect(meter.costCoverage).toBe("priced");
     expect(meter.costUsd).toBeCloseTo(0.05);
   });
 });

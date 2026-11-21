@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { ApplyRecommendedButton, ConnectionRow } from "./ConnectionRows.js";
 import {
   type ConnectionData,
@@ -26,27 +26,36 @@ const ApplyRecommendedDialog = lazy(() =>
   })),
 );
 
+export function useConnectionSelection() {
+  return useState<Set<string>>(new Set());
+}
+type Selection = ReturnType<typeof useConnectionSelection>;
+
 function UnderlyingConnections({
   section,
+  selection,
   data,
   onChanged,
 }: {
   section: ConnectionSection;
+  selection: Selection;
   data: ConnectionData;
   onChanged: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = selection;
   const [applying, setApplying] = useState<PositionGroup | null>(null);
   const [mode, setMode] = useState<"connect" | "separate" | null>(null);
   const eligible = section.groups.filter((g) => g.canReviewWhole);
-  const groups = section.groups.filter((g) => selected.has(g.key));
+  const groups = eligible.filter((g) => selected.has(g.key));
   const allSelected =
     eligible.length > 0 && eligible.every((g) => selected.has(g.key));
   const disabled = data.stale || data.rebuildRequired || !data.buildId;
   const candidates = commonConnectionTargets(groups);
-  const positions = section.groups.some(groupPlan)
-    ? positionGroups(section, data)
-    : null;
+  const positions = useMemo(
+    () =>
+      section.groups.some(groupPlan) ? positionGroups(section, data) : null,
+    [section, data],
+  );
   const toggle = (key: string, checked: boolean) =>
     setSelected((previous) => {
       const next = new Set(previous);
@@ -61,7 +70,7 @@ function UnderlyingConnections({
           key={group.key}
           group={group}
           data={data}
-          checked={selected.has(group.key)}
+          checked={group.canReviewWhole && selected.has(group.key)}
           disabled={disabled}
           onToggle={(checked) => toggle(group.key, checked)}
         />
@@ -87,11 +96,17 @@ function UnderlyingConnections({
           type="checkbox"
           checked={allSelected}
           disabled={disabled || !eligible.length}
-          onChange={(e) =>
-            setSelected(
-              new Set(e.target.checked ? eligible.map((g) => g.key) : []),
-            )
-          }
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setSelected((previous) => {
+              const next = new Set(previous);
+              for (const group of eligible) {
+                if (checked) next.add(group.key);
+                else next.delete(group.key);
+              }
+              return next;
+            });
+          }}
         />
         Select all {section.underlying} connections
       </label>
@@ -145,10 +160,9 @@ function UnderlyingConnections({
           <ApplyRecommendedDialog
             data={data}
             position={applying}
-            onDismiss={() => {
+            onDismiss={(refresh) => {
               setApplying(null);
-              setSelected(new Set());
-              onChanged();
+              if (refresh) onChanged();
             }}
           />
         </Suspense>
@@ -159,10 +173,15 @@ function UnderlyingConnections({
             data={data}
             groups={groups}
             separate={mode === "separate"}
-            onDismiss={() => {
+            onDismiss={(refresh, savedKeys) => {
               setMode(null);
-              setSelected(new Set());
-              onChanged();
+              if (savedKeys.length)
+                setSelected((previous) => {
+                  const next = new Set(previous);
+                  for (const key of savedKeys) next.delete(key);
+                  return next;
+                });
+              if (refresh) onChanged();
             }}
           />
         </Suspense>
@@ -173,12 +192,15 @@ function UnderlyingConnections({
 
 export function ConnectionQueue({
   data,
+  selection,
   onChanged = () => {},
 }: {
   data: ConnectionData;
+  selection?: Selection;
   onChanged?: () => void;
 }) {
-  const sections = connectionSections(data);
+  const localSelection = useConnectionSelection();
+  const sections = useMemo(() => connectionSections(data), [data]);
   if (!sections.length) return null;
   const groups = sections.flatMap((s) => s.groups);
   const affected = new Set(groups.flatMap((g) => g.affectedIds)).size;
@@ -206,6 +228,7 @@ export function ConnectionQueue({
       {sections.map((section) => (
         <UnderlyingConnections
           key={`${data.buildId}:${section.key}`}
+          selection={selection ?? localSelection}
           section={section}
           data={data}
           onChanged={onChanged}

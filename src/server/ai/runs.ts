@@ -21,13 +21,16 @@ export type AnalysisStatus =
   | "proposal_ready"
   | "failed"
   | "cancelled"
-  | "accepted";
+  | "accepted"
+  | "reviewed"
+  | "rejected";
 
 export interface SubmittedProposal {
   readonly id: Id;
   readonly proposal: Proposal;
   readonly submittedAt: string;
   readonly accepted: boolean;
+  readonly rejected?: boolean;
 }
 
 export interface RunUsage {
@@ -357,44 +360,28 @@ export function recordValidatedProposal(
   });
 }
 
-/**
- * Marks one proposal accepted and records its decision, re-reading the row
- * inside the writer queue so a concurrently appended proposal is never lost.
- */
-export function markProposalAccepted(
+/** Keep card state and its retained decision in the same writer transaction. */
+export function saveProposalDecisions(
   store: Store,
-  runId: Id,
-  proposalId: Id,
+  run: PersistedRun,
+  proposals: SubmittedProposal[],
   decisionId: Id,
-): Promise<void> {
-  return write(store, () => {
-    const current = readRun(store, runId);
-    if (current === null) {
-      throw new AppError(
-        "RUN_NOT_FOUND",
-        `No analysis run exists for id ${runId}.`,
-        404,
-      );
-    }
-    if (current.proposals.find((entry) => entry.id === proposalId)?.accepted)
-      return;
-    const proposals = current.proposals.map((entry) =>
-      entry.id === proposalId ? { ...entry, accepted: true } : entry,
+): void {
+  let status = run.status;
+  if (proposals.every((p) => p.accepted)) status = "accepted";
+  else if (proposals.every((p) => p.rejected)) status = "rejected";
+  else if (proposals.every((p) => p.accepted || p.rejected))
+    status = "reviewed";
+  store.db
+    .prepare(
+      "UPDATE ai_runs SET proposal_json = ?, decision_references_json = ?, status = ? WHERE id = ?",
+    )
+    .run(
+      JSON.stringify({ proposals }),
+      JSON.stringify([...new Set([...run.acceptedDecisionIds, decisionId])]),
+      status,
+      run.id,
     );
-    const status = proposals.every((entry) => entry.accepted)
-      ? "accepted"
-      : current.status;
-    store.db
-      .prepare(
-        "UPDATE ai_runs SET proposal_json = ?, decision_references_json = ?, status = ? WHERE id = ?",
-      )
-      .run(
-        JSON.stringify({ proposals }),
-        JSON.stringify([...current.acceptedDecisionIds, decisionId]),
-        status,
-        runId,
-      );
-  });
 }
 
 export function listRunsForThread(store: Store, threadId: Id): PersistedRun[] {
@@ -426,6 +413,7 @@ export function listRunSummaries(store: Store): RunSummary[] {
       status: run.status,
       createdAt: run.createdAt,
       threadId: run.threadId,
-      pendingProposals: run.proposals.filter((p) => !p.accepted).length,
+      pendingProposals: run.proposals.filter((p) => !p.accepted && !p.rejected)
+        .length,
     }));
 }

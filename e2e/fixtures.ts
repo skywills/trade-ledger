@@ -7,7 +7,7 @@ import { test as base } from "playwright/test";
 export { expect } from "playwright/test";
 export type { APIRequestContext, Page } from "playwright/test";
 
-type AppServer = { origin: string; close(): Promise<void> };
+type AppServer = { origin: string; dataDir: string; close(): Promise<void> };
 type ServerScope = { forFile(file: string): Promise<AppServer> };
 
 async function stop(child: ChildProcess): Promise<void> {
@@ -74,7 +74,7 @@ async function startServer(): Promise<AppServer> {
       child.once("error", onError);
       child.on("message", onMessage);
     });
-    return { origin, close };
+    return { origin, dataDir, close };
   } catch (error) {
     await close();
     throw error;

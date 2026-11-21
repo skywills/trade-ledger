@@ -21,6 +21,8 @@ import {
 } from "../builds/service.js";
 import { readStrategyMetadata } from "../decisions/service.js";
 import type { Store } from "../storage/database.js";
+import { loadLedgerSnapshot } from "../storage/ledger.js";
+import { selectStrategyEvidence } from "../strategies/evidence.js";
 
 /** Journal, ledger and strategy read routes, all served from the active build. */
 export async function registerJournalRoutes(
@@ -145,18 +147,21 @@ export async function registerJournalRoutes(
     const strategy = active.projection?.strategies.find(
       (entry) => entry.id === id,
     );
-    if (strategy === undefined) {
+    if (!active.projection || strategy === undefined) {
       throw new AppError(
         "STRATEGY_NOT_FOUND",
         `No strategy exists for id ${id} in the active build.`,
         404,
       );
     }
-    const allocations = (active.projection?.allocations ?? []).filter(
-      (entry) => entry.strategyId === id,
-    );
     const links = (active.projection?.links ?? []).filter(
       (entry) => entry.from === id || entry.to === id,
+    );
+    const ledger = loadLedgerSnapshot(store.db, active.projection.ledgerId);
+    const evidence = selectStrategyEvidence(
+      ledger,
+      active.projection.allocations,
+      id,
     );
     const metadata = readStrategyMetadata(store, id);
     return {
@@ -164,7 +169,7 @@ export async function registerJournalRoutes(
         ...strategy,
         description: normalizeStrategyDescription(strategy.description),
       },
-      allocations,
+      ...evidence,
       links,
       metadata,
       buildId: active.buildId,

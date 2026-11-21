@@ -150,6 +150,7 @@ type Decision = {
 async function setup(page: Page, closeQuantity = "2") {
   const state = {
     build: 1,
+    issues: [] as {key:string;code:string;severity:string;sources:typeof source[]}[],
     decisions: [] as Decision[],
     suggestions: [suggestion],
     campaigns: [] as {
@@ -212,7 +213,7 @@ async function setup(page: Page, closeQuantity = "2") {
                 ],
                 campaigns: state.campaigns,
                 suggestions: state.suggestions,
-                issues: [],
+                issues: state.issues,
                 valuations: [state.valuation],
               },
             }
@@ -433,6 +434,9 @@ test("manual valuation requires a complete dated snapshot and shows its timestam
       "Save 2 manual prices as of 2026-10-17 12:00 UTC for U1 in USD.",
     ),
   ).toBeVisible();
+  const marks = page.getByRole("list", { name: "Prices to save" });
+  await expect(marks).toContainText("200 units at 95 USD");
+  await expect(marks).toContainText("1 unit at 1 USD");
   await page.getByRole("button", { name: "Save prices and rebuild" }).click();
   await expect(page.getByText("2026-10-17T12:00:00Z · manual")).toBeVisible();
   expect(state.decisions[0]).toMatchObject({
@@ -512,6 +516,7 @@ test("lifecycle dashboard defaults, selector, drill links and export use the sam
 test("campaign coverage keeps missing completed results and missing open marks unavailable", async ({
   page,
 }) => {
+  await setup(page);
   const campaign = {
     id: "campaign",
     name: "ABC campaign",
@@ -534,6 +539,7 @@ test("campaign coverage keeps missing completed results and missing open marks u
       json: {
         campaign,
         cycles: [{ ...lifecycle, campaignId: campaign.id }, other],
+        missingPriceCycleIds: [lifecycle.id],
         summary: {
           campaignId: campaign.id,
           completed: 2,
@@ -562,9 +568,13 @@ test("campaign coverage keeps missing completed results and missing open marks u
       .first(),
   ).toBeVisible();
   await expect(page.getByText("0 / 1 open cycles valued")).toBeVisible();
+  await expect(page.getByRole("link", {name: /Add dated prices/})).toHaveAttribute("href", /cycle-one.*editor=valuation/);
   await expect(
-    page.getByRole("link", { name: lifecycle.description }),
+    page.getByRole("link", { name: lifecycle.description, exact: true }),
   ).toHaveAttribute("href", /lifecycles\/cycle-one\?expectedBuildId=build-1/);
+  await page.getByRole("link", { name: /Add dated prices/ }).click();
+  await expect(page.getByLabel("Valuation time (UTC)")).toBeVisible();
+  await expect(page.getByText("Add dated manual prices", {exact:true})).toBeFocused();
 });
 
 test("source membership preview conserves the complete source quantity before saving a split", async ({
@@ -869,4 +879,41 @@ test("navigating to another lifecycle resets the unsaved campaign selection", as
     lifecycleId: other.id,
     campaignId: null,
   });
+});
+
+test("legacy lifecycle issues identify the exact source allocation or retained decision", async ({
+  page,
+}) => {
+  const state = await setup(page);
+  state.issues.push(
+    {
+      key: 'lifecycle:conservation:["shares","stock-open","open"]',
+      code: "LIFECYCLE_CONSERVATION",
+      severity: "error",
+      sources: [],
+    },
+    {
+      key: 'lifecycle:conservation:["other-strategy","missing","close"]',
+      code: "LIFECYCLE_CONSERVATION",
+      severity: "error",
+      sources: [],
+    },
+    {
+      key: "lifecycle:decision:decision-two",
+      code: "LIFECYCLE_DECISION_UNRESOLVED",
+      severity: "warning",
+      sources: [],
+    },
+  );
+  await page.goto("/lifecycles");
+  const issues = page.getByRole("complementary", { name: "Lifecycle issues" });
+  await expect(
+    issues.getByRole("link", { name: /ABC assigned spread/ }),
+  ).toHaveAttribute("href", /lifecycles\/cycle-one/);
+  await expect(
+    issues.getByRole("link", { name: /other-strategy/ }),
+  ).toHaveAttribute("href", /strategies\/other-strategy/);
+  await expect(
+    issues.getByRole("link", { name: /decision-two/ }),
+  ).toHaveAttribute("href", "/review?decisionId=decision-two");
 });

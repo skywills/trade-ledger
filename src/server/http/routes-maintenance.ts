@@ -1,4 +1,5 @@
 import { createReadStream, existsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../shared/errors.js";
@@ -24,6 +25,48 @@ export async function registerMaintenanceRoutes(
   jobs: JobService,
 ): Promise<void> {
   const backupsDir = join(store.dataDir, "backups");
+
+  app.get("/api/maintenance/builds", async () => ({
+    builds: store.db
+      .prepare(`
+      SELECT b.id, b.created_at AS createdAt, b.status,
+             CASE WHEN b.id = s.active_build_id THEN 1 ELSE 0 END AS active
+      FROM builds b CROSS JOIN app_state s
+      WHERE s.singleton = 1 AND b.status IN ('active', 'stale')
+      ORDER BY b.created_at DESC, b.rowid DESC
+    `)
+      .all(),
+  }));
+
+  app.get("/api/maintenance/backups", async () => {
+    const latestRow = store.db
+      .prepare(
+        "SELECT id FROM jobs WHERE kind = 'backup' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get() as { id: string } | undefined;
+    const latest = latestRow ? jobs.read(latestRow.id) : null;
+    const files = existsSync(backupsDir)
+      ? await readdir(backupsDir, { withFileTypes: true })
+      : [];
+    const archives = [];
+    for (const file of files) {
+      if (!file.isFile() || !/^[0-9a-fA-F-]{1,64}\.tar$/.test(file.name))
+        continue;
+      const id = file.name.slice(0, -4);
+      const job = jobs.read(id);
+      // Reset retains archives even when it clears their old job records.
+      if (job && job.status !== "complete") continue;
+      const createdAt =
+        job?.finishedAt ??
+        (await stat(join(backupsDir, file.name))).mtime.toISOString();
+      archives.push({ id, createdAt });
+    }
+    archives.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return {
+      latest,
+      archives: archives.slice(0, 20),
+    };
+  });
 
   app.post("/api/maintenance/backups", async (_request, reply) => {
     const jobId = await startBackupJob(store, jobs);

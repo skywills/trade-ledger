@@ -6,6 +6,7 @@ import {
   ThreadEnvelopeSchema,
 } from "../../shared/chat-api.js";
 import { ApiError, JournalEnvelope, requestJson, useJson } from "../api.js";
+import { ErrorPanel, Loading } from "../components.js";
 import { navigate } from "../navigation.js";
 import { Composer } from "./Composer.js";
 
@@ -23,14 +24,12 @@ type Model = {
   ready: boolean;
 };
 
-function useDefaultModel(): { model: Model | null; loading: boolean } {
+function useDefaultModel() {
   const models = useJson("/api/models", ModelsResponseSchema);
   const profile = models.data?.profiles.find(
     (p) => p.id === models.data?.defaultProfileId,
   );
-  if (profile === undefined) {
-    return { model: null, loading: models.status === "loading" };
-  }
+  if (profile === undefined) return { model: null, models };
   const ready = profile.enabled && profile.compatibility.status === "verified";
   return {
     model: {
@@ -39,7 +38,7 @@ function useDefaultModel(): { model: Model | null; loading: boolean } {
       mode: profile.mode,
       ready,
     },
-    loading: false,
+    models,
   };
 }
 
@@ -125,7 +124,7 @@ function CloudConsent({
 
 /** The landing page: one input, a few suggested questions, and model status. */
 export function AgentHome({ onStarted }: { onStarted: () => void }) {
-  const { model, loading } = useDefaultModel();
+  const { model, models } = useDefaultModel();
   const [draft, setDraft] = useState({ text: "", nonce: 0 });
   const [cloudConfirmed, setCloudConfirmed] = useState(false);
   const cloud = model?.mode === "cloud";
@@ -154,12 +153,16 @@ export function AgentHome({ onStarted }: { onStarted: () => void }) {
         </p>
         {model !== null ? <StatusLine model={model} /> : null}
       </div>
-      {!loading && (model === null || !model.ready) ? (
+      {models.error ? (
+        <ErrorPanel message={models.error.message} onRetry={models.reload} />
+      ) : models.status === "loading" ? (
+        <Loading label="Checking model availability…" />
+      ) : model === null || !model.ready ? (
         <NoModel />
       ) : (
         <>
           <Composer
-            disabled={loading || (cloud && !cloudConfirmed)}
+            disabled={cloud && !cloudConfirmed}
             initialText=""
             prefill={draft}
             onSend={send}

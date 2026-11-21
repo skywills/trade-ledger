@@ -90,6 +90,9 @@ export const LifecycleListSchema = z.object({
 export const LifecycleDetailSchema = z.object({
   ...Provenance,
   lifecycle: LifecycleSchema,
+  membershipExecutions: z
+    .array(ExecutionSchema.pick({ key: true, date: true, instrument: true }))
+    .optional(),
   members: z.array(MemberSchema),
   executions: z.array(ExecutionSchema),
   suggestions: z.array(SuggestionSchema),

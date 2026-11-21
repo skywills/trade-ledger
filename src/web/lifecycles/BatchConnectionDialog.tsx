@@ -26,7 +26,7 @@ export function BatchConnectionDialog({
   data: ConnectionData;
   groups: ConnectionGroup[];
   separate: boolean;
-  onDismiss: () => void;
+  onDismiss: (refresh: boolean, savedKeys: string[]) => void;
 }) {
   const candidates = commonConnectionTargets(groups);
   const [target, setTarget] = useState(
@@ -86,7 +86,13 @@ export function BatchConnectionDialog({
   function dismiss() {
     if (inFlight.current && (!hasReceipt() || hasPendingSave())) return;
     dialog.current?.close();
-    onDismiss();
+    const items = batch.current?.items ?? [];
+    onDismiss(
+      batch.current !== null || error !== null,
+      items
+        .filter((item) => item.receipt !== undefined)
+        .map((item) => item.group.key),
+    );
   }
 
   async function confirm() {

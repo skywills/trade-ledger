@@ -569,6 +569,24 @@ describe("validated HTTP API", () => {
       stopLoss: null,
     });
 
+    const evidence = strategy.json();
+    expect(
+      evidence.executions.map((row: { key: string }) => row.key).sort(),
+    ).toEqual(
+      [
+        ...new Set(
+          evidence.allocations.map(
+            (row: { executionKey: string }) => row.executionKey,
+          ),
+        ),
+      ].sort(),
+    );
+    expect(
+      evidence.lots.map(
+        (row: { source: { rowNumber: number } }) => row.source.rowNumber,
+      ),
+    ).toEqual([6, 7]);
+
     const pinned = await app.inject(
       `/api/strategies/${strategyId}?expectedBuildId=${fullBody.buildId}`,
     );

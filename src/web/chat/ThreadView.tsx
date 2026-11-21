@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ThreadDetailDto } from "../../shared/chat-api.js";
+import type { PendingDto, ThreadDetailDto } from "../../shared/chat-api.js";
 import { ApiError } from "../api.js";
 import { ErrorPanel, Loading } from "../components.js";
 import { useQuery } from "../navigation.js";
@@ -24,12 +24,21 @@ function ThreadHeader({
   onChanged: () => void;
 }) {
   const tokens = thread.usage.generatedTokens;
+  const coverage =
+    thread.usage.costCoverage ??
+    (Number(thread.cost) > 0 ? "partial" : "unpriced");
+  const cost =
+    coverage === "priced"
+      ? `$${thread.cost}`
+      : coverage === "partial"
+        ? `Known cost $${thread.cost} (partially priced)`
+        : "Cost unavailable";
   return (
     <header className="thread-header">
       <div className="thread-heading">
         <h2>{thread.title}</h2>
         <p className="muted">
-          {thread.modelRef} · ${thread.cost}
+          {thread.modelRef} · {cost}
           {tokens > 0 ? ` · ${tokens.toLocaleString("en-US")} tokens` : ""}
         </p>
       </div>
@@ -39,14 +48,50 @@ function ThreadHeader({
 }
 
 /** Announces turn progress once, instead of every streamed delta. */
-function TurnAnnouncer({ running }: { running: boolean }) {
+function TurnAnnouncer({
+  running,
+  pending,
+  expiredRequestId,
+}: {
+  running: boolean;
+  pending: PendingDto | null;
+  expiredRequestId: string | null;
+}) {
   const [said, setSaid] = useState("");
   const wasRunning = useRef(running);
+  const lastExpired = useRef<string | null>(null);
+  const lastAnnounced = useRef<string | null>(null);
+  const { requestId, kind, text, tool, expiresAt } = pending ?? {};
   useEffect(() => {
-    if (running) setSaid("The agent is replying.");
-    else if (wasRunning.current) setSaid("The agent replied.");
+    const previouslyRunning = wasRunning.current;
     wasRunning.current = running;
-  }, [running]);
+    if (requestId && expiresAt) {
+      const remaining = Math.max(0, Date.parse(expiresAt) - Date.now());
+      const expire = () => {
+        lastExpired.current = requestId;
+        setSaid("Request expired.");
+      };
+      if (remaining <= 0) {
+        expire();
+        return;
+      }
+      if (lastAnnounced.current !== requestId) {
+        lastAnnounced.current = requestId;
+        setSaid(
+          `${kind === "approval" ? "Approval needed" : "Answer needed"}. ${tool ?? ""} ${text} Expires in ${Math.ceil(remaining / 1000)} seconds.`,
+        );
+      }
+      const timer = setTimeout(expire, remaining);
+      return () => clearTimeout(timer);
+    }
+    if (expiredRequestId && expiredRequestId !== lastExpired.current) {
+      lastExpired.current = expiredRequestId;
+      setSaid("Request expired.");
+    } else if (running && (!previouslyRunning || !expiredRequestId))
+      setSaid("The agent is replying.");
+    else if (previouslyRunning && !running)
+      setSaid("The agent finished replying.");
+  }, [running, requestId, expiresAt, kind, text, tool, expiredRequestId]);
   return (
     <p className="sr-only" role="status">
       {said}
@@ -156,7 +201,11 @@ export function ThreadView({
           onThreadChanged();
         }}
       />
-      <TurnAnnouncer running={running} />
+      <TurnAnnouncer
+        running={running}
+        pending={pending}
+        expiredRequestId={state.expiredRequestId}
+      />
       <MessageList state={state} detail={state.detail} />
       {runs
         .filter((r) => r.proposals.length > 0)
@@ -180,9 +229,27 @@ export function ThreadView({
           key={threadId}
           disabled={running || limited}
           initialText={query.get("prefill") ?? ""}
-          placeholder={running ? "The agent is replying…" : "Ask a follow-up…"}
+          placeholder={
+            pending
+              ? "The agent is waiting for your answer…"
+              : running
+                ? "The agent is replying…"
+                : "Ask a follow-up…"
+          }
           onSend={send}
           onStop={running ? stop : undefined}
+          footer={
+            pending && (
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById("pending-request")?.focus()
+                }
+              >
+                Go to pending request
+              </button>
+            )
+          }
           stopping={stopping}
         />
       </div>

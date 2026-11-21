@@ -209,3 +209,29 @@ test("open positions use lifecycle links by default and export the current open 
   await expect(page).toHaveURL(/dashboard\/open-positions/);
   await expect(table).toContainText("A open stock");
 });
+
+test("puts holdings before secondary controls on a phone at enlarged text size", async ({
+  page,
+}) => {
+  await stubPositions(page);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/dashboard/open-positions?unit=strategy&currency=USD");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  const heading = page.getByRole("heading", {
+    name: "Open positions",
+    exact: true,
+  });
+  await expect(heading).toBeVisible();
+  await expect(heading).toBeInViewport();
+  await expect(page.getByText(/2 current holdings/)).toBeInViewport();
+  await expect(
+    page.getByRole("combobox", { name: "Period", exact: true }),
+  ).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    375,
+  );
+  await page.getByText("Position filters and export", { exact: true }).click();
+  await expect(page.getByLabel("Underlying", { exact: true })).toBeVisible();
+});

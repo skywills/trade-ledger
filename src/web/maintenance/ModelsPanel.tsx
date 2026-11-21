@@ -9,7 +9,7 @@ import {
   type ThinkingLevel,
 } from "../../shared/api.js";
 import { ApiError, requestJson, useJson } from "../api.js";
-import { ErrorPanel, Loading } from "../components.js";
+import { ErrorPanel, Loading, TableScroll } from "../components.js";
 
 import { ModelConfiguration } from "./ModelConfiguration.js";
 
@@ -243,90 +243,92 @@ export function ModelsPanel() {
       {profiles.length === 0 ? (
         <p data-testid="models-empty">No model profiles configured yet.</p>
       ) : (
-        <table data-testid="models-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Endpoint</th>
-              <th>Model</th>
-              <th>Credential source</th>
-              <th>Compatibility</th>
-              <th>Default</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((profile) => (
-              <tr key={profile.id} data-testid={`model-row-${profile.name}`}>
-                <td>
-                  {profile.name}
-                  {!profile.enabled ? (
-                    <span data-testid={`model-disabled-${profile.name}`}>
-                      {" "}
-                      (disabled, revision {profile.revision} retained)
-                    </span>
-                  ) : null}
-                </td>
-                <td>{profile.endpoint}</td>
-                <td>
-                  {profile.modelId}
-                  {profile.pricing === null ? " (unpriced)" : ""}
-                </td>
-                <td>
-                  {profile.credential.configured ? "configured" : "missing"} ·{" "}
-                  {profile.credential.kind}
-                  {profile.credential.kind === "none"
-                    ? ""
-                    : ` (${profile.credential.label})`}
-                </td>
-                <td data-testid={`model-compat-${profile.name}`}>
-                  {compatibilityLabel(profile)}
-                </td>
-                <td>
-                  {profile.id === defaultProfileId ? (
-                    <span data-testid={`model-default-${profile.name}`}>
-                      default
-                    </span>
-                  ) : (
+        <TableScroll label="Model profiles">
+          <table data-testid="models-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Endpoint</th>
+                <th>Model</th>
+                <th>Credential source</th>
+                <th>Compatibility</th>
+                <th>Default</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((profile) => (
+                <tr key={profile.id} data-testid={`model-row-${profile.name}`}>
+                  <td>
+                    {profile.name}
+                    {!profile.enabled ? (
+                      <span data-testid={`model-disabled-${profile.name}`}>
+                        {" "}
+                        (disabled, revision {profile.revision} retained)
+                      </span>
+                    ) : null}
+                  </td>
+                  <td>{profile.endpoint}</td>
+                  <td>
+                    {profile.modelId}
+                    {profile.pricing === null ? " (unpriced)" : ""}
+                  </td>
+                  <td>
+                    {profile.credential.configured ? "configured" : "missing"} ·{" "}
+                    {profile.credential.kind}
+                    {profile.credential.kind === "none"
+                      ? ""
+                      : ` (${profile.credential.label})`}
+                  </td>
+                  <td data-testid={`model-compat-${profile.name}`}>
+                    {compatibilityLabel(profile)}
+                  </td>
+                  <td>
+                    {profile.id === defaultProfileId ? (
+                      <span data-testid={`model-default-${profile.name}`}>
+                        default
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void selectDefault(profile)}
+                        disabled={busy || !profile.enabled}
+                      >
+                        Make default
+                      </button>
+                    )}
+                  </td>
+                  <td>
                     <button
                       type="button"
-                      onClick={() => void selectDefault(profile)}
-                      disabled={busy || !profile.enabled}
+                      onClick={() => void runTest(profile.id)}
+                      disabled={busy}
                     >
-                      Make default
+                      Test
+                    </button>{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraft(draftFrom(profile));
+                        setEditingId(profile.id);
+                      }}
+                      disabled={busy}
+                    >
+                      Edit
+                    </button>{" "}
+                    <button
+                      type="button"
+                      onClick={() => void setEnabled(profile, !profile.enabled)}
+                      disabled={busy}
+                    >
+                      {profile.enabled ? "Disable" : "Enable"}
                     </button>
-                  )}
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => void runTest(profile.id)}
-                    disabled={busy}
-                  >
-                    Test
-                  </button>{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDraft(draftFrom(profile));
-                      setEditingId(profile.id);
-                    }}
-                    disabled={busy}
-                  >
-                    Edit
-                  </button>{" "}
-                  <button
-                    type="button"
-                    onClick={() => void setEnabled(profile, !profile.enabled)}
-                    disabled={busy}
-                  >
-                    {profile.enabled ? "Disable" : "Enable"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       )}
 
       <h4>{editingId === null ? "Add a profile" : "Edit profile"}</h4>

@@ -64,6 +64,13 @@ it("values from the newest snapshot that marks every open position", () => {
     totalPnl: null,
     reasons: ["VALUATION_MARKS_INCOMPLETE"],
   });
+  const option = f.ledger.executions.find((e) => e.instrument.key === "put");
+  if (!option) throw new Error("Missing put execution");
+  option.instrument = { ...option.instrument, multiplier: null };
+  expect(valueLifecycles(f.ledger, p, [complete])[0]).toMatchObject({
+    totalPnl: null,
+    reasons: ["VALUATION_MULTIPLIER_UNAVAILABLE"],
+  });
 });
 
 it("reports a closed lifecycle's unrealized P&L as the spec residual to broker-realized", () => {

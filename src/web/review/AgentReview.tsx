@@ -7,8 +7,8 @@ import {
   requestJson,
   useJson,
 } from "../api.js";
-import { ErrorPanel } from "../components.js";
-import { Link, navigate } from "../navigation.js";
+import { ErrorPanel, Loading, PageLinks, pageNumber } from "../components.js";
+import { Link, navigate, useQuery } from "../navigation.js";
 import { ProposalList } from "./ProposalList.js";
 
 const PROFILE_CODES = new Set([
@@ -90,7 +90,14 @@ export function AskAgent({ issueKeys }: { issueKeys: string[] }) {
 
 function RunDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const detail = useJson(`/api/analysis/${id}`, AnalysisEnvelopeSchema);
-  if (detail.data === null) return null;
+  if (detail.status === "loading") return <Loading label="Loading analysis…" />;
+  if (!detail.data)
+    return (
+      <ErrorPanel
+        message="Could not load the selected analysis."
+        onRetry={detail.reload}
+      />
+    );
   return (
     <ProposalList
       run={detail.data.run}
@@ -104,10 +111,29 @@ function RunDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
 
 /** Lists previous agent analysis runs and their proposals. */
 export function PastAnalyses() {
-  const runs = useJson("/api/analysis?pageSize=20", RunSummariesEnvelope);
+  const query = useQuery();
+  const page = pageNumber(query.get("analysisPage"));
+  const runs = useJson(
+    `/api/analysis?pageSize=20&page=${page}`,
+    RunSummariesEnvelope,
+  );
+  function pageHref(next: number) {
+    const params = new URLSearchParams(query);
+    params.set("analysisPage", String(next));
+    return `/review?${params}`;
+  }
   const [openId, setOpenId] = useState<string | null>(null);
   const items = runs.data?.items ?? [];
-  if (items.length === 0) return null;
+  if (runs.status === "loading")
+    return <Loading label="Loading past analyses…" />;
+  if (!runs.data)
+    return (
+      <ErrorPanel
+        message="Could not load past analyses."
+        onRetry={runs.reload}
+      />
+    );
+  if (runs.data.total === 0 && page === 1) return null;
   return (
     <section data-testid="past-analyses">
       <h3>Past analyses</h3>
@@ -117,7 +143,8 @@ export function PastAnalyses() {
             <button
               type="button"
               className="link"
-              onClick={() => setOpenId(r.id)}
+              aria-expanded={openId === r.id}
+              onClick={() => setOpenId(openId === r.id ? null : r.id)}
             >
               {new Date(r.createdAt).toLocaleString()} · {r.status} ·{" "}
               {r.pendingProposals} pending
@@ -131,7 +158,8 @@ export function PastAnalyses() {
           </li>
         ))}
       </ul>
-      {openId !== null ? (
+      <PageLinks {...runs.data} href={pageHref} />
+      {openId !== null && items.some((run) => run.id === openId) ? (
         <RunDetail id={openId} onChanged={runs.reload} />
       ) : null}
     </section>

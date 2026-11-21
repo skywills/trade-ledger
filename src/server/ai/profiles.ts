@@ -468,7 +468,10 @@ function saveProfileRecord(
       JSON.stringify({
         supportsTools: input.supportsTools,
         thinkingLevels: input.thinkingLevels,
-        pricing: input.pricing ?? null,
+        pricing:
+          input.pricing === undefined
+            ? toProfile(current).pricing
+            : input.pricing,
       }),
       input.credentialRef,
       input.timeoutSeconds * 1000,

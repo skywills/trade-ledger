@@ -17,14 +17,14 @@ import {
   rejectionInput,
 } from "../decisions/schemas.js";
 import {
-  appendDecision,
+  appendDecisionInTransaction,
   type Decision,
   decisionWatermark,
   readDecisions,
 } from "../decisions/service.js";
-import type { Store } from "../storage/database.js";
+import { type Store, write } from "../storage/database.js";
 import { makeIssue } from "../strategies/projection.js";
-import { markProposalAccepted, readRun, updateRun } from "./runs.js";
+import { readRun, saveProposalDecisions } from "./runs.js";
 
 /**
  * A model's reconciliation proposal. It mirrors the Task 6 financial decision
@@ -449,70 +449,92 @@ export async function acceptProposal(
   expectedWatermark: number,
   clientRequestId?: string,
 ): Promise<Decision[]> {
-  const run = readRun(store, runId);
-  if (run === null) {
-    throw new AppError(
-      "RUN_NOT_FOUND",
-      `No analysis run exists for id ${runId}.`,
-      404,
-    );
-  }
-  const submitted = run.proposals.find((entry) => entry.id === proposalId);
-  if (submitted === undefined) {
-    throw new AppError(
-      "PROPOSAL_NOT_FOUND",
-      `No proposal exists for id ${proposalId}.`,
-      404,
-    );
-  }
-  const requestId =
-    clientRequestId === undefined
-      ? undefined
-      : `proposal:${runId}:${proposalId}:${clientRequestId}`;
-  if (requestId !== undefined) {
-    const existing = readDecisions(store, decisionWatermark(store)).find(
-      (d) => d.clientRequestId === requestId,
-    );
-    if (existing) {
-      if (!submitted.accepted)
-        await markProposalAccepted(store, runId, proposalId, existing.id);
-      return [existing];
+  return write(store, () => {
+    const run = readRun(store, runId);
+    if (run === null) {
+      throw new AppError(
+        "RUN_NOT_FOUND",
+        `No analysis run exists for id ${runId}.`,
+        404,
+      );
     }
-  }
-  if (submitted.accepted) {
-    throw new AppError(
-      "PROPOSAL_ALREADY_ACCEPTED",
-      "This proposal has already been accepted.",
-      409,
-    );
-  }
-  const ledger = activeLedgerSnapshot(store);
-  if (ledger === null) {
-    throw new AppError(
-      "NO_ACTIVE_BUILD",
-      "No active ledger is available to accept a proposal against.",
-      409,
-    );
-  }
-  const errors = [
-    ...validateProposal(ledger, submitted.proposal),
-    ...validateProposalReferences(store, submitted.proposal),
-  ].filter((issue) => issue.severity === "error");
-  if (errors.length > 0) {
-    throw new AppError(
-      "PROPOSAL_INVALID",
-      `Proposal failed re-validation: ${errors.map((issue) => issue.code).join(", ")}.`,
-      409,
-    );
-  }
+    const submitted = run.proposals.find((entry) => entry.id === proposalId);
+    if (submitted === undefined) {
+      throw new AppError(
+        "PROPOSAL_NOT_FOUND",
+        `No proposal exists for id ${proposalId}.`,
+        404,
+      );
+    }
+    if (submitted.rejected)
+      throw new AppError(
+        "PROPOSAL_REJECTED",
+        "This proposal was rejected.",
+        409,
+      );
+    const requestId =
+      clientRequestId === undefined
+        ? undefined
+        : `proposal:${runId}:${proposalId}:${clientRequestId}`;
+    if (requestId !== undefined) {
+      const existing = readDecisions(store, decisionWatermark(store)).find(
+        (d) => d.clientRequestId === requestId,
+      );
+      if (existing) {
+        if (!submitted.accepted)
+          saveProposalDecisions(
+            store,
+            run,
+            run.proposals.map((p) =>
+              p.id === proposalId ? { ...p, accepted: true } : p,
+            ),
+            existing.id,
+          );
+        return [existing];
+      }
+    }
+    if (submitted.accepted) {
+      throw new AppError(
+        "PROPOSAL_ALREADY_ACCEPTED",
+        "This proposal has already been accepted.",
+        409,
+      );
+    }
+    const ledger = activeLedgerSnapshot(store);
+    if (ledger === null) {
+      throw new AppError(
+        "NO_ACTIVE_BUILD",
+        "No active ledger is available to accept a proposal against.",
+        409,
+      );
+    }
+    const errors = [
+      ...validateProposal(ledger, submitted.proposal),
+      ...validateProposalReferences(store, submitted.proposal),
+    ].filter((issue) => issue.severity === "error");
+    if (errors.length > 0) {
+      throw new AppError(
+        "PROPOSAL_INVALID",
+        `Proposal failed re-validation: ${errors.map((issue) => issue.code).join(", ")}.`,
+        409,
+      );
+    }
 
-  const decision = await appendDecision(
-    store,
-    proposalDecisionInput(submitted.proposal, requestId),
-    expectedWatermark,
-  );
-  await markProposalAccepted(store, runId, proposalId, decision.id);
-  return [decision];
+    const decision = appendDecisionInTransaction(
+      store,
+      proposalDecisionInput(submitted.proposal, requestId),
+      expectedWatermark,
+    );
+    saveProposalDecisions(
+      store,
+      run,
+      run.proposals.map((p) =>
+        p.id === proposalId ? { ...p, accepted: true } : p,
+      ),
+      decision.id,
+    );
+    return [decision];
+  });
 }
 
 /**
@@ -525,27 +547,59 @@ export async function rejectProposal(
   runId: Id,
   reason: string | undefined,
   expectedWatermark: number,
+  expectedPendingIds?: readonly Id[],
 ): Promise<Decision> {
-  const run = readRun(store, runId);
-  if (run === null) {
-    throw new AppError(
-      "RUN_NOT_FOUND",
-      `No analysis run exists for id ${runId}.`,
-      404,
+  return write(store, () => {
+    const run = readRun(store, runId);
+    if (run === null) {
+      throw new AppError(
+        "RUN_NOT_FOUND",
+        `No analysis run exists for id ${runId}.`,
+        404,
+      );
+    }
+    if (!run.proposals.some((p) => !p.accepted && !p.rejected)) {
+      const prior = readDecisions(store, decisionWatermark(store))
+        .reverse()
+        .find(
+          (d) =>
+            d.kind === "rejection" && run.acceptedDecisionIds.includes(d.id),
+        );
+      if (prior) return prior;
+      throw new AppError(
+        "NO_PENDING_PROPOSALS",
+        "There are no pending proposals to reject.",
+        409,
+      );
+    }
+    if (expectedPendingIds) {
+      const pending = run.proposals.filter((p) => !p.accepted && !p.rejected);
+      if (
+        pending.length !== expectedPendingIds.length ||
+        pending.some((p) => !expectedPendingIds.includes(p.id))
+      )
+        throw new AppError(
+          "PROPOSALS_CHANGED",
+          "The pending proposals changed. Review the updated list before rejecting it.",
+          409,
+        );
+    }
+    const decision = appendDecisionInTransaction(
+      store,
+      rejectionInput({
+        evidenceHash: run.evidence.contentHash,
+        ...(reason === undefined ? {} : { reason }),
+      }),
+      expectedWatermark,
     );
-  }
-  const decision = await appendDecision(
-    store,
-    rejectionInput({
-      evidenceHash: run.evidence.contentHash,
-      ...(reason === undefined ? {} : { reason }),
-    }),
-    expectedWatermark,
-  );
-  await updateRun(store, runId, {
-    acceptedDecisionIds: [...run.acceptedDecisionIds, decision.id],
+    saveProposalDecisions(
+      store,
+      run,
+      run.proposals.map((p) => (p.accepted ? p : { ...p, rejected: true })),
+      decision.id,
+    );
+    return decision;
   });
-  return decision;
 }
 
 export { decisionWatermark };

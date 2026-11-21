@@ -3,6 +3,7 @@ export interface ChartPoint {
   key: string;
   label: string;
   value: string | null;
+  dailyChange?: string | null;
 }
 export interface ChartModel {
   points: {

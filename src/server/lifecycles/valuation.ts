@@ -11,12 +11,32 @@ import { brokerRealized } from "./accounting.js";
 
 export { latestExecutionBound } from "../ledger/chronology.js";
 
+/** The same multiplier determines whether a price can produce a valuation and whether to request one. */
+export function valuationMultipliers(ledger: LedgerSnapshot | null) {
+  const values = new Map<string, Decimal | null>();
+  for (const { instrument } of ledger?.executions ?? []) {
+    if (values.has(instrument.key)) continue;
+    let value: Decimal | null = null;
+    try {
+      const multiplier = new Decimal(
+        instrument.assetClass === "STK" ? 1 : (instrument.multiplier ?? 0),
+      );
+      if (multiplier.isFinite() && multiplier.gt(0)) value = multiplier;
+    } catch {
+      // Older retained instruments may carry a nonnumeric broker multiplier.
+    }
+    values.set(instrument.key, value);
+  }
+  return values;
+}
+
 export function valueLifecycles(
   ledger: LedgerSnapshot,
   p: LifecycleProjection,
   snapshots: readonly ValuationSnapshot[],
 ): LifecycleValuation[] {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
+  const multipliers = valuationMultipliers(ledger);
   const membersByLifecycle = groupBy(p.members, (m) => m.lifecycleId);
   return p.lifecycles.map((l) => {
     const members = membersByLifecycle.get(l.id) ?? [];
@@ -87,18 +107,11 @@ export function valueLifecycles(
     );
     let total = new Decimal(l.cashflow ?? "0");
     for (const pos of positions) {
-      const instrument = ledger.executions.find(
-        (e) => e.instrument.key === pos.instrumentKey,
-      )?.instrument;
+      const multiplier = multipliers.get(pos.instrumentKey);
+      if (!multiplier)
+        return { ...base, reasons: ["VALUATION_MULTIPLIER_UNAVAILABLE"] };
       const mark = prices.get(pos.instrumentKey);
-      const multiplier =
-        instrument?.assetClass === "STK" ? "1" : instrument?.multiplier;
-      if (
-        mark === undefined ||
-        !multiplier ||
-        !new Decimal(multiplier).gt(0) ||
-        new Decimal(mark).lt(0)
-      )
+      if (mark === undefined || new Decimal(mark).lt(0))
         return { ...base, reasons: ["VALUATION_MARKS_INCOMPLETE"] };
       total = total.plus(
         new Decimal(pos.quantity).times(multiplier).times(mark),

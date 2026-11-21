@@ -19,7 +19,7 @@ export function ApplyRecommendedDialog({
 }: {
   data: ConnectionData;
   position: PositionGroup;
-  onDismiss: () => void;
+  onDismiss: (refresh: boolean) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -44,8 +44,7 @@ export function ApplyRecommendedDialog({
   function dismiss() {
     if (inFlight.current) return;
     dialog.current?.close();
-    // Decisions may already be saved, so the list always reloads.
-    onDismiss();
+    onDismiss(started.current);
   }
 
   async function confirm() {

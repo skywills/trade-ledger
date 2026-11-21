@@ -5,6 +5,7 @@ import {
   type ImportPreview,
   ImportRowsEnvelope,
   ImportRowViewSchema,
+  ImportSummarySchema,
   ImportsEnvelope,
   PreviewResponseSchema,
   pollJob,
@@ -48,6 +49,18 @@ function ImportRowDetail({
       <h3>
         Import row {row.rowNumber} · {row.kind}
       </h3>
+      {row.issues.length > 0 && (
+        <section aria-label="Row issues">
+          <h4>Row issues</h4>
+          <ul>
+            {row.issues.map((issue) => (
+              <li key={issue.key}>
+                {issue.severity} · {issue.code.replaceAll("_", " ")}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <dl>
         {Object.entries(row.fields)
           .filter(([, value]) => value !== "")
@@ -62,7 +75,15 @@ function ImportRowDetail({
   );
 }
 
-function ImportRows({ importId, page }: { importId: string; page: number }) {
+function ImportRows({
+  importId,
+  page,
+  listPage,
+}: {
+  importId: string;
+  page: number;
+  listPage: number;
+}) {
   const remote = useJson(
     `/api/imports/${encodeURIComponent(importId)}/rows?pageSize=50&page=${page}`,
     ImportRowsEnvelope,
@@ -77,7 +98,7 @@ function ImportRows({ importId, page }: { importId: string; page: number }) {
       />
     );
   const href = (n: number) =>
-    `/imports?import=${encodeURIComponent(importId)}&page=${n}`;
+    `/imports?import=${encodeURIComponent(importId)}&page=${n}&listPage=${listPage}`;
   return (
     <>
       {remote.data.items.length ? (
@@ -144,18 +165,33 @@ function formatBytes(bytes: number): string {
 
 /** Import screen: preview, commit, auto-rebuild and raw row drilldown. */
 export function ImportsPage() {
-  const jobSignal = useJobSignal();
-  const imports = useJson("/api/imports?pageSize=100", ImportsEnvelope);
   const query = useQuery();
+  const listPage = pageNumber(query.get("listPage"));
   const selectedImport = query.get("import");
-  const selectedRow = Number(query.get("row") ?? "");
+  return selectedImport ? (
+    <ImportSource
+      key={selectedImport}
+      selectedImport={selectedImport}
+      listPage={listPage}
+    />
+  ) : (
+    <ImportForm listPage={listPage} />
+  );
+}
 
+function ImportForm({ listPage }: { listPage: number }) {
+  const imports = useJson(
+    `/api/imports?pageSize=100&page=${listPage}`,
+    ImportsEnvelope,
+  );
+  const jobSignal = useJobSignal();
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<ImportStep>("idle");
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<ImportPreview[]>([]);
+  const [outcomes, setOutcomes] = useState<Record<string, string>>({});
   const [result, setResult] = useState<string | null>(null);
 
   async function onConfirm() {
@@ -165,6 +201,9 @@ export function ImportsPage() {
     setError(null);
     setResult(null);
     setPreviews([]);
+    setOutcomes({});
+    let activeFile: string | undefined;
+    let confirmed = 0;
     try {
       setStep("uploading");
       const form = new FormData();
@@ -174,22 +213,30 @@ export function ImportsPage() {
         PreviewResponseSchema,
         form,
       );
-      if (!signal.aborted) {
-        setPreviews(previewResponse.previews);
-        setStep("committing");
-      }
-      const commits = [];
-      for (const entry of previewResponse.previews) {
-        commits.push(
-          await requestJson(
-            `/api/imports/${encodeURIComponent(entry.id)}/commit`,
-            CommitResponseSchema,
-            "POST",
-          ),
+      if (!signal.aborted) setPreviews(previewResponse.previews);
+      if (previewResponse.previews.some((entry) => !entry.committable)) {
+        throw new Error(
+          "No files were committed. Correct the files with errors or select only valid files and try again.",
         );
       }
-      const duplicates = commits.filter((entry) => entry.duplicate).length;
-
+      if (!signal.aborted) setStep("committing");
+      let duplicates = 0;
+      for (const [index, entry] of previewResponse.previews.entries()) {
+        activeFile = files[index]?.name;
+        const commit = await requestJson(
+          `/api/imports/${encodeURIComponent(entry.id)}/commit`,
+          CommitResponseSchema,
+          "POST",
+        );
+        confirmed++;
+        if (commit.duplicate) duplicates++;
+        if (!signal.aborted)
+          setOutcomes((current) => ({
+            ...current,
+            [entry.id]: commit.duplicate ? "Already imported" : "Committed",
+          }));
+      }
+      activeFile = undefined;
       if (!signal.aborted) setStep("building");
       const build = await requestJson(
         "/api/builds",
@@ -199,12 +246,20 @@ export function ImportsPage() {
       );
       const job = await pollJob(build.jobId, undefined, { signal });
       signal.throwIfAborted();
+      if (job.status !== "complete")
+        throw new Error(job.error ?? `Build ${job.status}.`);
       const prefix = duplicates > 0 ? "Already imported (duplicate). " : "";
       setResult(`${prefix}Import complete. Build ${job.status}.`);
       imports.reload();
     } catch (caught) {
       if (signal.aborted) return;
-      setError(caught instanceof Error ? caught.message : String(caught));
+      const reason = caught instanceof Error ? caught.message : String(caught);
+      const guidance =
+        confirmed > 0 ? " Retry the import to complete the rebuild." : "";
+      setError(
+        `${activeFile ? `Could not confirm ${activeFile}. ` : ""}${reason}${guidance}`,
+      );
+      imports.reload();
     } finally {
       if (!signal.aborted) {
         setBusy(false);
@@ -219,6 +274,8 @@ export function ImportsPage() {
         file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv",
     );
     setFiles(picked);
+    setPreviews([]);
+    setOutcomes({});
     setResult(null);
     setError(
       picked.length === 0 && (list?.length ?? 0) > 0
@@ -233,40 +290,6 @@ export function ImportsPage() {
     if (!busy) addFiles(event.dataTransfer.files);
   }
 
-  if (selectedImport !== null) {
-    const page = pageNumber(query.get("page"));
-    const filename = imports.data?.items.find(
-      (entry) => entry.id === selectedImport,
-    )?.filename;
-    return (
-      <section>
-        <p>
-          <Link to="/imports">← Imports</Link>
-        </p>
-        <h2>{filename ?? "Import source rows"}</h2>
-        {query.has("row") ? (
-          <>
-            <Link
-              to={`/imports?import=${encodeURIComponent(selectedImport)}&page=${page}`}
-            >
-              Browse source rows
-            </Link>
-            <ImportRowDetail
-              key={`${selectedImport}/${selectedRow}`}
-              importId={selectedImport}
-              rowNumber={selectedRow}
-            />
-          </>
-        ) : (
-          <ImportRows
-            key={`${selectedImport}/${page}`}
-            importId={selectedImport}
-            page={page}
-          />
-        )}
-      </section>
-    );
-  }
   return (
     <section>
       <h2>Imports</h2>
@@ -345,13 +368,15 @@ export function ImportsPage() {
       {previews.length > 0 ? (
         <div data-testid="import-preview" className="preview">
           <h3>Import preview</h3>
-          {previews.map((preview) => (
+          {previews.map((preview, index) => (
             <div key={preview.id}>
+              <h4>{files[index]?.name}</h4>
               <p>
                 <span
                   className={`badge ${preview.committable ? "badge-success" : "badge-danger"}`}
                 >
-                  {preview.committable ? "Committable" : "Not committable"}
+                  {outcomes[preview.id] ??
+                    (preview.committable ? "Validated" : "Not committable")}
                 </span>{" "}
                 <span className="badge">
                   {preview.counts.executions} executions
@@ -387,7 +412,8 @@ export function ImportsPage() {
       ) : null}
 
       <h3>Committed imports</h3>
-      {imports.status === "loading" ? (
+      {imports.status === "loading" ||
+      (imports.data && imports.data.page !== listPage) ? (
         <Loading label="Loading imports…" />
       ) : imports.status === "error" ? (
         <ErrorPanel
@@ -395,7 +421,11 @@ export function ImportsPage() {
           onRetry={imports.reload}
         />
       ) : !imports.data?.items.length ? (
-        <p className="empty-state">No files imported yet.</p>
+        <p className="empty-state">
+          {imports.data?.total
+            ? "No files on this page."
+            : "No files imported yet."}
+        </p>
       ) : (
         <TableScroll label="Committed imports">
           <table aria-label="Imports">
@@ -417,7 +447,7 @@ export function ImportsPage() {
                   <td>{entry.sha256.slice(0, 12)}</td>
                   <td>
                     <Link
-                      to={`/imports?import=${encodeURIComponent(entry.id)}`}
+                      to={`/imports?import=${encodeURIComponent(entry.id)}&listPage=${listPage}`}
                     >
                       View rows
                     </Link>
@@ -427,6 +457,59 @@ export function ImportsPage() {
             </tbody>
           </table>
         </TableScroll>
+      )}
+      {imports.status === "ready" && imports.data?.page === listPage && (
+        <PageLinks {...imports.data} href={(n) => `/imports?listPage=${n}`} />
+      )}
+    </section>
+  );
+}
+
+function ImportSource({
+  selectedImport,
+  listPage,
+}: {
+  selectedImport: string;
+  listPage: number;
+}) {
+  const query = useQuery();
+  const page = pageNumber(query.get("page"));
+  const selectedRow = Number(query.get("row"));
+  const summary = useJson(
+    `/api/imports/${encodeURIComponent(selectedImport)}`,
+    ImportSummarySchema,
+  );
+  return (
+    <section>
+      <p>
+        <Link to={listPage > 1 ? `/imports?listPage=${listPage}` : "/imports"}>
+          ← Imports
+        </Link>
+      </p>
+      <h2>{summary.data?.filename ?? "Import source rows"}</h2>
+      {summary.error && (
+        <ErrorPanel message={summary.error.message} onRetry={summary.reload} />
+      )}
+      {query.has("row") ? (
+        <>
+          <Link
+            to={`/imports?import=${encodeURIComponent(selectedImport)}&page=${page}&listPage=${listPage}`}
+          >
+            Browse source rows
+          </Link>
+          <ImportRowDetail
+            key={`${selectedImport}/${selectedRow}`}
+            importId={selectedImport}
+            rowNumber={selectedRow}
+          />
+        </>
+      ) : (
+        <ImportRows
+          key={`${selectedImport}/${page}`}
+          importId={selectedImport}
+          listPage={listPage}
+          page={page}
+        />
       )}
     </section>
   );

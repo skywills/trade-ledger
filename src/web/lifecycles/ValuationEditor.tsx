@@ -1,19 +1,28 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Lifecycle } from "../../shared/lifecycles.js";
 import { ValuationSnapshotSchema } from "../../shared/lifecycles.js";
 import type { Execution } from "../api.js";
 import type { SaveDecision } from "./api.js";
 export function ValuationEditor({
   lifecycle,
+  openOnArrival,
   executions,
   save,
   disabled,
 }: {
   lifecycle: Lifecycle;
+  openOnArrival: boolean;
   executions: Execution[];
   save: SaveDecision;
   disabled: boolean;
 }) {
+  const summary = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (openOnArrival) {
+      summary.current?.focus();
+      summary.current?.scrollIntoView({ block: "center" });
+    }
+  }, [openOnArrival]);
   const [asOf, setAsOf] = useState(new Date().toISOString().slice(0, 16));
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -23,8 +32,8 @@ export function ValuationEditor({
   );
   if (!positions.length) return null;
   return (
-    <details>
-      <summary>Add dated manual prices</summary>
+    <details open={openOnArrival || undefined}>
+      <summary ref={summary}>Add dated manual prices</summary>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -88,11 +97,24 @@ export function ValuationEditor({
             </label>
           ))}
           {preview && (
-            <p className="lifecycle-status">
-              Save {positions.length} manual prices as of{" "}
-              {asOf.replace("T", " ")} UTC for {lifecycle.account} in{" "}
-              {lifecycle.currency}.
-            </p>
+            <div className="lifecycle-status">
+              <p>
+                Save {positions.length} manual prices as of{" "}
+                {asOf.replace("T", " ")} UTC for {lifecycle.account} in{" "}
+                {lifecycle.currency}.
+              </p>
+              <ul aria-label="Prices to save">
+                {positions.map((p) => (
+                  <li key={p.instrumentKey}>
+                    {executions.find(
+                      (e) => e.instrument.key === p.instrumentKey,
+                    )?.instrument.symbol ?? p.instrumentKey}{" "}
+                    · {p.quantity} {p.quantity === "1" ? "unit" : "units"} at{" "}
+                    {prices[p.instrumentKey]} {lifecycle.currency}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           <button type="submit">
             {preview ? "Save prices and rebuild" : "Preview valuation"}

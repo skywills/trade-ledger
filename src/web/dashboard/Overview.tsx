@@ -17,13 +17,16 @@ export function Overview({ data }: { data: AnalyticsResponse }) {
       <div className="dashboard-charts-grid">
         <AnalyticsChart
           title={
-            lifecycle ? "Completed lifecycle P&L" : "Cumulative strategy P&L"
+            lifecycle
+              ? "Cumulative completed lifecycle P&L"
+              : "Cumulative strategy P&L"
           }
           currency={currency}
           points={data.daily.map((p) => ({
             key: p.date,
             label: p.date,
             value: p.pnl === null ? null : p.cumulative,
+            dailyChange: p.pnl,
           }))}
           onSelect={(date) =>
             navigate(detailHref(data, { kind: "strategies", date }))

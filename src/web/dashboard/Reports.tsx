@@ -3,8 +3,15 @@ import type { AnalyticsResponse } from "../../shared/analytics.js";
 import { formatMoney } from "../../shared/money.js";
 import { Link } from "../navigation.js";
 import { Overview } from "./Overview.js";
-export function Reports({ data }: { data: AnalyticsResponse }) {
-  const [notes, setNotes] = useState("");
+export function Reports({
+  data,
+  drafts,
+}: {
+  data: AnalyticsResponse;
+  drafts: Map<string, string>;
+}) {
+  const scope = JSON.stringify([data.buildId, data.filters]);
+  const [notes, setNotes] = useState(() => drafts.get(scope) ?? "");
   const c = data.filters.currency ?? "";
   return (
     <article className="dashboard-report">
@@ -199,12 +206,16 @@ export function Reports({ data }: { data: AnalyticsResponse }) {
           <textarea
             rows={5}
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={(e) => {
+              drafts.set(scope, e.target.value);
+              setNotes(e.target.value);
+            }}
             placeholder="What worked? What will you change next period?"
           />
         </label>
         <p className="dashboard-muted dashboard-notes-help">
-          Notes are unsaved, stay in this view, and are included when you print.
+          A separate draft is kept for each report scope until you leave
+          Reports. The current draft is included when you print.
         </p>
         <div className="dashboard-print-notes" data-testid="report-print-notes">
           {notes || "No review notes entered."}

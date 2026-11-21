@@ -90,7 +90,7 @@ export interface LedgerSnapshot {
   id: Id;
   inputHash: string;
   executions: Execution[];
-  lots: RawRow[];
+  lots: Array<RawRow & { source?: SourceRef }>;
   issues: Issue[];
   conflicts: number;
 }

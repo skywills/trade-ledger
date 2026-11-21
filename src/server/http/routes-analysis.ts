@@ -97,6 +97,18 @@ export async function registerAnalysisRoutes(
     const body = (request.body ?? {}) as Record<string, unknown>;
     const reason =
       body.reason === undefined ? undefined : readString(body.reason, "reason");
+    const pendingIds = body.pendingIds;
+    if (
+      pendingIds !== undefined &&
+      (!Array.isArray(pendingIds) ||
+        !pendingIds.every((id) => typeof id === "string"))
+    ) {
+      throw new AppError(
+        "INVALID_INPUT",
+        "pendingIds must be an array of proposal IDs.",
+        400,
+      );
+    }
     const expectedWatermark = readWatermark(store, request.body);
     try {
       const decision = await rejectProposal(
@@ -104,6 +116,7 @@ export async function registerAnalysisRoutes(
         id,
         reason,
         expectedWatermark,
+        pendingIds,
       );
       return { decision };
     } catch (error) {

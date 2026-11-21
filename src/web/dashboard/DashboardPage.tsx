@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   DetailQuerySchema,
   ExportQuerySchema,
@@ -8,7 +8,7 @@ import { BuildAction } from "../lifecycles/BuildAction.js";
 import { Link, navigate, useLocation } from "../navigation.js";
 import { Analysis } from "./Analysis.js";
 import { useAnalytics } from "./api.js";
-import { DashboardFilters } from "./DashboardFilters.js";
+import { DashboardFilters, DashboardScopeChips } from "./DashboardFilters.js";
 import { DataQuality } from "./DataQuality.js";
 import { DetailTable } from "./DetailTable.js";
 import { ExportButton } from "./ExportButton.js";
@@ -21,8 +21,35 @@ import {
 } from "./query.js";
 import { Reports } from "./Reports.js";
 import "./dashboard.css";
+
+function PositionControls({ children }: { children: ReactNode }) {
+  const [expanded, setExpanded] = useState(
+    () => !window.matchMedia("(max-width: 640px)").matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 640px)");
+    const resize = () => setExpanded(!media.matches);
+    media.addEventListener("change", resize);
+    return () => media.removeEventListener("change", resize);
+  }, []);
+  return (
+    <details
+      className="position-controls"
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>Position filters and export</summary>
+      {children}
+    </details>
+  );
+}
+
 export function DashboardPage({ view }: { view: DashboardView }) {
   const { search } = useLocation();
+  const reportDrafts = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (view !== "reports") reportDrafts.current.clear();
+  }, [view]);
   const state = readDashboardQuery(search, view, localToday());
   const remote = useAnalytics(state.query, !state.error);
   const data = remote.status === "ready" ? remote.data : null;
@@ -77,13 +104,35 @@ export function DashboardPage({ view }: { view: DashboardView }) {
     navigate(dashboardHref(view, { ...state, detail }));
     remote.reload();
   }
+  const controls = (
+    <>
+      {data?.buildId && exportQuery?.success && (
+        <ExportButton
+          key={search}
+          query={exportQuery.data}
+          dataset={exportDataset}
+          onRefresh={refreshAnalytics}
+        />
+      )}
+      {data?.buildId !== null && (
+        <DashboardFilters
+          key={`${state.query.from}|${state.query.to}`}
+          state={state}
+          view={view}
+          data={data}
+        />
+      )}
+    </>
+  );
   return (
-    <section className="dashboard">
+    <section
+      className={openPositions ? "dashboard dashboard-positions" : "dashboard"}
+    >
       <div className="dashboard-title">
-        <h2>Dashboard</h2>
+        <h2>{openPositions ? "Open positions" : "Dashboard"}</h2>
         <span className="dashboard-date">
           {openPositions
-            ? "Current holdings"
+            ? `${data?.buildId ? `${data.performance.open + data.performance.partiallyClosed} current holdings` : "Current holdings"} · ${data?.filters.currency ?? state.query.currency ?? "All currencies"} · ${state.query.account ?? "All accounts"}`
             : state.query.from && state.query.to
               ? `${state.query.from} — ${state.query.to}`
               : state.query.from
@@ -115,21 +164,11 @@ export function DashboardPage({ view }: { view: DashboardView }) {
           ),
         )}
       </nav>
-      {data?.buildId && exportQuery?.success && (
-        <ExportButton
-          key={search}
-          query={exportQuery.data}
-          dataset={exportDataset}
-          onRefresh={refreshAnalytics}
-        />
-      )}
-      {data?.buildId !== null && (
-        <DashboardFilters
-          key={`${state.query.from}|${state.query.to}`}
-          state={state}
-          view={view}
-          data={data}
-        />
+      <DashboardScopeChips state={state} view={view} data={data} />
+      {openPositions && data?.buildId !== null ? (
+        <PositionControls>{controls}</PositionControls>
+      ) : (
+        controls
       )}
       {state.error ? (
         <p role="alert" className="dashboard-warning">
@@ -150,32 +189,21 @@ export function DashboardPage({ view }: { view: DashboardView }) {
         </ErrorPanel>
       ) : data ? (
         <>
-          {data.buildId && (
+          {data.buildId && !openPositions && (
             <div className="dashboard-provenance">
               <BuildBadge buildId={data.buildId} stale={data.stale} />
               <span>
-                {openPositions ? (
-                  <>
-                    Current open positions ·{" "}
-                    {data.filters.currency ?? "No currency"}
-                  </>
-                ) : (
-                  <>
-                    {data.performance.eligible} / {data.performance.closed}{" "}
-                    {data.filters.unit === "strategy"
-                      ? "closed strategy components"
-                      : "completed lifecycles"}{" "}
-                    with{" "}
-                    {data.filters.basis === "broker"
-                      ? "broker"
-                      : "reconstructed"}{" "}
-                    P&amp;L · {data.filters.currency ?? "No currency"}
-                  </>
-                )}
+                {data.performance.eligible} / {data.performance.closed}{" "}
+                {data.filters.unit === "strategy"
+                  ? "closed strategy components"
+                  : "completed lifecycles"}{" "}
+                with{" "}
+                {data.filters.basis === "broker" ? "broker" : "reconstructed"}{" "}
+                P&amp;L · {data.filters.currency ?? "No currency"}
               </span>
             </div>
           )}
-          {data.buildId && <DataQuality data={data} />}
+          {data.buildId && !openPositions && <DataQuality data={data} />}
           {!data.buildId ? (
             <div className="dashboard-empty">
               <h3>No active build</h3>
@@ -191,11 +219,15 @@ export function DashboardPage({ view }: { view: DashboardView }) {
                 <Overview data={data} />
               ) : openPositions ? (
                 openQuery?.success ? (
-                  <DetailTable
-                    query={openQuery.data}
-                    view="open-positions"
-                    onRefresh={remote.reload}
-                  />
+                  <>
+                    <DetailTable
+                      query={openQuery.data}
+                      view="open-positions"
+                      onRefresh={remote.reload}
+                    />
+                    <BuildBadge buildId={data.buildId} stale={data.stale} />
+                    <DataQuality data={data} />
+                  </>
                 ) : (
                   <p role="alert" className="dashboard-warning">
                     Invalid position filters. Reset filters to continue.
@@ -208,7 +240,7 @@ export function DashboardPage({ view }: { view: DashboardView }) {
                   onRefresh={remote.reload}
                 />
               ) : (
-                <Reports data={data} />
+                <Reports data={data} drafts={reportDrafts.current} />
               )}
             </div>
           )}
