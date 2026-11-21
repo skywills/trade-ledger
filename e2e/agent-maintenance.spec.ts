@@ -182,9 +182,25 @@ test("keeps model rates and table actions reachable on a phone", async ({
       (p: { name: string }) => p.name === "Renamed priced model",
     ).pricing,
   ).toEqual(pricing);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    375,
-  );
+  const picker = page.getByLabel("Import model configuration");
+  for (const width of [375, 320]) {
+    await page.setViewportSize({ width, height: 812 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(width);
+    expect(
+      await picker.evaluate((input) => {
+        const card = input.closest(".card")!;
+        const style = getComputedStyle(card);
+        return (
+          input.getBoundingClientRect().width <=
+          card.clientWidth -
+            parseFloat(style.paddingLeft) -
+            parseFloat(style.paddingRight)
+        );
+      }),
+    ).toBe(true);
+  }
 });
 
 test("announces a timed approval while preserving a typed draft and focus", async ({
