@@ -222,3 +222,251 @@ it("splits a stock close across two independent opening lots FIFO", async () => 
     await t.dispose();
   }
 });
+
+function assignedStockLots() {
+  return ["older", "newer"].flatMap((lot, index) => {
+    const day = 2 + index;
+    const strike = index === 0 ? "100" : "90";
+    const contract = { Strike: strike, Conid: String(22 + index) };
+    return [
+      row(lot, "OPT", "-1", "200", 1, "O", contract),
+      row(`${lot}-assigned`, "OPT", "1", "0", day, "A;C", {
+        ...contract,
+        PositionActionID: lot,
+        TradePrice: "0",
+        FifoPnlRealized: "200",
+      }),
+      row(
+        `${lot}-shares`,
+        "STK",
+        "100",
+        index === 0 ? "-10000" : "-9000",
+        day,
+        "A;O",
+        {
+          PositionActionID: lot,
+          TradePrice: strike,
+          IBOrderID: "stock-position",
+          BrokerageOrderID: "stock-position",
+        },
+      ),
+    ];
+  });
+}
+
+it("keeps the remaining older assigned shares first in a subsequent FIFO sale", async () => {
+  const t = await createTestStore();
+  try {
+    await commit(
+      t,
+      [
+        ...assignedStockLots(),
+        row("first-sale", "STK", "-50", "5250", 5, "C", {
+          TradePrice: "105",
+          FifoPnlRealized: "250",
+        }),
+        row("second-sale", "STK", "-80", "8400", 8, "C", {
+          TradePrice: "105",
+          FifoPnlRealized: "700",
+        }),
+      ],
+      "partial.csv",
+    );
+    const cycles = activeProjection(t.store).projection?.lifecycles;
+    if (!cycles) throw Error("Expected lifecycles");
+    for (const [opening, quantity, pnl, balance] of [
+      ["older", "-50", "250", "0"],
+      ["newer", "-30", "450", "70"],
+    ]) {
+      const cycle = cycles.lifecycles.find(
+        (l) => l.originOpeningExecutionKey === `txn:A:trade:${opening}`,
+      );
+      expect(cycle).toBeDefined();
+      expect(
+        cycle?.positions.find((pos) => pos.instrumentKey === "conid:1")
+          ?.quantity ?? "0",
+      ).toBe(balance);
+      expect(
+        cycles.members.find(
+          (m) =>
+            m.lifecycleId === cycle?.id &&
+            m.allocation.executionKey === "txn:A:trade:second-sale",
+        ),
+      ).toMatchObject({ quantity, brokerPnl: pnl });
+    }
+
+    // The user can explicitly place all 80 shares on the later holding.
+    const newer = cycles.lifecycles.find(
+      (l) => l.originOpeningExecutionKey === "txn:A:trade:newer",
+    );
+    const sale = cycles.members.find(
+      (m) => m.allocation.executionKey === "txn:A:trade:second-sale",
+    );
+    if (!newer || !sale) throw Error("Expected newer holding and sale");
+    await appendDecision(
+      t.store,
+      {
+        kind: "lifecycle_membership",
+        author: "user",
+        clientRequestId: "manual-lot",
+        payload: {
+          assignments: [
+            {
+              allocation: sale.allocation,
+              lifecycleId: newer.id,
+              quantity: "-80",
+            },
+          ],
+        },
+      },
+      0,
+    );
+    expect((await rebuild(t.store, input)).status).toBe("active");
+    expect(
+      activeProjection(t.store).projection?.lifecycles?.members.filter(
+        (m) => m.allocation.executionKey === sale.allocation.executionKey,
+      ),
+    ).toMatchObject([
+      { lifecycleId: newer.id, quantity: "-80", brokerPnl: "700" },
+    ]);
+  } finally {
+    await t.dispose();
+  }
+});
+
+it.each([false, true])(
+  "preserves lot-specific broker P&L through a persisted rebuild (merge=%s)",
+  async (merge) => {
+    const t = await createTestStore();
+    try {
+      await commit(
+        t,
+        [
+          ...assignedStockLots(),
+          row("sell-all", "STK", "-200", "21000", 8, "C", {
+            TradePrice: "105",
+            FifoPnlRealized: "2000",
+          }),
+        ],
+        "lot-pnl.csv",
+      );
+      if (merge) {
+        const components =
+          activeProjection(t.store).projection?.strategies ?? [];
+        const chosen = components[0];
+        if (!chosen) throw Error("Expected components");
+        await appendDecision(
+          t.store,
+          groupMergeInput({
+            chosenStrategyId: chosen.id,
+            mergedStrategyIds: components.slice(1).map((s) => s.id),
+          }),
+          0,
+        );
+        expect((await rebuild(t.store, input)).status).toBe("active");
+      }
+      const cycles = activeProjection(t.store).projection?.lifecycles;
+      if (!cycles) throw Error("Expected lifecycles");
+      for (const [opening, salePnl, cyclePnl] of [
+        ["older", "500", "700"],
+        ["newer", "1500", "1700"],
+      ]) {
+        const cycle = cycles.lifecycles.find(
+          (l) => l.originOpeningExecutionKey === `txn:A:trade:${opening}`,
+        );
+        expect(
+          cycles.members.find(
+            (m) =>
+              m.lifecycleId === cycle?.id &&
+              m.allocation.executionKey === "txn:A:trade:sell-all",
+          ),
+        ).toMatchObject({
+          brokerPnl: salePnl,
+          estimated: false,
+          pnlAttribution: "basis-reconciled",
+        });
+        expect(cycle).toMatchObject({
+          status: "closed",
+          brokerPnl: cyclePnl,
+          reconstructedPnl: cyclePnl,
+        });
+      }
+      expect(cycles.issues.map((i) => i.code)).not.toContain(
+        "PNL_RECONCILIATION",
+      );
+    } finally {
+      await t.dispose();
+    }
+  },
+);
+
+it.each([
+  ["P", "XYZ", "100", true],
+  ["P", "XYZ", "-100", false],
+  ["P", "OTHER", "100", false],
+  ["C", "XYZ", "-100", true],
+  ["C", "XYZ", "100", false],
+  ["C", "OTHER", "-100", false],
+] as const)(
+  "checks the underlying and signed share delivery for a %s assignment to %s, quantity %s",
+  async (putCall, symbol, quantity, valid) => {
+    const t = await createTestStore();
+    try {
+      await commit(
+        t,
+        [
+          row("option", "OPT", "-1", "200", 1, "O", { "Put/Call": putCall }),
+          row("booked", "OPT", "1", "0", 2, "C", {
+            "Put/Call": putCall,
+            TradePrice: "0",
+            FifoPnlRealized: "200",
+          }),
+          row(
+            "shares",
+            "STK",
+            quantity,
+            String(-Number(quantity) * 100),
+            2,
+            "O",
+            { Symbol: symbol, UnderlyingSymbol: "", TradePrice: "100" },
+          ),
+        ],
+        "correction.csv",
+      );
+      const p = activeProjection(t.store).projection;
+      const source = p?.issues.find((i) => i.code === "LIFECYCLE_UNRESOLVED")
+        ?.sources[0];
+      if (!source) throw Error("Expected unresolved booked close");
+      await appendDecision(
+        t.store,
+        {
+          kind: "lifecycle",
+          author: "user",
+          clientRequestId: "assign",
+          payload: {
+            event: "assignment",
+            sourceRef: source,
+            targetRef: { importId: source.importId, rowNumber: 4 },
+          },
+        },
+        0,
+      );
+      expect((await rebuild(t.store, input)).status).toBe("active");
+      const result = activeProjection(t.store).projection;
+      expect(result?.links.filter((l) => l.type === "assignment")).toHaveLength(
+        valid ? 1 : 0,
+      );
+      expect(
+        result?.strategies.find(
+          (s) => s.type === (putCall === "P" ? "short_put" : "short_call"),
+        ),
+      ).toMatchObject(
+        valid
+          ? { status: "closed", complete: true, reconstructedPnl: "200" }
+          : { status: "unresolved", complete: false, reconstructedPnl: null },
+      );
+    } finally {
+      await t.dispose();
+    }
+  },
+);

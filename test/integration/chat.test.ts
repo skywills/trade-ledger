@@ -2,16 +2,24 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { testProfile } from "../../src/server/ai/compatibility.js";
 import { createDefaultSecretResolver } from "../../src/server/ai/credentials.js";
-import { saveProfile } from "../../src/server/ai/profiles.js";
+import {
+  saveProfile,
+  selectDefaultProfile,
+} from "../../src/server/ai/profiles.js";
 import { acceptProposal } from "../../src/server/ai/proposals.js";
 import { listRunsForThread, readRun } from "../../src/server/ai/runs.js";
+import { modelRefFor } from "../../src/server/ai/session-host.js";
 import {
   activeProjection,
   BuildScheduler,
 } from "../../src/server/builds/service.js";
 import type { ChatFrame } from "../../src/server/chat/frames.js";
 import { type ChatLimits, ChatService } from "../../src/server/chat/service.js";
-import { listMessages, readThread } from "../../src/server/chat/threads.js";
+import {
+  createThread,
+  listMessages,
+  readThread,
+} from "../../src/server/chat/threads.js";
 import {
   commitImport,
   listImports,
@@ -119,7 +127,6 @@ describe("ChatService read-only turns", () => {
     });
     const complete = await waitIdle(h.store, thread.id);
     expect(complete.usage.costCoverage).toBe("unpriced");
-    await h.chat.close();
     await saveProfile(
       h.store,
       {
@@ -329,6 +336,117 @@ describe("ChatService read-only turns", () => {
     await waitIdle(h.store, thread.id);
     const last = h.inference.receivedRequests().at(-1)?.body ?? "";
     expect(last).toContain("first");
+  });
+
+  it("finishes the admitted turn and resumes its transcript on the newly verified endpoint", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness([
+      { kind: "text", text: "First endpoint reply", beforeReply: () => gate },
+    ]);
+    const next = await startInferenceServer({
+      mode: "tool-call",
+      planGateTool: "get_pnl_summary",
+      plan: [{ kind: "text", text: "Replacement endpoint reply" }],
+    });
+    servers.push(next);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    const followUp = { clientMessageId: "b", text: "Follow-up after edit" };
+    try {
+      await h.chat.sendMessage(thread.id, {
+        clientMessageId: "a",
+        text: "First conversation prompt",
+      });
+      await expect
+        .poll(() => h.inference.receivedRequests().at(-1)?.body)
+        .toContain("First conversation prompt");
+      await saveProfile(
+        h.store,
+        { ...h.profile, endpoint: next.url },
+        h.profile.revision,
+      );
+      await h.chat.sweepIdle(0);
+      await expect(
+        h.chat.sendMessage(thread.id, followUp),
+      ).rejects.toMatchObject({
+        code: "THREAD_BUSY",
+      });
+    } finally {
+      release();
+    }
+    await waitIdle(h.store, thread.id);
+    expect(listMessages(h.store, thread.id).at(-1)).toMatchObject({
+      status: "complete",
+      content: "First endpoint reply",
+    });
+    await expect(h.chat.sendMessage(thread.id, followUp)).rejects.toMatchObject(
+      {
+        code: "PROFILE_NOT_VERIFIED",
+      },
+    );
+    const check = await testProfile(
+      h.store,
+      h.profile.id,
+      new AbortController().signal,
+    );
+    expect(check.status).toBe("verified");
+    await h.chat.sendMessage(thread.id, followUp);
+    await waitIdle(h.store, thread.id);
+    expect(
+      h.inference
+        .receivedRequests()
+        .some((r) => r.body.includes(followUp.text)),
+    ).toBe(false);
+    const resumed = next.receivedRequests().at(-1)?.body;
+    expect(resumed).toContain(followUp.text);
+    expect(resumed).toContain("First endpoint reply");
+    expect(listMessages(h.store, thread.id).at(-1)).toMatchObject({
+      status: "complete",
+      content: "Replacement endpoint reply",
+    });
+  });
+
+  it("refreshes a stored thread with a null profile ID when two defaults share a revision", async () => {
+    const h = await harness([{ kind: "text", text: "Original reply" }]);
+    await selectDefaultProfile(h.store, h.profile.id);
+    const thread = await createThread(h.store, {
+      profileId: null,
+      modelRef: modelRefFor(h.profile),
+      sessionId: "chat-default-test",
+      title: "Conversation",
+      cloudConfirmed: false,
+      seed: null,
+      now: new Date(),
+    });
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "a",
+      text: "Original prompt",
+    });
+    await waitIdle(h.store, thread.id);
+    const next = await startInferenceServer({
+      mode: "tool-call",
+      planGateTool: "get_pnl_summary",
+      plan: [{ kind: "text", text: "New default reply" }],
+    });
+    servers.push(next);
+    const replacement = await verifiedProfile(h.store, next, "second-default");
+    expect(replacement.revision).toBe(h.profile.revision);
+    await selectDefaultProfile(h.store, replacement.id);
+    await h.chat.sendMessage(thread.id, {
+      clientMessageId: "b",
+      text: "New default prompt",
+    });
+    await waitIdle(h.store, thread.id);
+    expect(listMessages(h.store, thread.id).at(-1)?.content).toBe(
+      "New default reply",
+    );
+    expect(
+      h.inference
+        .receivedRequests()
+        .some((r) => r.body.includes("New default prompt")),
+    ).toBe(false);
   });
 
   it("refuses sends once the thread token cap is reached", async () => {

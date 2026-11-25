@@ -32,7 +32,8 @@ function cashAmount(fields: Record<string, string>): string | null {
   if (debit.status === "ok" && new Decimal(debit.value).gt(0)) return null;
   if (credit.status === "ok" && new Decimal(credit.value).lt(0)) return null;
   const hasParts = debit.status === "ok" || credit.status === "ok";
-  if (!hasParts) return amount.status === "ok" ? amount.value : null;
+  if (!hasParts)
+    return amount.status === "ok" ? new Decimal(amount.value).toFixed() : null;
   if (
     debit.status === "ok" &&
     credit.status === "ok" &&

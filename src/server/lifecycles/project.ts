@@ -44,7 +44,6 @@ export const lifecycleId = (a: LifecycleAnchor) =>
     .digest("hex")
     .slice(0, 24)}`;
 
-/** Keep exact identity and the existing unique execution/role fallback. */
 /**
  * FIFO split of a share disposal across holders, earliest acquisition first.
  * Undefined when the holders cannot cover the whole disposal.
@@ -69,6 +68,23 @@ function fifoTargets(
   return remaining.isZero() && targets.length ? targets : undefined;
 }
 
+function uniqueStockOwner(
+  book: ReadonlyMap<string, Decimal>,
+  close: Allocation,
+) {
+  const quantity = new Decimal(close.quantity);
+  const owners = [...book].filter(
+    ([, held]) =>
+      held.isNegative() !== quantity.isNegative() &&
+      held.abs().gte(quantity.abs()),
+  );
+  const owner = owners[0];
+  return owners.length === 1 && owner
+    ? [{ lifecycleId: owner[0], quantity: close.quantity }]
+    : undefined;
+}
+
+/** Keep exact identity and the existing unique execution/role fallback. */
 function allocationResolver(allocations: readonly Allocation[]) {
   const exact = new Map<string, Allocation>();
   const byExecution = new Map<string, Allocation[]>();
@@ -347,30 +363,16 @@ export function projectLifecycles(
         (m) => refKey(m.allocation) === refKey(a),
       );
       if (a.role === "close") {
-        const owners = [...book].filter(
-          ([, q]) =>
-            !q.isZero() &&
-            q.isNegative() !== new Decimal(a.quantity).isNegative() &&
-            q.abs().gte(new Decimal(a.quantity).abs()),
-        );
-        if (owners.length === 1) {
-          ownedStockCloses.add(refKey(a));
-          pieces = partition(
-            a,
-            [{ lifecycleId: owners[0]?.[0] ?? "", quantity: a.quantity }],
-            e.sources,
-          );
-          draft.members = draft.members.filter(
-            (m) => refKey(m.allocation) !== refKey(a),
-          );
-          draft.members.push(...pieces);
-        } else if (!explicitCloseRefs.has(refKey(a)) && fifoTargets(book, a)) {
-          // IBKR matches share disposals FIFO: the book lists holders in the
-          // order their current shares were acquired (emptied holders are
-          // removed below), so the earliest lot is consumed first.
+        const explicit = explicitCloseRefs.has(refKey(a));
+        // An explicit partition is replayed below. Before replay, only a
+        // uniquely compatible holder can establish a delivery link for it.
+        const targets = explicit
+          ? uniqueStockOwner(book, a)
+          : fifoTargets(book, a);
+        if (targets) {
           ownedStockCloses.add(refKey(a));
           pieces = fifoLotPnl(
-            partition(a, fifoTargets(book, a) ?? [], e.sources),
+            partition(a, targets, e.sources),
             a.brokerPnl,
             draft.members,
             exec,
@@ -380,7 +382,7 @@ export function projectLifecycles(
             (m) => refKey(m.allocation) !== refKey(a),
           );
           draft.members.push(...pieces);
-        } else if (owners.length !== 1 && !explicitCloseRefs.has(refKey(a))) {
+        } else if (!explicit) {
           draft.issues.push({
             key: `lifecycle:stock-close:${refKey(a)}`,
             code: "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
@@ -753,20 +755,42 @@ export function projectLifecycles(
     const finalMembers = indexMembersByAllocation(draft.members);
     draft.members = finalProjection.allocations.flatMap((a) => {
       const rows = finalMembers.get(refKey(a)) ?? [];
-      const owners = new Map<string, Decimal>();
-      for (const m of rows)
-        owners.set(
-          m.lifecycleId,
-          (owners.get(m.lifecycleId) ?? new Decimal(0)).plus(m.quantity),
-        );
-      return partition(
+      const byOwner = groupBy(rows, (m) => m.lifecycleId);
+      const parts = partition(
         a,
-        [...owners].map(([lifecycleId, q]) => ({
+        [...byOwner].map(([lifecycleId, members]) => ({
           lifecycleId,
-          quantity: q.toFixed(),
+          quantity: sum(members.map((m) => m.quantity)),
         })),
         exec.get(a.executionKey)?.sources ?? [],
       );
+      // Accounting may first supply broker P&L on the final projection. In
+      // that case use its apportioned amounts. Otherwise keep the evidence
+      // for each owner, including FIFO lot basis, across presentation merges.
+      if (
+        byOwner.size === 1 ||
+        a.brokerPnl === null ||
+        rows.some((m) => m.brokerPnl === null) ||
+        !new Decimal(sum(rows.map((m) => m.brokerPnl ?? "0"))).eq(a.brokerPnl)
+      )
+        return parts;
+      return parts.map((part) => {
+        const members = byOwner.get(part.lifecycleId) ?? [];
+        const estimated = a.pnlEstimated || members.some((m) => m.estimated);
+        const basis = members.some(
+          (m) => m.pnlAttribution === "basis-reconciled",
+        );
+        return {
+          ...part,
+          brokerPnl: sum(members.map((m) => m.brokerPnl ?? "0")),
+          estimated,
+          pnlAttribution: estimated
+            ? ("estimated" as const)
+            : basis
+              ? ("basis-reconciled" as const)
+              : a.pnlAttribution,
+        };
+      });
     });
     const membersByLifecycle = groupBy(draft.members, (m) => m.lifecycleId);
     for (const l of draft.lifecycles)

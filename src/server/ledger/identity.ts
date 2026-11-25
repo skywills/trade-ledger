@@ -347,8 +347,6 @@ export function resolveIdentities(
   for (const key of groupOrder) {
     const group = groups.get(key);
     if (group === undefined) continue;
-    const [first] = group.items;
-    if (first === undefined) continue;
 
     const fingerprints = new Set(
       group.items.map((item) => payloadFingerprint(item.execution)),
@@ -380,7 +378,7 @@ export function resolveIdentities(
       key,
       account: group.account,
       tradeId: group.tradeId,
-      referencesTradeId: first.execution.brokerIds.OrigTradeID ?? null,
+      referencesTradeId: mergedBrokerIds.OrigTradeID ?? null,
       merged: {
         ...fillMissing(group.items.map((item) => item.execution)),
         brokerIds: mergedBrokerIds,

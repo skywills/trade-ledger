@@ -6,6 +6,7 @@ import type { AnswerReply, AnswerStatus } from "@nathapp/nax-agent";
 import type { Id } from "../../shared/domain.js";
 import { AppError } from "../../shared/errors.js";
 import type { SecretResolver } from "../ai/credentials.js";
+import type { LlmProfileSnapshot } from "../ai/profiles.js";
 import {
   DEFAULT_TURN_LIMITS,
   type HostedSession,
@@ -65,7 +66,7 @@ export interface ChatServiceDeps {
 }
 
 interface LiveThread {
-  readonly hasProfilePricing: boolean;
+  readonly profile: LlmProfileSnapshot;
   readonly hosted: HostedSession;
   readonly limits: ChatLimits;
   readonly turn: { current: TurnScope };
@@ -79,6 +80,7 @@ const ACTIVE_CHATS = new Map<Id, LiveThread>();
 const IN_FLIGHT = new Set<Promise<void>>();
 /** A thread with a send in progress, from admission until its turn settles. */
 interface Claim {
+  readonly profile: LlmProfileSnapshot;
   cancelRequested: boolean;
 }
 const CLAIMS = new Map<Id, Claim>();
@@ -184,10 +186,10 @@ export class ChatService {
       };
     // Claim synchronously, before any await, so concurrent sends cannot both pass.
     if (CLAIMS.has(threadId)) throw busyError();
-    const claim: Claim = { cancelRequested: false };
+    const profile = this.profileForSend(thread, input);
+    const claim: Claim = { profile, cancelRequested: false };
     CLAIMS.set(threadId, claim);
     try {
-      this.assertSendable(thread, input);
       const started = await this.recordTurnStart(thread, input);
       this.launch(started.running, started.assistantId, started.prompt, claim);
       return {
@@ -200,14 +202,14 @@ export class ChatService {
     }
   }
 
-  private assertSendable(
+  private profileForSend(
     thread: ChatThread,
     input: {
       clientMessageId: string;
       text: string;
       attachments?: Attachment[];
     },
-  ): void {
+  ): LlmProfileSnapshot {
     this.validateInput(input);
     if (busy(thread)) throw busyError();
     if (thread.status === "limit_reached")
@@ -226,6 +228,7 @@ export class ChatService {
         409,
       );
     }
+    return profile;
   }
 
   private async recordTurnStart(
@@ -376,7 +379,7 @@ export class ChatService {
   ): Promise<void> {
     let live: LiveThread | null = null;
     try {
-      live = await this.liveFor(thread);
+      live = await this.liveFor(thread, claim.profile);
       if (claim.cancelRequested) {
         await this.finishCancelled(thread, assistantMessageId);
         return;
@@ -395,7 +398,7 @@ export class ChatService {
         assistantMessageId,
         prompt,
         limits: live.limits,
-        hasProfilePricing: live.hasProfilePricing,
+        hasProfilePricing: live.profile.pricing != null,
         accumulator: live.accumulator,
         now: this.now,
       });
@@ -438,22 +441,32 @@ export class ChatService {
     });
   }
 
-  private async liveFor(thread: ChatThread): Promise<LiveThread> {
+  private async liveFor(
+    thread: ChatThread,
+    profile: LlmProfileSnapshot,
+  ): Promise<LiveThread> {
     const cached = ACTIVE_CHATS.get(thread.id);
-    if (cached !== undefined) return cached;
+    if (
+      cached?.profile.id === profile.id &&
+      cached.profile.revision === profile.revision
+    )
+      return cached;
     const opening = OPENING.get(thread.id);
     if (opening !== undefined) return opening;
-    const pending = this.openLive(thread).finally(() =>
+    const pending = this.openLive(thread, profile).finally(() =>
       OPENING.delete(thread.id),
     );
     OPENING.set(thread.id, pending);
     return pending;
   }
 
-  private async openLive(thread: ChatThread): Promise<LiveThread> {
-    const profile = resolveProfile(this.deps.store, thread.profileId, {
-      cloudConfirmed: thread.cloudConfirmed,
-    });
+  private async openLive(
+    thread: ChatThread,
+    profile: LlmProfileSnapshot,
+  ): Promise<LiveThread> {
+    // A profile edit retires the previous connection between turns. Reopening
+    // with the existing session ID resumes the conversation transcript.
+    await this.closeLive(thread.id);
     const turn: { current: TurnScope } = {
       current: { turnId: "", proposalRunId: null, proposalCount: 0 },
     };
@@ -483,7 +496,7 @@ export class ChatService {
       metadata: { threadId: thread.id },
     });
     const live: LiveThread = {
-      hasProfilePricing: profile.pricing != null,
+      profile,
       hosted,
       // Match the same profile snapshot used by the provider connection.
       limits: {

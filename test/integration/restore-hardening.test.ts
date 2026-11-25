@@ -1,4 +1,6 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -28,6 +30,7 @@ import {
 import {
   acquireDataDirLock,
   isDataDirLocked,
+  OWNER_DB_FILENAME,
   RESTORE_MARKER_FILENAME,
 } from "../../src/server/maintenance/lock.js";
 import { restoreBackup } from "../../src/server/maintenance/restore.js";
@@ -124,6 +127,46 @@ function makeExistingTarget(): string {
 }
 
 describe("restore hardening (R03)", () => {
+  it("retains exclusive ownership through publication and process death", async () => {
+    const dir = trackTemp("ibkr-lock-contention-");
+    // Hold the same underlying transaction as a process that has acquired
+    // ownership but has not yet published its diagnostic PID record.
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const Database = require("better-sqlite3");
+       const db = new Database(process.argv[1]);
+       db.exec("BEGIN EXCLUSIVE");
+       process.send("locked");
+       process.on("message", () => {});`,
+        join(dir, OWNER_DB_FILENAME),
+      ],
+      { stdio: ["ignore", "ignore", "inherit", "ipc"] },
+    );
+    const exit = once(child, "exit");
+    try {
+      await once(child, "message");
+      expect(() => acquireDataDirLock(dir)).toThrow(
+        expect.objectContaining({ code: "DATA_DIR_LOCKED" }),
+      );
+    } finally {
+      child.kill("SIGKILL");
+      await exit;
+    }
+    const first = acquireDataDirLock(dir);
+    first.release();
+    const next = acquireDataDirLock(dir);
+    try {
+      first.release();
+      expect(() => acquireDataDirLock(dir)).toThrow(
+        expect.objectContaining({ code: "DATA_DIR_LOCKED" }),
+      );
+    } finally {
+      next.release();
+    }
+  });
+
   it("holds the data-dir lock for the whole restore and releases it after", async () => {
     const archive = await makeArchive();
     const targetDir = makeExistingTarget();
@@ -239,6 +282,7 @@ describe("restore hardening (R03)", () => {
       );
       expect(existsSync(join(preRestoreDir, "journal.sqlite"))).toBe(true);
       expect(existsSync(join(preRestoreDir, "journal.lock"))).toBe(false);
+      expect(existsSync(join(preRestoreDir, OWNER_DB_FILENAME))).toBe(false);
 
       const restored = openStore(targetDir);
       try {
@@ -307,6 +351,7 @@ describe("restore hardening (R03)", () => {
         message: expect.stringContaining("EACCES"),
       });
       expect(readdirSync(targetDir).sort()).toEqual([
+        OWNER_DB_FILENAME,
         "keep-marker.txt",
         "zz-stuck",
       ]);

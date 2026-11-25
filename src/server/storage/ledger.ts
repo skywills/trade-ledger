@@ -91,9 +91,8 @@ export function manifestHash(
   imports: ReadonlyArray<LedgerImportRef>,
 ): string {
   const manifest = {
-    // Re-normalize originals after correcting broker event code definitions,
-    // while preserving the public Flex parser API version.
-    normalizationRevision: "contract-lifecycle-v5-cash-settlements",
+    // Changes to derived ledger evidence require a full rebuild of retained imports.
+    normalizationRevision: "contract-lifecycle-v6-corrections-and-settlements",
     parserVersion,
     decisionWatermark,
     imports: [...imports]

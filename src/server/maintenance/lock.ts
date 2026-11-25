@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { AppError } from "../../shared/errors.js";
 
 /**
@@ -19,6 +20,9 @@ import { AppError } from "../../shared/errors.js";
  * provably gone.
  */
 export const LOCK_FILENAME = "journal.lock";
+// Keep the inode across restores and shutdowns. SQLite's OS locks expire when
+// the owning connection closes, including when the process is killed.
+export const OWNER_DB_FILENAME = ".journal-owner.sqlite";
 
 /**
  * Written by a restore before its entry-by-entry swap and removed once the swap
@@ -49,6 +53,7 @@ export interface DataDirLock {
 }
 
 interface LockRecord {
+  guarded: boolean;
   pid: number;
   startedAt: string;
   /**
@@ -81,6 +86,7 @@ function readProcessStartTime(pid: number): string | null {
 function readLockRecord(lockPath: string): LockRecord | null {
   try {
     const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as {
+      guarded?: unknown;
       pid?: unknown;
       startedAt?: unknown;
       pidStart?: unknown;
@@ -89,6 +95,7 @@ function readLockRecord(lockPath: string): LockRecord | null {
       return null;
     }
     return {
+      guarded: parsed.guarded === true,
       pid: parsed.pid,
       startedAt:
         typeof parsed.startedAt === "string" ? parsed.startedAt : "unknown",
@@ -124,15 +131,27 @@ function lockOwnerIsLive(record: LockRecord): boolean {
   return true;
 }
 
-/**
- * Whether a live process holds the lock. A missing, unreadable or stale lock
- * (its recorded pid is gone) reports false so the directory is recoverable.
- */
+function isBusy(error: unknown): boolean {
+  return error instanceof Database.SqliteError && error.code === "SQLITE_BUSY";
+}
+
+/** Reports ownership, including during PID record publication and cleanup. */
 export function isDataDirLocked(dataDir: string): boolean {
-  const lockPath = join(dataDir, LOCK_FILENAME);
-  const record = readLockRecord(lockPath);
-  if (record === null) return false;
-  return lockOwnerIsLive(record);
+  const ownerPath = join(dataDir, OWNER_DB_FILENAME);
+  if (existsSync(ownerPath)) {
+    let probe: Database.Database | undefined;
+    try {
+      probe = new Database(ownerPath, { readonly: true, timeout: 0 });
+      probe.prepare("SELECT COUNT(*) FROM sqlite_schema").get();
+    } catch (error) {
+      if (isBusy(error)) return true;
+      throw error;
+    } finally {
+      probe?.close();
+    }
+  }
+  const record = readLockRecord(join(dataDir, LOCK_FILENAME));
+  return record !== null && !record.guarded && lockOwnerIsLive(record);
 }
 
 function writeLock(lockPath: string, record: LockRecord): void {
@@ -146,56 +165,55 @@ function writeLock(lockPath: string, record: LockRecord): void {
 }
 
 /**
- * Acquires the exclusive data-directory lock or throws DATA_DIR_LOCKED when a
- * live process already owns it. A stale lock whose pid is no longer alive is
- * removed and re-acquired.
+ * Take an OS-backed exclusive transaction before inspecting, reclaiming or
+ * publishing journal.lock. Keep the PID file for compatibility with existing
+ * installations. A guarded record left after transaction acquisition belongs
+ * to a previous owner, including when a container reuses its PID.
  */
 export function acquireDataDirLock(dataDir: string): DataDirLock {
   mkdirSync(dataDir, { recursive: true });
   const lockPath = join(dataDir, LOCK_FILENAME);
-  const record: LockRecord = {
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-    pidStart: readProcessStartTime(process.pid),
-  };
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      writeLock(lockPath, record);
-      return {
-        path: lockPath,
-        release() {
-          try {
-            const current = readLockRecord(lockPath);
-            if (current !== null && current.pid !== process.pid) return;
-            unlinkSync(lockPath);
-          } catch {
-            // Releasing a lock that is already gone is a no-op.
-          }
-        },
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  const owner = new Database(join(dataDir, OWNER_DB_FILENAME), { timeout: 0 });
+  try {
+    owner.exec("BEGIN EXCLUSIVE");
+    if (existsSync(lockPath)) {
+      const previous = readLockRecord(lockPath);
+      if (previous && !previous.guarded && lockOwnerIsLive(previous)) {
+        throw new AppError(
+          "DATA_DIR_LOCKED",
+          `The data directory is in use by running process ${previous.pid}. Stop it before continuing.`,
+          409,
+        );
+      }
+      unlinkSync(lockPath);
     }
-
-    const existing = readLockRecord(lockPath);
-    if (existing !== null && lockOwnerIsLive(existing)) {
+    writeLock(lockPath, {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      pidStart: readProcessStartTime(process.pid),
+      guarded: true,
+    });
+  } catch (error) {
+    owner.close();
+    if (isBusy(error) || (error as NodeJS.ErrnoException).code === "EEXIST") {
       throw new AppError(
         "DATA_DIR_LOCKED",
-        `The data directory is in use by running process ${existing.pid}. Stop it before continuing.`,
+        "The data directory is in use.",
         409,
       );
     }
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // Another process may have already recovered the stale lock.
-    }
+    throw error;
   }
 
-  throw new AppError(
-    "DATA_DIR_LOCKED",
-    "Could not acquire the data-directory lock.",
-    409,
-  );
+  return {
+    path: lockPath,
+    release() {
+      if (!owner.open) return;
+      try {
+        unlinkSync(lockPath);
+      } finally {
+        owner.close();
+      }
+    },
+  };
 }

@@ -1,4 +1,5 @@
 import type { Execution } from "../../shared/domain.js";
+import { normalizeDate } from "../../shared/timestamps.js";
 import { splitAmount } from "./allocation.js";
 import { basisCloseAllocation } from "./grouping-basis.js";
 import { basisPnlShares } from "./grouping-basis-pnl.js";
@@ -12,7 +13,7 @@ import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
 import { draftsHolding } from "./grouping-draft-index.js";
 import { fifoCloseAllocation, fifoLegAmounts } from "./grouping-fifo.js";
-import { signOf } from "./matching.js";
+import { sameInstrument, signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue } from "./projection.js";
 
 export function matchCloses(context: GroupingContext): Execution[] {
@@ -42,15 +43,17 @@ export function matchCloses(context: GroupingContext): Execution[] {
     const closeQuantity = availableOf(close).toFixed();
     let candidates = closeCandidates(context, close, closeQuantity);
 
-    const lot = ledger.lots.find(
-      (row) =>
-        (row.fields["TradeID"] ?? "").trim() !== "" &&
-        (row.fields["TradeID"] ?? "").trim() ===
-          (close.brokerIds.TradeID ?? ""),
-    );
+    const tradeId = close.brokerIds.TradeID;
+    const lot = tradeId
+      ? ledger.lots.find(
+          (row) =>
+            row.fields.ClientAccountID?.trim() === close.account &&
+            row.fields.TradeID?.trim() === tradeId,
+        )
+      : undefined;
     if (lot !== undefined) {
-      const opened = (lot.fields["OpenDateTime"] ?? "").trim().slice(0, 10);
-      if (opened !== "") {
+      const opened = normalizeDate(lot.fields.OpenDateTime);
+      if (opened !== null) {
         const narrowed = candidates.filter((draft) =>
           draft.openingLegs.some((leg) => leg.date === opened),
         );
@@ -138,7 +141,25 @@ export function matchCloses(context: GroupingContext): Execution[] {
       continue;
     }
 
-    if (candidates.length === 1 && basisAllocation !== null) {
+    // One broker fill can belong to several owners after a manual split. Its
+    // slices have no FIFO order. Preserve the only owner that covers the close.
+    const singleOpening =
+      candidates.length === 1 &&
+      exposureCandidates.length > 1 &&
+      new Set(
+        exposureCandidates.flatMap((draft) =>
+          draft.openingLegs
+            .filter((leg) => sameInstrument(leg.instrument, close.instrument))
+            .map((leg) => leg.executionKey),
+        ),
+      ).size === 1;
+    if (
+      candidates.length === 1 &&
+      basisAllocation !== null &&
+      (equivalent !== undefined ||
+        exposureCandidates.length <= 1 ||
+        singleOpening)
+    ) {
       const target = candidates[0];
       if (target !== undefined) {
         const netCash = residualNetCash(close);
@@ -156,17 +177,14 @@ export function matchCloses(context: GroupingContext): Execution[] {
       }
     }
 
-    // Also when no single lot can absorb the whole close (candidates empty):
-    // FIFO spreads it across the earlier lots, as IBKR does.
-    const fifo =
-      candidates.length !== 1 || basisAllocation === null
-        ? fifoCloseAllocation(
-            context,
-            close,
-            closeQuantity,
-            exposureCandidates.length > 1 ? exposureCandidates : candidates,
-          )
-        : undefined;
+    // Older partial holdings participate even if a newer holding could cover
+    // the entire close.
+    const fifo = fifoCloseAllocation(
+      context,
+      close,
+      closeQuantity,
+      exposureCandidates.length > 1 ? exposureCandidates : candidates,
+    );
     if (fifo !== undefined) {
       const netCash = residualNetCash(close);
       const brokerPnl = residualBrokerPnl(close);
@@ -183,6 +201,9 @@ export function matchCloses(context: GroupingContext): Execution[] {
             quantity: part.quantity,
             netCash: part.netCash,
             brokerPnl: part.brokerPnl,
+            ...(part.pnlEstimated
+              ? { pnlEstimated: true, pnlAttribution: "estimated" as const }
+              : {}),
           }),
         );
       }
@@ -190,7 +211,11 @@ export function matchCloses(context: GroupingContext): Execution[] {
       continue;
     }
 
-    if (candidates.length > 1 || basisAllocation === null) {
+    if (
+      candidates.length > 1 ||
+      (candidates.length === 1 && exposureCandidates.length > 1) ||
+      basisAllocation === null
+    ) {
       addIssue(
         makeIssue("AMBIGUOUS_CLOSE", close.sources, "warning", close.key),
       );

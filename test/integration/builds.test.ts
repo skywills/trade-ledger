@@ -930,7 +930,12 @@ describe("provisional identity wiring", () => {
     }));
 });
 
-it.each([undefined, "contract-lifecycle-v2", "contract-lifecycle-v3"])(
+it.each([
+  undefined,
+  "contract-lifecycle-v2",
+  "contract-lifecycle-v3",
+  "contract-lifecycle-v5-cash-settlements",
+])(
   "requires full normalization for a ledger with old normalization revision %s",
   async (normalizationRevision) =>
     withStore(async (store) => {

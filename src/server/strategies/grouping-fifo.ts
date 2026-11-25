@@ -1,11 +1,13 @@
 import { Decimal } from "decimal.js";
 import type { Execution } from "../../shared/domain.js";
+import { reconcilesWithin } from "../../shared/money.js";
 import { compareExecutionTime } from "../ledger/chronology.js";
 import { splitAmount } from "./allocation.js";
 import { closingExposure } from "./grouping-close-candidates.js";
 import type { GroupingContext } from "./grouping-context.js";
 import { sameInstrument } from "./matching.js";
 import type { StrategyDraft } from "./projection.js";
+import { type PnlSlice, reconstructPnl } from "./reconstructed-pnl.js";
 
 export interface FifoPart {
   draft: StrategyDraft;
@@ -94,6 +96,7 @@ export function fifoCloseAllocation(
 export interface FifoLegAmount extends FifoPart {
   netCash: string;
   brokerPnl: string | null;
+  pnlEstimated?: boolean;
 }
 
 /** Opening cash per unit of the closed instrument held by a draft. */
@@ -115,12 +118,44 @@ function unitOpeningCash(
   return units.isZero() ? null : cash.div(units);
 }
 
+/** Reuse futures trade-proceeds reconstruction for the specific units consumed. */
+function futuresLotPnl(
+  context: GroupingContext,
+  close: Execution,
+  part: FifoPart,
+): Decimal | null {
+  const openings = part.draft.openingLegs.filter((leg) =>
+    sameInstrument(leg.instrument, close.instrument),
+  );
+  const slices: PnlSlice[] = [];
+  for (const leg of openings) {
+    const execution = context.executionByKey.get(leg.executionKey);
+    if (!execution) return null;
+    // A single fill supplies its own unit cost. For a multi-fill opening,
+    // reconstruction requires all its units to balance the consumed quantity.
+    slices.push({
+      execution,
+      quantity:
+        openings.length === 1
+          ? new Decimal(part.quantity).negated().toFixed()
+          : leg.quantity,
+      netCash: leg.netCash,
+    });
+  }
+  slices.push({
+    execution: close,
+    quantity: part.quantity,
+    netCash: close.netCash,
+  });
+  const amount = reconstructPnl(slices).value;
+  return amount === null ? null : new Decimal(amount);
+}
+
 /**
- * Close cash is split by quantity. Broker P&L follows IBKR's FIFO arithmetic
- * per lot: that lot's share of the close cash plus its own opening cash for
- * the units consumed. Any cents between that and the broker's reported total
- * (fee rounding inside IBKR's lot basis) are spread by quantity, so the parts
- * always add up to the broker figure exactly.
+ * Split NetCash by quantity. Compute each lot's realized result from its
+ * opening and closing cash, or from trade proceeds and fees for futures.
+ * Spread rounding residuals so the allocations conserve the broker total.
+ * Futures lacking reconciling proceeds receive explicitly estimated shares.
  */
 export function fifoLegAmounts(
   context: GroupingContext,
@@ -129,7 +164,6 @@ export function fifoLegAmounts(
   netCash: string,
   brokerPnl: string | null,
 ): FifoLegAmount[] {
-  void context;
   const split = parts.map((p) => ({
     strategyId: p.draft.id,
     quantity: p.quantity,
@@ -143,8 +177,29 @@ export function fifoLegAmounts(
       netCash: cashOf(p.draft.id).toFixed(),
       brokerPnl,
     }));
+  const isFuture = close.instrument.assetClass === "FUT";
+  const estimatedFutures = (): FifoLegAmount[] => {
+    const shares = new Map(
+      splitAmount(brokerPnl, split).map((share) => [
+        share.strategyId,
+        share.amount,
+      ]),
+    );
+    return parts.map((part) => ({
+      ...part,
+      netCash: cashOf(part.draft.id).toFixed(),
+      brokerPnl: shares.get(part.draft.id) ?? null,
+      pnlEstimated: true,
+    }));
+  };
   const raw = new Map<string, Decimal>();
   for (const p of parts) {
+    if (isFuture) {
+      const amount = futuresLotPnl(context, close, p);
+      if (amount === null) return estimatedFutures();
+      raw.set(p.draft.id, amount);
+      continue;
+    }
     const unit = unitOpeningCash(p.draft, close);
     if (unit === null)
       return parts.map((q) => ({
@@ -161,6 +216,11 @@ export function fifoLegAmounts(
     (sum, v) => sum.plus(v),
     new Decimal(0),
   );
+  if (
+    isFuture &&
+    !reconcilesWithin(rawTotal.toFixed(), brokerPnl, close.currency)
+  )
+    return estimatedFutures();
   const residual = splitAmount(
     new Decimal(brokerPnl).minus(rawTotal).toFixed(),
     split,

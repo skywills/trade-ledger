@@ -225,6 +225,27 @@ describe("optional Statement of Funds settlement evidence", () => {
     }
   });
 
+  it("treats different decimal scales as the same amount-only payment across exports", async () => {
+    const payment = (amount: string) =>
+      fundsCsv([
+        cashRow({ TransactionID: "payment", Debit: "", Amount: amount }),
+      ]);
+    const t = await setup(`${settlementTrades()}\n${payment("-300")}`);
+    try {
+      await t.upload(payment("-300.00"));
+      const { ledger, cycles } = await t.build();
+      const close = ledger.executions.find(
+        (e) => e.brokerIds.TradeID === "short-close",
+      );
+      expect(close?.netCash).toBe("-300");
+      expect(close?.sources).toHaveLength(3);
+      expect(cycles.some((c) => c.reconstructedPnl === "-200")).toBe(true);
+      expect(ledger.issues).toEqual([]);
+    } finally {
+      await t.dispose();
+    }
+  });
+
   it("reclassifies previously stored funds rows during a full rebuild", async () => {
     const t = await setup(
       `${fundsCsv(bothSettlements())}\n${settlementTrades()}`,

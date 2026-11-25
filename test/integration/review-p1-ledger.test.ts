@@ -105,6 +105,43 @@ function renameImport(store: Store, oldId: string, newId: string): void {
 }
 
 describe("P1 ledger evidence regressions", () => {
+  it.each([true, false])(
+    "retains a correction reference across overlapping exports (sparse first: %s)",
+    (sparseFirst) =>
+      withStore(async (store) => {
+        const correction = row("SIM-A", "2", "T2");
+        const sparse = await commitRows(store, "sparse.csv", [
+          row("SIM-A", "1", "T1"),
+          correction,
+        ]);
+        const full = await commitRows(store, "full.csv", [
+          { ...correction, OrigTradeID: "T1" },
+        ]);
+        renameImport(store, sparse, sparseFirst ? "a" : "z");
+        renameImport(store, full, sparseFirst ? "z" : "a");
+        const ledger = await normalizeLedger(store, {
+          parserVersion: "flex-v1",
+          decisionWatermark: 0,
+        });
+        expect(ledger.executions).toHaveLength(1);
+        expect(ledger.executions[0]).toMatchObject({
+          quantity: "2",
+          brokerIds: { TradeID: "T2", OrigTradeID: "T1" },
+        });
+        expect(ledger.executions[0]?.sources).toHaveLength(2);
+        expect(
+          store.db
+            .prepare(
+              "SELECT trade_id, revision_state FROM transaction_revisions WHERE ledger_build_id = ? ORDER BY revision_number",
+            )
+            .all(ledger.id),
+        ).toEqual([
+          { trade_id: "T1", revision_state: "superseded" },
+          { trade_id: "T2", revision_state: "active" },
+        ]);
+      }),
+  );
+
   it("resolves multi-hop corrections by dependency across source order", async () =>
     withStore(async (store) => {
       await commitRows(store, "t1.csv", [row("SIM-A", "1", "T1")]);
