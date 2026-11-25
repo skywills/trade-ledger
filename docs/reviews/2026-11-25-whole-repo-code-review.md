@@ -41,7 +41,7 @@ The checkboxes track resolution. Mark an entry complete after its closure check 
 
 ## P1 resolution
 
-All ten P1 findings were fixed in `133cd70` on `fix/review-2026-11-25`. Twelve P2 findings and two P3 entries remain open, including the R13 support decision.
+The first P1 fixes landed in `133cd70` on `fix/review-2026-11-25`. The follow-up review below covers cases the first regression tests missed. Twelve original P2 findings and two P3 entries remain open, including the R13 support decision.
 
 **Existing journals need one full rebuild after upgrading.** The old active build is marked stale. The revised normalization manifest prevents a projection-only rebuild from reusing the old ledger. A full rebuild reads retained imports and decisions using the corrected rules. [Upgrade regression](../../test/integration/builds.test.ts#L933)
 
@@ -58,7 +58,30 @@ All ten P1 findings were fixed in `133cd70` on `fix/review-2026-11-25`. Twelve P
 | R09 | Futures allocation uses trade proceeds and fees for consumed units. The two lots receive +50 and −50. Missing or inconsistent proceeds produce explicitly estimated shares of the broker total. [Futures regressions](../../test/integration/fifo-accounting.test.ts#L114) |
 | R11 | Amount-only settlements use a normalized decimal representation. Equivalent spellings retain one payment and both sources. Conflicting amounts still raise an ambiguity. [Settlement regressions](../../test/integration/settlement-imports.test.ts#L187) |
 
-**Verification on the fix branch.** All 1,195 unit and integration tests and all 137 Chromium tests passed. Typecheck, compiled-server smoke, and Docker smoke passed. Lint exited successfully with four existing warnings.
+**Verification at `6812e2b`.** All 1,195 unit and integration tests and all 137 Chromium tests passed. Typecheck, compiled-server smoke, and Docker smoke passed. Lint exited successfully with four existing warnings.
+
+## Follow-up review of the P1 fixes
+
+The review compared `b4726a3` with `6812e2b`. All ten follow-up findings are fixed on this branch. The cases below use synthetic imports and retained rebuilds, local model fixtures, or temporary maintenance directories.
+
+| Finding | Regression evidence |
+|---|---|
+| 1 · Interleaved opening fills (R02) | Order A fills before and after order B. Once A’s first fill is exhausted, the next 80-share sale belongs entirely to B with $1,200 P&L. A later sale crosses from B to A at their respective costs. [FIFO tests](../../test/integration/fifo-accounting.test.ts#L165) |
+| 2 · Partial presentation merge (R03) | A sale of 90 shares closes 20, 30 and 40 shares from three holdings. After merging the first two strategies, the rebuild retains all three lifecycle slices and their respective $400, $900 and $400 gains. Confirming the displayed ownership survives a second rebuild. [Lifecycle tests](../../test/integration/lifecycle-acceptance.test.ts#L474) |
+| 3 · Assignment on an inferred opening (R05) | An unmarked short put is classified as an opening. A delivery of +100 shares establishes the assignment and a delivery of −100 is rejected. [Lifecycle tests](../../test/integration/lifecycle-acceptance.test.ts#L571) |
+| 4 · Offsets on closed-lot timestamps (R08) | UTC and equivalent offset-bearing references select the $140 opening on a $150 sale, yielding $10. Conflicting explicit evidence leaves the close under review. [Lot-matching tests](../../test/integration/fifo-accounting.test.ts#L196) |
+| 5 · Read-only owner database (R07) | A read-only guard in a writable directory prevents ownership publication. The test checks the error and absence of a new marker under a non-root POSIX account. [Lock tests](../../test/integration/restore-hardening.test.ts#L131) |
+| 6 · Legacy lock ownership across containers (R07) | Acquisition preserves a pre-existing lock file even when its PID appears absent, its record is incomplete, or it claims an older SQLite guard. A current-format marker recovers after a crash. [Lock tests](../../test/integration/restore-hardening.test.ts#L153) · [Upgrade procedure](../../README.md#backup-and-restore) |
+| 7 · Proposal records the replacement endpoint (R06) | Endpoint A receives a turn. Endpoint B is saved and verified before A submits its proposal. The persisted proposal run retains A’s profile ID, revision and endpoint. [Chat test](../../test/integration/chat.test.ts#L660) |
+| 8 · Restore moves the open SQLite journal (R07) | Restoring to an empty target leaves no pre-restore directory containing a displaced journal. The swap reserves the guard database and its rollback, WAL and shared-memory sidecars. [Restore test](../../test/integration/restore-hardening.test.ts#L186) |
+| 9 · Multiple explicit closed-lot rows (R02) | Two same-account rows direct an 80-share sale to 30 older shares and 50 newer shares, overriding default FIFO. Their gains are $150 and $750. A row with the same trade ID from a different account has no effect. [Lot-allocation test](../../test/integration/fifo-accounting.test.ts#L221) |
+| 10 · Compact intraday closed-lot timestamp (R08) | A compact 14:00 reference selects the $140 afternoon opening over the $100 morning opening. The realized gain is $10. [Intraday test](../../test/integration/fifo-accounting.test.ts#L196) |
+
+The lifecycle regressions also cover three related errors. An earlier confirmed sale now debits the correct holder before the next FIFO disposal, a material discrepancy between basis and reported P&L leaves the split marked estimated, and an inconsistent broker-coded assignment keeps the lifecycle unresolved. [Lifecycle tests](../../test/integration/lifecycle-acceptance.test.ts#L617)
+
+**Upgrade.** The projection algorithm is now `lifecycles-v16`. A journal built with v15 becomes stale and can refresh its projection from the retained ledger. Older journals with a superseded normalization revision need a full rebuild. If an upgrade reports a legacy lock file, follow the offline recovery procedure before removing it. [Build regression](../../test/integration/builds.test.ts#L271) · [Lock recovery](../../README.md#backup-and-restore)
+
+**Follow-up verification.** All 1,220 unit and integration tests across 123 files and all 137 Chromium tests passed. Typecheck, compiled-server startup and shutdown, and the non-root Docker restart smoke test passed. Lint exited successfully with four existing warnings. Restore was exercised on Linux. Native Windows remains unverified.
 
 ## Evidence and closure checks
 

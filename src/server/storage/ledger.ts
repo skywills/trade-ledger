@@ -65,6 +65,7 @@ interface SourceRow {
 }
 
 interface LotRow {
+  report_timezone: string | null;
   import_id: string;
   row_number: number;
   section: string | null;
@@ -309,14 +310,17 @@ export function loadLedgerSnapshot(
 
   const lotRows = db
     .prepare(
-      `SELECT i.import_id, i.row_number, i.section, i.raw_fields_json, i.parse_errors_json
+      `SELECT i.import_id, i.row_number, i.section, i.raw_fields_json, i.parse_errors_json,
+              CASE WHEN json_valid(f.capability_json) THEN json_extract(f.capability_json, '$.timezone') END AS report_timezone
        FROM lot_details ld
        JOIN import_rows i ON i.id = ld.import_row_id
+       JOIN imports f ON f.id = i.import_id
        WHERE ld.ledger_build_id = ?
        ORDER BY i.import_id, i.row_number`,
     )
     .all(ledgerId) as LotRow[];
   const lots: LedgerSnapshot["lots"] = lotRows.map((row) => ({
+    reportTimezone: row.report_timezone,
     source: { importId: row.import_id, rowNumber: row.row_number },
     rowNumber: row.row_number,
     section: row.section,

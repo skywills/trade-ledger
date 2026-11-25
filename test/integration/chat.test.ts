@@ -10,6 +10,7 @@ import { acceptProposal } from "../../src/server/ai/proposals.js";
 import { listRunsForThread, readRun } from "../../src/server/ai/runs.js";
 import { modelRefFor } from "../../src/server/ai/session-host.js";
 import {
+  activeLedgerSnapshot,
   activeProjection,
   BuildScheduler,
 } from "../../src/server/builds/service.js";
@@ -656,6 +657,74 @@ describe("write tools need the user's approval", () => {
 });
 
 describe("proposals from chat", () => {
+  it("records the profile that produced a proposal when the profile changes mid-turn", async () => {
+    const plan: InferencePlanStep[] = [];
+    const h = await harness(plan);
+    const execution = activeLedgerSnapshot(h.store)?.executions[0];
+    if (!execution) throw new Error("missing seeded execution");
+    const next = await startInferenceServer({ mode: "tool-call" });
+    servers.push(next);
+    const thread = await h.chat.createThread({ profileId: h.profile.id });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    plan.push(
+      {
+        kind: "tool-call",
+        toolName: "submit_proposal",
+        arguments: {
+          kind: "manual_allocation",
+          payload: {
+            strategyId: "strategy-test",
+            source: execution.sources[0],
+            allocations: [
+              {
+                executionKey: execution.key,
+                quantity: execution.quantity,
+                netCash: execution.netCash,
+                brokerPnl: null,
+              },
+            ],
+          },
+        },
+        beforeReply: () => gate,
+      },
+      { kind: "text", text: "Proposal submitted" },
+    );
+    const prompt = "Propose an allocation on the original endpoint";
+    try {
+      await h.chat.sendMessage(thread.id, {
+        clientMessageId: "proposal",
+        text: prompt,
+      });
+      await expect
+        .poll(() => h.inference.receivedRequests().at(-1)?.body)
+        .toContain(prompt);
+      await saveProfile(
+        h.store,
+        { ...h.profile, endpoint: next.url },
+        h.profile.revision,
+      );
+      const check = await testProfile(
+        h.store,
+        h.profile.id,
+        new AbortController().signal,
+      );
+      expect(check.status).toBe("verified");
+    } finally {
+      release();
+    }
+    await waitIdle(h.store, thread.id);
+    const runs = listRunsForThread(h.store, thread.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.profileSnapshot).toMatchObject({
+      id: h.profile.id,
+      revision: h.profile.revision,
+      endpoint: h.inference.url,
+    });
+  });
+
   it("previews then submits a lifecycle attachment without writing a decision", async () => {
     const fixture = await proposalFixture();
     stores.push(fixture);

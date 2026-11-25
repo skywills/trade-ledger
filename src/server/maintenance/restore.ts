@@ -68,6 +68,9 @@ function isReservedEntry(name: string): boolean {
   return (
     name === LOCK_FILENAME ||
     name === OWNER_DB_FILENAME ||
+    name === `${OWNER_DB_FILENAME}-journal` ||
+    name === `${OWNER_DB_FILENAME}-wal` ||
+    name === `${OWNER_DB_FILENAME}-shm` ||
     name === RESTORE_MARKER_FILENAME ||
     name.startsWith(STAGING_PREFIX) ||
     name.startsWith(PRE_RESTORE_PREFIX)

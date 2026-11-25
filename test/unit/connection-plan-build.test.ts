@@ -137,6 +137,6 @@ it("carries a plan on built suggestions", async () => {
   }
 });
 
-it("labels this algorithm version lifecycles-v15", () => {
-  expect(ALGORITHM_VERSION).toBe("lifecycles-v15");
+it("labels this algorithm version lifecycles-v16", () => {
+  expect(ALGORITHM_VERSION).toBe("lifecycles-v16");
 });

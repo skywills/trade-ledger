@@ -1,4 +1,4 @@
-import type { Execution, Id, SourceRef } from "../../shared/domain.js";
+import type { Execution, Id, Issue, SourceRef } from "../../shared/domain.js";
 import {
   groupKeyOf,
   type LifecycleInstruction,
@@ -36,6 +36,7 @@ export function buildGroupingLinks(
   }
 
   const links: Link[] = [];
+  const rejectedDeliveries = new Map<Id, Issue>();
   const resolvedEvents = new Set<Id>();
   const linkKeys = new Set<string>();
   const addLink = (
@@ -73,6 +74,10 @@ export function buildGroupingLinks(
     const issue = validateLifecycle(event, option, stock);
     if (issue !== null) {
       addIssue(issue);
+      if (event === "assignment" || event === "exercise") {
+        rejectedDeliveries.set(option.key, issue);
+        rejectedDeliveries.set(stock.key, issue);
+      }
       continue;
     }
     resolvedEvents.add(option.key);
@@ -148,13 +153,15 @@ export function buildGroupingLinks(
   for (const draft of drafts.values()) {
     for (const leg of draft.legs) {
       const execution = context.executionByKey.get(leg.executionKey);
-      if (
-        !execution ||
-        leg.role !== "close" ||
-        !looksLikeBookedEvent(execution) ||
-        resolvedEvents.has(execution.key)
-      )
+      if (!execution || resolvedEvents.has(execution.key)) continue;
+      const rejected = rejectedDeliveries.get(execution.key);
+      if (rejected) {
+        draft.unresolved = true;
+        draft.complete = false;
+        pushDraftIssue(draft, rejected);
         continue;
+      }
+      if (leg.role !== "close" || !looksLikeBookedEvent(execution)) continue;
       draft.unresolved = true;
       draft.complete = false;
       pushDraftIssue(

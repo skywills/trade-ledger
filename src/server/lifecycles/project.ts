@@ -19,6 +19,7 @@ import {
   LifecycleMembershipPayloadSchema,
 } from "../../shared/lifecycles.js";
 import { underlyingSymbol } from "../../shared/symbols.js";
+import { presentationMergeResolver } from "../strategies/presentation-merges.js";
 import {
   redirectLifecycleDecisions,
   resolveLifecycleAlias,
@@ -36,6 +37,7 @@ import {
   refKey,
   sum,
 } from "./membership.js";
+import { expandMergedMembership } from "./merged-membership.js";
 
 export { validateMembership } from "./membership.js";
 export const lifecycleId = (a: LifecycleAnchor) =>
@@ -111,6 +113,35 @@ export function projectLifecycles(
   originProjection?: Projection,
   retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
 ): LifecycleProjection {
+  const inputs = {
+    ledger,
+    projection,
+    decisions,
+    resolveId,
+    originProjection,
+    retainedAnchors,
+  };
+  return projectWithStockAssignments(inputs);
+}
+
+type LifecycleInputs = {
+  ledger: LedgerSnapshot;
+  projection: Projection;
+  decisions: readonly Decision[];
+  resolveId: (a: LifecycleAnchor) => string;
+  originProjection: Projection | undefined;
+  retainedAnchors: readonly RetainedLifecycleAnchor[];
+};
+type StockAssignments = Map<
+  string,
+  Array<{ lifecycleId: string; quantity: string }>
+>;
+function projectWithStockAssignments(
+  inputs: LifecycleInputs,
+  confirmedStock?: StockAssignments,
+): LifecycleProjection {
+  const { ledger, resolveId, originProjection, retainedAnchors } = inputs;
+  let { projection, decisions } = inputs;
   const retained = new Map(
     retainedAnchors.map((anchor, rank) => [
       JSON.stringify([anchor.account, anchor.openingExecutionKey]),
@@ -150,6 +181,30 @@ export function projectLifecycles(
       return { ...d, payload };
     });
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
+  const hasMerges =
+    originProjection && decisions.some((d) => d.kind === "group_merge");
+  let mergedId = (id: string) => id;
+  if (hasMerges) {
+    const originScopes = new Map<
+      string,
+      { id: string; account: string; currency: string }
+    >();
+    for (const a of projection.allocations) {
+      const e = exec.get(a.executionKey);
+      if (e && !originScopes.has(a.strategyId))
+        originScopes.set(a.strategyId, {
+          id: a.strategyId,
+          account: e.account,
+          currency: e.currency,
+        });
+    }
+    mergedId = presentationMergeResolver(
+      originScopes,
+      [...decisions].sort(
+        (a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id),
+      ),
+    );
+  }
   const draft: LifecycleProjection = {
     version: 1,
     lifecycles: [],
@@ -362,7 +417,27 @@ export function projectLifecycles(
       let pieces = draft.members.filter(
         (m) => refKey(m.allocation) === refKey(a),
       );
-      if (a.role === "close") {
+      const confirmed = confirmedStock?.get(refKey(a));
+      if (confirmed) {
+        pieces = partition(a, confirmed, e.sources);
+        draft.members = draft.members.filter(
+          (m) => refKey(m.allocation) !== refKey(a),
+        );
+        draft.members.push(...pieces);
+        if (
+          a.role === "close" &&
+          confirmed.every((t) => {
+            const held = book.get(t.lifecycleId);
+            const q = new Decimal(t.quantity);
+            return (
+              held &&
+              held.isNegative() !== q.isNegative() &&
+              held.abs().gte(q.abs())
+            );
+          })
+        )
+          ownedStockCloses.add(refKey(a));
+      } else if (a.role === "close") {
         const explicit = explicitCloseRefs.has(refKey(a));
         // An explicit partition is replayed below. Before replay, only a
         // uniquely compatible holder can establish a delivery link for it.
@@ -376,7 +451,7 @@ export function projectLifecycles(
             a.brokerPnl,
             draft.members,
             exec,
-            e.instrument.key,
+            e,
           );
           draft.members = draft.members.filter(
             (m) => refKey(m.allocation) !== refKey(a),
@@ -568,6 +643,29 @@ export function projectLifecycles(
     aliases.set(from, to);
     for (const [key, id] of roots) if (id === from) roots.set(key, to);
   }
+  if (hasMerges) {
+    const sources = groupBy(projection.allocations, (a) =>
+      refKey({ ...a, strategyId: mergedId(a.strategyId) }),
+    );
+    const members = indexMembersByAllocation(draft.members);
+    decisions = decisions.map((d) => {
+      if (d.kind !== "lifecycle_membership") return d;
+      const parsed = LifecycleMembershipPayloadSchema.safeParse(d.payload);
+      if (!parsed.success) return d;
+      const groups = groupBy(parsed.data.assignments, (a) =>
+        refKey(a.allocation),
+      );
+      return {
+        ...d,
+        payload: {
+          ...d.payload,
+          assignments: [...groups].flatMap(([key, targets]) =>
+            expandMergedMembership(targets, sources.get(key) ?? [], members),
+          ),
+        },
+      };
+    });
+  }
   const redirected = redirectLifecycleDecisions(decisions, aliases);
   decisions = redirected.decisions;
   for (const conflict of redirected.conflicts) {
@@ -583,6 +681,36 @@ export function projectLifecycles(
     });
   }
   applyMembershipChanges(ledger, projection, draft, decisions);
+  if (!confirmedStock) {
+    // A retained membership decision is atomic and can be rejected on this
+    // build. Only its successfully replayed partitions may change the stock
+    // book used for subsequent disposals and assignment links.
+    const confirmed: StockAssignments = new Map();
+    const rejected = new Set(draft.issues.map((issue) => issue.key));
+    for (const decision of decisions) {
+      if (
+        decision.kind !== "lifecycle_membership" ||
+        rejected.has(`lifecycle:decision:${decision.id}`)
+      )
+        continue;
+      const payload = LifecycleMembershipPayloadSchema.safeParse(
+        decision.payload,
+      );
+      if (!payload.success) continue;
+      for (const [key, assignments] of groupBy(payload.data.assignments, (a) =>
+        refKey(a.allocation),
+      )) {
+        const ref = assignments[0]?.allocation;
+        if (
+          ref &&
+          changedStockStrategies.has(ref.strategyId) &&
+          exec.get(ref.executionKey)?.instrument.assetClass === "STK"
+        )
+          confirmed.set(key, assignments);
+      }
+    }
+    if (confirmed.size) return projectWithStockAssignments(inputs, confirmed);
+  }
   recomputeLifecycles(ledger, projection, draft, explicitCloseRefs);
   for (const c of draft.campaigns)
     c.lifecycleIds = draft.lifecycles
@@ -731,7 +859,7 @@ export function projectLifecycles(
     const finalRef = (
       ref: import("../../shared/lifecycles.js").AllocationRef,
     ) => {
-      const a = resolveFinal(ref);
+      const a = resolveFinal({ ...ref, strategyId: mergedId(ref.strategyId) });
       if (!a)
         throw new Error(
           "Cannot resolve lifecycle source allocation after presentation grouping.",

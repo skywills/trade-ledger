@@ -1,5 +1,5 @@
 import type { Execution } from "../../shared/domain.js";
-import { normalizeDate } from "../../shared/timestamps.js";
+import { groupBy } from "../../shared/group-by.js";
 import { splitAmount } from "./allocation.js";
 import { basisCloseAllocation } from "./grouping-basis.js";
 import { basisPnlShares } from "./grouping-basis-pnl.js";
@@ -12,7 +12,11 @@ import { orderByKnownChronology } from "./grouping-close-order.js";
 import { roleOf } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
 import { draftsHolding } from "./grouping-draft-index.js";
-import { fifoCloseAllocation, fifoLegAmounts } from "./grouping-fifo.js";
+import {
+  fifoCloseAllocation,
+  fifoLegAmounts,
+  reportedLotAllocation,
+} from "./grouping-fifo.js";
 import { sameInstrument, signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue } from "./projection.js";
 
@@ -38,45 +42,31 @@ export function matchCloses(context: GroupingContext): Execution[] {
       roleOf(execution) === "close" &&
       !availableOf(execution).isZero(),
   );
+  const lotKey = (account: string | undefined, tradeId: string | undefined) =>
+    JSON.stringify([account, tradeId]);
+  const lotsByTrade = groupBy(ledger.lots, (row) =>
+    lotKey(row.fields.ClientAccountID?.trim(), row.fields.TradeID?.trim()),
+  );
   const orderedCloseExecutions = orderByKnownChronology(closeExecutions);
   for (const close of orderedCloseExecutions) {
     const closeQuantity = availableOf(close).toFixed();
     let candidates = closeCandidates(context, close, closeQuantity);
 
     const tradeId = close.brokerIds.TradeID;
-    const lot = tradeId
-      ? ledger.lots.find(
-          (row) =>
-            row.fields.ClientAccountID?.trim() === close.account &&
-            row.fields.TradeID?.trim() === tradeId,
-        )
-      : undefined;
-    if (lot !== undefined) {
-      const opened = normalizeDate(lot.fields.OpenDateTime);
-      if (opened !== null) {
-        const narrowed = candidates.filter((draft) =>
-          draft.openingLegs.some((leg) => leg.date === opened),
-        );
-        if (narrowed.length > 0) candidates = narrowed;
-      }
-    }
-
-    // Preserve the established whole-lot equivalence rule only when ALL
-    // compatible exposure is covered, including lots too small to hold the
-    // whole close. Otherwise a partial-lot combination could be overlooked.
+    const lots = tradeId
+      ? (lotsByTrade.get(lotKey(close.account, tradeId)) ?? [])
+      : [];
     const direction = signOf(closeQuantity);
-    const exposureCandidates =
-      lot === undefined
-        ? draftsHolding(context, close.instrument).filter((draft) => {
-            const exposure = closingExposure(context, draft, close);
-            return (
-              !exposure.isZero() &&
-              (exposure.isNegative() ? -1 : 1) !== direction
-            );
-          })
-        : [];
+    const exposureCandidates = draftsHolding(context, close.instrument).filter(
+      (draft) => {
+        const exposure = closingExposure(context, draft, close);
+        return (
+          !exposure.isZero() && (exposure.isNegative() ? -1 : 1) !== direction
+        );
+      },
+    );
     const equivalent =
-      exposureCandidates.length > 1
+      lots.length === 0 && exposureCandidates.length > 1
         ? equivalentOpeningLot(
             exposureCandidates,
             close,
@@ -92,7 +82,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
     const needsBasisChoice =
       exposureCandidates.length > 1 || candidates.length !== 1;
     const basisAllocation =
-      lot === undefined && equivalent === undefined && needsBasisChoice
+      lots.length === 0 && equivalent === undefined && needsBasisChoice
         ? basisCloseAllocation(context, close, closeQuantity)
         : undefined;
     if (basisAllocation !== undefined && basisAllocation !== null) {
@@ -154,6 +144,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
         ),
       ).size === 1;
     if (
+      lots.length === 0 &&
       candidates.length === 1 &&
       basisAllocation !== null &&
       (equivalent !== undefined ||
@@ -164,10 +155,14 @@ export function matchCloses(context: GroupingContext): Execution[] {
       if (target !== undefined) {
         const netCash = residualNetCash(close);
         const brokerPnl = residualBrokerPnl(close);
+        const fills = fifoCloseAllocation(context, close, closeQuantity, [
+          target,
+        ])?.[0]?.lots;
         addLeg(
           target,
           legOf(close, "close", {
             quantity: closeQuantity,
+            ...(fills ? { basisLots: fills } : {}),
             netCash,
             brokerPnl,
           }),
@@ -179,12 +174,21 @@ export function matchCloses(context: GroupingContext): Execution[] {
 
     // Older partial holdings participate even if a newer holding could cover
     // the entire close.
-    const fifo = fifoCloseAllocation(
-      context,
-      close,
-      closeQuantity,
-      exposureCandidates.length > 1 ? exposureCandidates : candidates,
-    );
+    const fifo =
+      lots.length > 0
+        ? reportedLotAllocation(
+            context,
+            close,
+            closeQuantity,
+            exposureCandidates,
+            lots,
+          )
+        : fifoCloseAllocation(
+            context,
+            close,
+            closeQuantity,
+            exposureCandidates.length > 1 ? exposureCandidates : candidates,
+          );
     if (fifo !== undefined) {
       const netCash = residualNetCash(close);
       const brokerPnl = residualBrokerPnl(close);
@@ -199,6 +203,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
           part.draft,
           legOf(close, "close", {
             quantity: part.quantity,
+            basisLots: part.lots,
             netCash: part.netCash,
             brokerPnl: part.brokerPnl,
             ...(part.pnlEstimated
@@ -212,6 +217,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
     }
 
     if (
+      lots.length > 0 ||
       candidates.length > 1 ||
       (candidates.length === 1 && exposureCandidates.length > 1) ||
       basisAllocation === null

@@ -16,7 +16,6 @@ import {
   recordValidatedProposal,
   type SubmittedProposal,
 } from "../../ai/runs.js";
-import { resolveProfile } from "../../ai/session-host.js";
 import { MAX_PROPOSALS_PER_RUN } from "../../ai/tools.js";
 import { activeProjection } from "../../builds/service.js";
 import { decisionWatermark } from "../../decisions/service.js";
@@ -88,19 +87,14 @@ async function prepareRun(
     existing.evidence.contentHash === evidence.contentHash
   )
     return { runId: existing.id, draft: null };
-  const thread = ctx.thread();
   const runId = randomUUID();
   return {
     runId,
     draft: {
       id: runId,
-      profileSnapshot: resolveProfile(ctx.store, thread.profileId, {
-        cloudConfirmed: thread.cloudConfirmed,
-      }),
+      ...ctx.session,
       evidence,
-      sessionId: thread.sessionId,
       createdAt: ctx.now().toISOString(),
-      threadId: thread.id,
     },
   };
 }

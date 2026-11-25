@@ -30,7 +30,7 @@ export function groupStrategies(
   resolveId: ResolveId,
 ): Projection {
   const context = createGroupingContext(ledger, decisions, resolveId);
-  const { bindings, merges, lifecycles } = readRetainedDecisions(context);
+  const { bindings, lifecycles } = readRetainedDecisions(context);
   applyRetainedBindings(context, bindings);
   const orderOpenings = groupOpenings(context);
   markUnsupportedInventory(context);
@@ -41,5 +41,5 @@ export function groupStrategies(
     orderOpenings,
     orderedCloses,
   );
-  return finalizeGrouping(context, merges, links);
+  return finalizeGrouping(context, links);
 }

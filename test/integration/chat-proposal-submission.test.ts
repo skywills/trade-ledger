@@ -43,7 +43,11 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
   await Promise.all(stores.splice(0).map((s) => s.dispose()));
 });
-async function setup() {
+async function setup(
+  seed?: (fixture: Awaited<ReturnType<typeof proposalFixture>>) => {
+    issueKeys: string[];
+  },
+) {
   const t = await proposalFixture();
   stores.push(t);
   const inference = await startInferenceServer({ mode: "tool-call" });
@@ -55,13 +59,17 @@ async function setup() {
     profileId: profile.id,
     modelRef: profile.modelId,
     cloudConfirmed: false,
-    seed: null,
+    seed: seed?.(t) ?? null,
     now: new Date(),
   });
   const emitted: { runId: string; proposalId: string }[] = [];
   const ctx = {
     ...toolContext(t.store),
-    thread: () => thread,
+    session: {
+      threadId: thread.id,
+      sessionId: thread.sessionId,
+      profileSnapshot: profile,
+    },
     emitProposal: (runId: string, proposalId: string) => {
       emitted.push({ runId, proposalId });
     },
@@ -241,16 +249,14 @@ it("a new campaign can retain an empty trade snapshot in a large journal", async
 }, 30_000);
 
 it("an unrelated seeded issue cannot replace the proposal's own evidence", async () => {
-  const t = await setup();
-  const issue = t.projection.issues.find(
-    (i) => i.sources.length > 0 && i.sources.every((s) => s.rowNumber !== 5),
-  );
-  if (!issue) throw new Error("No seeded issue");
-  const ctx = {
-    ...t.ctx,
-    thread: () => ({ ...t.thread, seed: { issueKeys: [issue.key] } }),
-  };
-  await toolJson(proposalTools(ctx), "submit_proposal", {
+  const t = await setup(({ projection }) => {
+    const issue = projection.issues.find(
+      (i) => i.sources.length > 0 && i.sources.every((s) => s.rowNumber !== 5),
+    );
+    if (!issue) throw new Error("No seeded issue");
+    return { issueKeys: [issue.key] };
+  });
+  await toolJson(t.tools, "submit_proposal", {
     kind: "notes",
     payload: { strategyId: t.other.componentIds[0], text: "Reviewed" },
   });

@@ -2,7 +2,6 @@ import type { SourceRef } from "../../shared/domain.js";
 import {
   type Binding,
   type LifecycleInstruction,
-  type MergeInstruction,
   sourceKey,
 } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
@@ -10,7 +9,6 @@ import { makeIssue } from "./projection.js";
 
 export interface RetainedInstructions {
   bindings: Binding[];
-  merges: MergeInstruction[];
   lifecycles: LifecycleInstruction[];
 }
 
@@ -20,7 +18,6 @@ export function readRetainedDecisions(
   const { orderedDecisions, executionByKey, executionBySource, addIssue } =
     context;
   const bindings: Binding[] = [];
-  const merges: MergeInstruction[] = [];
   const lifecycles: LifecycleInstruction[] = [];
   for (const decision of orderedDecisions) {
     const payload = decision.payload;
@@ -87,21 +84,6 @@ export function readRetainedDecisions(
         });
         break;
       }
-      case "group_merge": {
-        const chosen =
-          typeof payload.chosenStrategyId === "string"
-            ? payload.chosenStrategyId
-            : undefined;
-        const merged = Array.isArray(payload.mergedStrategyIds)
-          ? payload.mergedStrategyIds.filter(
-              (value): value is string => typeof value === "string",
-            )
-          : [];
-        if (chosen !== undefined && merged.length > 0) {
-          merges.push({ chosen, merged });
-        }
-        break;
-      }
       case "group_split": {
         // A retained split is never applied to the projection yet: the payload
         // carries parent/child identities but no parent-to-child allocation
@@ -138,5 +120,5 @@ export function readRetainedDecisions(
         break;
     }
   }
-  return { bindings, merges, lifecycles };
+  return { bindings, lifecycles };
 }

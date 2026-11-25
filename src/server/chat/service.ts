@@ -474,7 +474,11 @@ export class ChatService {
       store: this.deps.store,
       scheduler: this.deps.scheduler,
       jobs: this.deps.jobs,
-      thread: () => readThread(this.deps.store, thread.id) ?? thread,
+      session: {
+        threadId: thread.id,
+        sessionId: thread.sessionId,
+        profileSnapshot: profile,
+      },
       turn,
       emitProposal: (runId, proposalId) =>
         this.bus.emit(thread.id, {
