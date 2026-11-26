@@ -23,9 +23,9 @@ The checkboxes track resolution. Mark an entry complete after its closure check 
 - [x] **P1** [R07 · Data-directory lock has an acquisition race](#r07)
 - [x] **P1** [R08 · Compact TWS timestamp selects the wrong lot](#r08)
 - [x] **P1** [R09 · Futures win and loss appear as breakevens](#r09)
-- [ ] **P2** [R10 · Cross-account adjusted-option matching](#r10)
+- [x] **P2** [R10 · Cross-account adjusted-option matching](#r10)
 - [x] **P1** [R11 · Decimal spelling removes a cash settlement](#r11)
-- [ ] **P2** [R12 · Colliding action IDs drop an assignment link](#r12)
+- [x] **P2** [R12 · Colliding action IDs drop an assignment link](#r12)
 - [ ] **P3** [R13 · CSV timestamp support for explicit offsets](#r13) — support decision needed
 - [ ] **P2** [R14 · Transaction CSV loses account identifiers](#r14)
 - [ ] **P3** [R15 · Quantity sort misorders paginated transactions](#r15)
@@ -41,7 +41,7 @@ The checkboxes track resolution. Mark an entry complete after its closure check 
 
 ## P1 resolution
 
-The first P1 fixes landed in `133cd70` on `fix/review-2026-11-25`. The follow-up review below covers cases the first regression tests missed. Twelve original P2 findings and two P3 entries remain open, including the R13 support decision.
+The first P1 fixes landed in `133cd70` on `fix/review-2026-11-25`. The follow-up review below covers cases the first regression tests missed. At the end of the P1 fixes, twelve P2 findings and two P3 entries remained open.
 
 **Existing journals need one full rebuild after upgrading.** The old active build is marked stale. The revised normalization manifest prevents a projection-only rebuild from reusing the old ledger. A full rebuild reads retained imports and decisions using the corrected rules. [Upgrade regression](../../test/integration/builds.test.ts#L933)
 
@@ -82,6 +82,13 @@ The lifecycle regressions also cover three related errors. An earlier confirmed 
 **Upgrade.** The projection algorithm is now `lifecycles-v16`. A journal built with v15 becomes stale and can refresh its projection from the retained ledger. Older journals with a superseded normalization revision need a full rebuild. If an upgrade reports a legacy lock file, follow the offline recovery procedure before removing it. [Build regression](../../test/integration/builds.test.ts#L271) · [Lock recovery](../../README.md#backup-and-restore)
 
 **Follow-up verification.** All 1,220 unit and integration tests across 123 files and all 137 Chromium tests passed. Typecheck, compiled-server startup and shutdown, and the non-root Docker restart smoke test passed. Lint exited successfully with four existing warnings. Restore was exercised on Linux. Native Windows remains unverified.
+
+## Multi-account fixes (R10 and R12)
+
+- **R10.** A full rebuild with account B’s adjusted option opening preserves A’s original contract and closed strategy. B keeps its own open adjusted contract. Both the adjusted and original contract histories are scoped by account and currency. [Full-rebuild regression](../../test/integration/lifecycle-acceptance.test.ts#L86)
+- **R12.** When two accounts reuse a position action ID, a combined import retains one same-account assignment link and one assigned-stock lifecycle per account. Separate imports and distinct IDs give the same result. An option and a lone stock delivery in different accounts stay separate. [Assignment regressions](../../test/integration/lifecycle-acceptance.test.ts#L145)
+
+**Upgrade.** Existing journals need one full rebuild after upgrading to `lifecycles-v17` so the ledger reads the retained imports with the corrected matching rules. Ten P2 findings and two P3 entries remain open.
 
 ## Evidence and closure checks
 

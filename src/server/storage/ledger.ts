@@ -93,7 +93,7 @@ export function manifestHash(
 ): string {
   const manifest = {
     // Changes to derived ledger evidence require a full rebuild of retained imports.
-    normalizationRevision: "contract-lifecycle-v6-corrections-and-settlements",
+    normalizationRevision: "contract-lifecycle-v7-account-scoped-options",
     parserVersion,
     decisionWatermark,
     imports: [...imports]
