@@ -1,14 +1,16 @@
 import { Decimal } from "decimal.js";
 import type { Execution, LedgerSnapshot } from "../../shared/domain.js";
 import { matchesOpeningTime } from "../../shared/execution-chronology.js";
+import { groupBy } from "../../shared/group-by.js";
 import { reconcilesWithin } from "../../shared/money.js";
 import { canonicalDecimal } from "../imports/normalization.js";
 import { compareExecutionTime } from "../ledger/chronology.js";
 import { splitAmount } from "./allocation.js";
 import { closingExposure } from "./grouping-close-candidates.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { draftsHolding } from "./grouping-draft-index.js";
 import { sameInstrument } from "./matching.js";
-import type { StrategyDraft } from "./projection.js";
+import type { LegRecord, StrategyDraft } from "./projection.js";
 import { type PnlSlice, reconstructPnl } from "./reconstructed-pnl.js";
 
 interface OpenLot {
@@ -21,6 +23,7 @@ export interface FifoPart {
   draft: StrategyDraft;
   quantity: string;
   lots: Array<{ executionKey: string; quantity: string }>;
+  retained?: LegRecord;
 }
 
 /** Only use fill-level inventory when it agrees with the strategy's available
@@ -29,14 +32,19 @@ function remainingLots(
   context: GroupingContext,
   close: Execution,
   drafts: readonly StrategyDraft[],
+  retained?: ReadonlyMap<StrategyDraft, LegRecord>,
 ): OpenLot[] | undefined {
   const result: OpenLot[] = [];
   const negative = new Decimal(close.quantity).isNegative();
   for (const draft of drafts) {
-    const exposure = closingExposure(context, draft, close);
+    const assigned = retained?.get(draft);
+    const inventory = assigned
+      ? { ...draft, legs: draft.legs.filter((leg) => leg !== assigned) }
+      : draft;
+    const exposure = closingExposure(context, inventory, close);
     if (exposure.isZero() || exposure.isNegative() === negative) continue;
     const used = new Map<string, Decimal>();
-    for (const leg of draft.legs) {
+    for (const leg of inventory.legs) {
       if (
         leg.role !== "close" ||
         !sameInstrument(leg.instrument, close.instrument)
@@ -142,39 +150,85 @@ function matchesOpening(row: LotRow, opening: Execution): boolean {
   });
 }
 
-/** Each export can corroborate a close. A disagreement or an incomplete
- * partition stays under review instead of silently reverting to FIFO. */
-export function reportedLotAllocation(
-  context: GroupingContext,
-  close: Execution,
-  closeQuantity: string,
-  drafts: readonly StrategyDraft[],
+/** Resolve narrow timestamp references before date-only references. Repeated
+ * rows in one report count toward the same quantity when they name the same
+ * set of fills. Only exhaustion proves a distribution among several fills. */
+function reportTakes(
   rows: readonly LotRow[],
-): FifoPart[] | undefined {
-  const lots = remainingLots(context, close, drafts);
-  if (!lots) return undefined;
-  const quantity = new Decimal(closeQuantity);
-  const byReport = new Map<string, Map<OpenLot, Decimal>>();
+  lots: readonly OpenLot[],
+  quantity: Decimal,
+): Map<OpenLot, Decimal> | undefined {
+  const references = new Map<string, { matches: OpenLot[]; units: Decimal }>();
   for (const row of rows) {
     const matches = lots.filter((lot) => matchesOpening(row, lot.opening));
-    const lot = matches[0];
     const parsed = canonicalDecimal(row.fields.Quantity);
-    if (matches.length !== 1 || !lot || parsed.status === "invalid")
-      return undefined;
+    if (!matches.length || parsed.status === "invalid") return undefined;
     const units =
       parsed.status === "ok" ? new Decimal(parsed.value).abs() : quantity.abs();
     if (units.isZero()) return undefined;
-    const report = row.source?.importId ?? "";
-    const takes = byReport.get(report) ?? new Map<OpenLot, Decimal>();
-    takes.set(lot, (takes.get(lot) ?? new Decimal(0)).plus(units));
-    byReport.set(report, takes);
+    const key = JSON.stringify(
+      matches.map((lot) => [lot.draft.id, lot.opening.key]),
+    );
+    const previous = references.get(key);
+    if (previous) previous.units = previous.units.plus(units);
+    else references.set(key, { matches, units });
   }
+  const takes = new Map<OpenLot, Decimal>();
+  for (const { matches, units } of [...references.values()].sort(
+    (a, b) => a.matches.length - b.matches.length,
+  )) {
+    const remaining = matches.filter((lot) =>
+      lot.capacity.gt(takes.get(lot) ?? 0),
+    );
+    const only = remaining.length === 1 ? remaining[0] : undefined;
+    if (only) {
+      const total = units.plus(takes.get(only) ?? 0);
+      if (total.gt(only.capacity)) return undefined;
+      takes.set(only, total);
+      continue;
+    }
+    const available = remaining.reduce(
+      (sum, lot) => sum.plus(lot.capacity).minus(takes.get(lot) ?? 0),
+      new Decimal(0),
+    );
+    if (!available.eq(units)) return undefined;
+    for (const lot of remaining) takes.set(lot, lot.capacity);
+  }
+  return takes;
+}
+
+/** Each export can corroborate a close. A disagreement or an incomplete
+ * partition stays under review instead of silently reverting to FIFO. */
+export function reportedLegAmounts(
+  context: GroupingContext,
+  close: Execution,
+  closeQuantity: string,
+  rows: readonly LotRow[],
+  netCash: string,
+  brokerPnl: string | null,
+): FifoLegAmount[] | undefined {
+  const drafts = draftsHolding(context, close.instrument);
+  const retained = new Map<StrategyDraft, LegRecord>();
+  if (!new Decimal(close.quantity).eq(closeQuantity))
+    for (const draft of drafts) {
+      const leg = draft.legs.find(
+        (l) => l.role === "close" && l.executionKey === close.key,
+      );
+      if (leg) retained.set(draft, leg);
+    }
+  const lots = remainingLots(context, close, drafts, retained);
+  if (!lots) return undefined;
+  const quantity = new Decimal(close.quantity);
   const combined = new Map<OpenLot, Decimal>();
-  for (const report of byReport.values()) {
-    for (const [lot, units] of report) {
+  for (const report of groupBy(
+    rows,
+    (row) => row.source?.importId ?? "",
+  ).values()) {
+    const takes = reportTakes(report, lots, quantity);
+    if (!takes) return undefined;
+    for (const [lot, units] of takes) {
       const previous = combined.get(lot);
-      if ((previous && !previous.eq(units)) || units.gt(lot.capacity))
-        return undefined;
+      if (previous && !previous.eq(units)) return undefined;
       combined.set(lot, units);
     }
   }
@@ -183,10 +237,62 @@ export function reportedLotAllocation(
     new Decimal(0),
   );
   if (!total.eq(quantity.abs())) return undefined;
-  return partsOf(
+  const parts = partsOf(
     [...combined].map(([lot, units]) => ({ lot, units })),
     quantity,
   );
+  if (!retained.size)
+    return fifoLegAmounts(context, close, parts, netCash, brokerPnl);
+
+  // The report describes the entire execution. Match it against inventory
+  // before the retained slices, then distribute only the unassigned amounts.
+  const pending: FifoPart[] = [];
+  for (const part of parts) {
+    const manual = retained.get(part.draft);
+    const residual = new Decimal(part.quantity).minus(manual?.quantity ?? 0);
+    if (
+      manual &&
+      (new Decimal(manual.quantity).isNegative() !== quantity.isNegative() ||
+        (!residual.isZero() && residual.isNegative() !== quantity.isNegative()))
+    )
+      return undefined;
+    if (!residual.isZero())
+      pending.push({
+        ...part,
+        quantity: residual.toFixed(),
+        ...(manual ? { retained: manual } : {}),
+      });
+  }
+  if (
+    !pending
+      .reduce((total, p) => total.plus(p.quantity), new Decimal(0))
+      .eq(closeQuantity)
+  )
+    return undefined;
+  const residualAmounts = new Map(
+    fifoLegAmounts(context, close, pending, netCash, brokerPnl).map((part) => [
+      part.draft,
+      part,
+    ]),
+  );
+  return parts.map((part) => {
+    const manual = retained.get(part.draft);
+    const residual = residualAmounts.get(part.draft);
+    return {
+      ...part,
+      ...(manual ? { retained: manual } : {}),
+      netCash: new Decimal(manual?.netCash ?? 0)
+        .plus(residual?.netCash ?? 0)
+        .toFixed(),
+      brokerPnl:
+        manual?.brokerPnl == null && residual?.brokerPnl == null
+          ? null
+          : new Decimal(manual?.brokerPnl ?? 0)
+              .plus(residual?.brokerPnl ?? 0)
+              .toFixed(),
+      pnlEstimated: Boolean(manual?.pnlEstimated || residual?.pnlEstimated),
+    };
+  });
 }
 
 export interface FifoLegAmount extends FifoPart {
@@ -222,11 +328,15 @@ function lotPnl(
   }
   slices.push({
     execution: close,
-    quantity: part.quantity,
-    netCash: closeCash.toFixed(),
+    quantity: new Decimal(part.quantity)
+      .plus(part.retained?.quantity ?? 0)
+      .toFixed(),
+    netCash: closeCash.plus(part.retained?.netCash ?? 0).toFixed(),
   });
   const amount = reconstructPnl(slices).value;
-  return amount === null ? null : new Decimal(amount);
+  return amount === null
+    ? null
+    : new Decimal(amount).minus(part.retained?.brokerPnl ?? 0);
 }
 
 /**

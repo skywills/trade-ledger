@@ -5,7 +5,7 @@ import type {
   Execution,
   LedgerSnapshot,
 } from "../../src/shared/domain.js";
-import { execution, stock } from "../fixtures/lifecycles.js";
+import { execution, put, stock } from "../fixtures/lifecycles.js";
 
 const resolveId = (account: string, keys: string[]): string =>
   `${account}:${[...keys].sort().join("+")}`;
@@ -18,6 +18,26 @@ function ledger(executions: Execution[]): LedgerSnapshot {
     lots: [],
     issues: [],
     conflicts: 0,
+  };
+}
+
+function reportedLot(
+  close: Execution,
+  opened: string,
+  quantity: string,
+): LedgerSnapshot["lots"][number] {
+  return {
+    rowNumber: 1,
+    section: null,
+    kind: "lot",
+    issues: [],
+    reportTimezone: "UTC",
+    fields: {
+      ClientAccountID: close.account,
+      TradeID: close.key,
+      OpenDateTime: opened,
+      Quantity: quantity,
+    },
   };
 }
 
@@ -55,6 +75,138 @@ function canonical(result: ReturnType<typeof groupStrategies>) {
 }
 
 describe("grouping phase contracts", () => {
+  it.each([false, true])(
+    "consumes the option fill with the reported basis inside one order (hedge %s)",
+    (hedged) => {
+      const first = execution("first", put, "1", "-100", 1, "open");
+      const second = execution("second", put, "1", "-200", 2, "open");
+      first.brokerIds = second.brokerIds = { IBOrderID: "order" };
+      first.basis = "100";
+      second.basis = "200";
+      const sale = execution("sale", put, "-1", "250", 3, "close");
+      sale.basis = "-200";
+      const last = execution("last", put, "-1", "300", 4, "close");
+      last.brokerIds.TradeID = last.key;
+      const input = ledger([first, second, sale, last]);
+      if (hedged) {
+        const hedge = execution("hedge", stock, "10", "-250", 1, "open");
+        hedge.brokerIds = first.brokerIds;
+        input.executions.push(hedge);
+      }
+      input.lots = [reportedLot(last, first.rawDateTime, "-1")];
+      const result = groupStrategies(input, [], resolveId);
+      expect(result.strategies).toHaveLength(1);
+      expect(result.strategies[0]?.positions).toContainEqual({
+        instrumentKey: put.key,
+        quantity: "0",
+      });
+    },
+  );
+
+  it.each([
+    {
+      retained: "-1",
+      cash: "115",
+      pnl: "11",
+      expected: [
+        ["A:first", "-1", "115", "11"],
+        ["A:second", "-2", "215", "-1"],
+      ],
+    },
+    {
+      retained: "-0.5",
+      cash: "65",
+      pnl: "4",
+      expected: [
+        ["A:first", "-1", "118", "18"],
+        ["A:second", "-2", "212", "-8"],
+      ],
+    },
+  ])(
+    "reconciles a retained $retained share against the full broker lot partition",
+    ({ retained, cash, pnl, expected }) => {
+      const first = execution("first", stock, "1", "-100", 1, "open");
+      const second = execution("second", stock, "2", "-220", 2, "open");
+      const sale = execution("sale", stock, "-3", "330", 3, "close");
+      sale.brokerIds.TradeID = sale.key;
+      sale.brokerPnl = "10";
+      const input = ledger([first, second, sale]);
+      input.lots = [
+        reportedLot(sale, first.rawDateTime, "-1"),
+        reportedLot(sale, second.rawDateTime, "-2"),
+      ];
+      const manual = decision("manual_allocation", {
+        strategyId: "A:first",
+        source: sale.sources[0],
+        allocations: [
+          {
+            executionKey: sale.key,
+            quantity: retained,
+            netCash: cash,
+            brokerPnl: pnl,
+          },
+        ],
+      });
+      const result = groupStrategies(input, [manual], resolveId);
+      expect(
+        result.allocations
+          .filter((a) => a.role === "close")
+          .map((a) => [a.strategyId, a.quantity, a.netCash, a.brokerPnl]),
+      ).toEqual(expected);
+    },
+  );
+
+  it.each([["-2"], ["-1", "-1"]])(
+    "applies date-only evidence that exhausts all matching intraday fills (%s)",
+    (...quantities) => {
+      const first = open("first", "1", "-100");
+      const second = open("second", "1", "-140");
+      second.rawDateTime = second.rawDateTime.replace("12:00", "15:00");
+      first.brokerIds = second.brokerIds = { IBOrderID: "order" };
+      const sale = close("sale", "-2", "300");
+      sale.brokerIds.TradeID = sale.key;
+      const input = ledger([first, second, sale]);
+      input.lots = quantities.map((q) => reportedLot(sale, first.date, q));
+      expect(
+        groupStrategies(input, [], resolveId).strategies.map((s) => [
+          s.id,
+          s.status,
+        ]),
+      ).toEqual([["A:first+second", "closed"]]);
+    },
+  );
+
+  it.each([
+    { total: "-130", secondTake: "-30", prior: [] },
+    { total: "-150", secondTake: "-50", prior: ["-20"] },
+  ])(
+    "assigns the dated remainder to the sole unexhausted fill ($total)",
+    ({ total, secondTake, prior }) => {
+      const first = open("first", "100", "-1000");
+      const second = open("second", "100", "-1400");
+      second.rawDateTime = second.rawDateTime.replace("12:00", "15:00");
+      const sale = close("sale", total, "2400");
+      sale.brokerIds.TradeID = sale.key;
+      const input = ledger([first, second, sale]);
+      input.lots = [
+        reportedLot(sale, first.date, "-30"),
+        reportedLot(sale, first.rawDateTime, "-100"),
+        ...prior.map((q) => reportedLot(sale, second.rawDateTime, q)),
+      ];
+      for (const lots of [input.lots, [...input.lots].reverse()]) {
+        const result = groupStrategies({ ...input, lots }, [], resolveId);
+        expect(
+          result.allocations
+            .filter((a) => a.role === "close")
+            .map((a) => [a.strategyId, a.quantity]),
+        ).toEqual([
+          ["A:first", "-100"],
+          ["A:second", secondTake],
+        ]);
+      }
+    },
+  );
+
   it("preserves partial-close exposure, allocations and identity regardless of input order", () => {
     const opening = open("opening");
     const closing = close("closing");

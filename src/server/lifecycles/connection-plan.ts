@@ -36,6 +36,7 @@ export interface PlanInput {
   ledger: LedgerSnapshot;
   projection: Projection;
   decisions: readonly Decision[];
+  decisionHistory?: readonly Decision[];
   lifecycles: LifecycleProjection;
   origins?: Projection | undefined;
   retainedAnchors?: readonly RetainedLifecycleAnchor[];
@@ -252,6 +253,7 @@ function connects(
       candidate,
       input.origins,
       input.retainedAnchors,
+      input.decisionHistory,
     );
     return true;
   } catch (error) {

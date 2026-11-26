@@ -55,7 +55,7 @@ import {
   snapshotInputs,
 } from "./snapshot.js";
 
-export const ALGORITHM_VERSION = "lifecycles-v17";
+export const ALGORITHM_VERSION = "lifecycles-v18";
 
 /**
  * Process-wide registry of in-flight rebuilds. Graceful shutdown aborts these
@@ -142,7 +142,8 @@ export async function computeProjection(
   ledger: LedgerSnapshot,
   watermark: number,
 ): Promise<Projection> {
-  const decisions = effectiveDecisions(readDecisions(store, watermark));
+  const history = readDecisions(store, watermark);
+  const decisions = effectiveDecisions(history);
   const anchors = new Map<string, StrategyAnchor>();
   const resolveId = (account: string, keys: string[]): Id => {
     const anchor = { account, openingKeys: keys };
@@ -185,6 +186,7 @@ export async function computeProjection(
       undefined,
       originProjection,
       retained,
+      history,
     ),
   );
   // Recommendations judge the final, accounted positions and keep every other field intact.
@@ -195,6 +197,7 @@ export async function computeProjection(
     lifecycles: accounted,
     origins: originProjection,
     retainedAnchors: retained,
+    decisionHistory: history,
   });
   const snapshots = decisions
     .filter((d) => d.kind === "lifecycle_valuation")

@@ -43,6 +43,7 @@ async function projectionFor(
   rows: ExecutionFields[],
   timezone = "UTC",
   overlap?: ExecutionFields[],
+  overlapTimezone = timezone,
 ) {
   const { store, dispose } = await createTestStore();
   try {
@@ -56,7 +57,7 @@ async function projectionFor(
       const corroborating = await previewImport(store, {
         filename: "overlap.csv",
         bytes: buildExecutionTable(overlap),
-        timezone,
+        timezone: overlapTimezone,
       });
       await commitImport(store, corroborating.id);
     }
@@ -370,4 +371,30 @@ it("corroborates a repeated lot in an export containing only part of the close",
     ["-1", "50"],
     ["-2", "20"],
   ]);
+});
+
+it("selects the New York fill that fell on the UTC lot report's opening date", async () => {
+  const p = await projectionFor(
+    [
+      trade("earlier", "01", "1", "-100", { DateTime: "2026-10-01 23:30:00" }),
+      trade("later", "02", "1", "-140", { DateTime: "2026-10-02 23:30:00" }),
+      trade("sale", "06", "-1", "150"),
+    ],
+    "America/New_York",
+    [
+      {
+        LevelOfDetail: "CLOSED_LOT",
+        ClientAccountID: "A",
+        TradeID: "sale",
+        OpenDateTime: "20261002",
+        Quantity: "-1",
+      },
+    ],
+    "UTC",
+  );
+  const owner = (id: string) =>
+    p.allocations.find((a) => a.executionKey.endsWith(`:trade:${id}`))
+      ?.strategyId;
+  expect(owner("earlier")).toBeTruthy();
+  expect(owner("sale")).toBe(owner("earlier"));
 });

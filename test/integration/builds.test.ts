@@ -268,18 +268,21 @@ describe("versioned builds, atomic activation and rollback", () => {
       expect(built.id).toBeTruthy();
     }));
 
-  it.each(["lifecycles-v13", "lifecycles-v15", "lifecycles-v16"])(
-    "marks a retained %s build stale",
-    async (version) =>
-      withStore(async (store) => {
-        await commitBytes(store, "spread.csv", fixtures.spread);
-        const built = await rebuild(store, input("full"));
-        store.db
-          .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
-          .run(version, built.id);
-        expect(activeProjection(store).stale).toBe(true);
-        expect(activeBuildMeta(store).stale).toBe(true);
-      }),
+  it.each([
+    "lifecycles-v13",
+    "lifecycles-v15",
+    "lifecycles-v16",
+    "lifecycles-v17",
+  ])("marks a retained %s build stale", async (version) =>
+    withStore(async (store) => {
+      await commitBytes(store, "spread.csv", fixtures.spread);
+      const built = await rebuild(store, input("full"));
+      store.db
+        .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
+        .run(version, built.id);
+      expect(activeProjection(store).stale).toBe(true);
+      expect(activeBuildMeta(store).stale).toBe(true);
+    }),
   );
 
   it("rejects unavailable versions without disturbing the active build", async () =>

@@ -710,7 +710,8 @@ export function appendDecisionInTransaction(
         409,
       );
     const ledger = loadLedgerSnapshot(store.db, build.ledger_build_id);
-    const prior = effectiveDecisions(readDecisions(store, current)).filter(
+    const history = readDecisions(store, current);
+    const prior = effectiveDecisions(history).filter(
       (d) => d.id !== input.supersedesId,
     );
     const origins = groupStrategies(
@@ -735,6 +736,7 @@ export function appendDecisionInTransaction(
       },
       origins,
       readLifecycleAnchors(store.db),
+      history,
     );
   }
   const id = randomUUID();

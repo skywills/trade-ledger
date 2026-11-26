@@ -876,3 +876,409 @@ it("keeps a rejected broker-coded stock assignment unresolved", async () => {
     await t.dispose();
   }
 });
+
+it("rolls back stock ownership when a later import invalidates the same decision's covered call", async () => {
+  const t = await createTestStore();
+  try {
+    await commit(
+      t,
+      [
+        ...assignedStockLots(),
+        row("first", "STK", "-80", "8400", 5, "C", { FifoPnlRealized: "400" }),
+        row("third", "STK", "100", "-9000", 9, "O"),
+        row("call", "OPT", "-5", "250", 10, "O", {
+          "Put/Call": "C",
+          Conid: "50",
+          Multiplier: "10",
+          Strike: "110",
+        }),
+      ],
+      "initial.csv",
+    );
+    const cycles = activeProjection(t.store).projection?.lifecycles;
+    const owner = (trade: string) =>
+      cycles?.lifecycles.find((l) =>
+        l.originOpeningExecutionKey?.endsWith(`:trade:${trade}`),
+      )?.id;
+    const source = (trade: string) =>
+      cycles?.members.find((m) =>
+        m.allocation.executionKey.endsWith(`:trade:${trade}`),
+      )?.allocation;
+    const older = owner("older"),
+      newer = owner("newer"),
+      sale = source("first"),
+      call = source("call");
+    if (!older || !newer || !sale || !call)
+      throw Error("Missing initial allocation");
+    await appendDecision(
+      t.store,
+      {
+        kind: "lifecycle_membership",
+        author: "user",
+        clientRequestId: "stock-and-call",
+        payload: {
+          requireCallCoverage: true,
+          assignments: [
+            { allocation: sale, lifecycleId: older, quantity: "-70" },
+            { allocation: sale, lifecycleId: newer, quantity: "-10" },
+            { allocation: call, lifecycleId: newer, quantity: "-5" },
+          ],
+        },
+      },
+      0,
+    );
+    await rebuild(t.store, input);
+    expect(activeProjection(t.store).projection?.lifecycles?.issues).toEqual(
+      [],
+    );
+    await commit(
+      t,
+      [row("next", "STK", "-80", "8400", 8, "C", { FifoPnlRealized: "1000" })],
+      "later.csv",
+    );
+    const after = activeProjection(t.store).projection?.lifecycles;
+    expect(after?.issues.map((i) => i.code)).toContain(
+      "LIFECYCLE_DECISION_UNRESOLVED",
+    );
+    const shares = (trade: string) =>
+      after?.members
+        .filter((m) => m.allocation.executionKey.endsWith(`:trade:${trade}`))
+        .map((m) => [m.lifecycleId, m.quantity])
+        .sort();
+    expect(shares("first")).toEqual([[older, "-80"]]);
+    expect(shares("next")).toEqual(
+      [
+        [older, "-20"],
+        [newer, "-60"],
+      ].sort(),
+    );
+    expect(shares("call")).not.toContainEqual([newer, "-5"]);
+  } finally {
+    await t.dispose();
+  }
+});
+
+it.each([false, true])(
+  "replays a merged sale correction when a later merge expands it (supersedes=%s)",
+  async (supersedes) => {
+    const t = await createTestStore();
+    try {
+      await commit(
+        t,
+        [
+          row("a", "STK", "20", "-2000", 1, "O"),
+          row("b", "STK", "30", "-2700", 2, "O"),
+          row("c", "STK", "100", "-11000", 3, "O"),
+          row("sale", "STK", "-90", "10800", 4, "C", {
+            FifoPnlRealized: "1700",
+          }),
+        ],
+        "three-lots.csv",
+      );
+      const projection = activeProjection(t.store).projection;
+      const strategy = (trade: string) =>
+        projection?.allocations.find((a) =>
+          a.executionKey.endsWith(`:trade:${trade}`),
+        )?.strategyId;
+      const a = strategy("a"),
+        b = strategy("b"),
+        c = strategy("c");
+      if (!a || !b || !c) throw Error("Missing origin strategy");
+      const firstMerge = await appendDecision(
+        t.store,
+        groupMergeInput({ chosenStrategyId: a, mergedStrategyIds: [b] }),
+        0,
+      );
+      await rebuild(t.store, input);
+      const cycles = activeProjection(t.store).projection?.lifecycles;
+      const lifecycle = cycles?.lifecycles.find((l) =>
+        l.originOpeningExecutionKey?.endsWith(":trade:a"),
+      )?.id;
+      const source = (trade: string) =>
+        cycles?.members.find(
+          (m) =>
+            m.allocation.strategyId === a &&
+            m.allocation.executionKey.endsWith(`:trade:${trade}`),
+        )?.allocation;
+      const sale = source("sale"),
+        opening = source("b");
+      if (!lifecycle || !sale || !opening)
+        throw Error("Missing merged allocation");
+      await appendDecision(
+        t.store,
+        {
+          kind: "lifecycle_membership",
+          author: "user",
+          clientRequestId: "correct-combined-lots",
+          payload: {
+            assignments: [
+              { allocation: sale, lifecycleId: lifecycle, quantity: "-50" },
+              { allocation: opening, lifecycleId: lifecycle, quantity: "30" },
+            ],
+          },
+        },
+        1,
+      );
+      await rebuild(t.store, input);
+      await appendDecision(
+        t.store,
+        groupMergeInput({
+          chosenStrategyId: a,
+          mergedStrategyIds: supersedes ? [b, c] : [c],
+          supersedesId: supersedes ? firstMerge.id : null,
+        }),
+        2,
+      );
+      await rebuild(t.store, input);
+      const after = activeProjection(t.store).projection?.lifecycles;
+      expect(after?.issues).toEqual([]);
+      expect(
+        after?.members.find(
+          (m) =>
+            m.lifecycleId === lifecycle &&
+            m.allocation.executionKey.endsWith(":trade:sale"),
+        ),
+      ).toMatchObject({ quantity: "-50", brokerPnl: "1300" });
+    } finally {
+      await t.dispose();
+    }
+  },
+);
+
+it("uses a newly covered decision's stock partition for subsequent disposals", async () => {
+  const t = await createTestStore();
+  try {
+    const laterPut = { Strike: "80", Conid: "24" };
+    await commit(
+      t,
+      [
+        ...assignedStockLots(),
+        row("first", "STK", "-80", "8400", 5, "C", { FifoPnlRealized: "400" }),
+        row("next", "STK", "-80", "8400", 8, "C", { FifoPnlRealized: "1000" }),
+        row("repurchase", "STK", "100", "-9000", 9, "O"),
+        row("call", "OPT", "-1", "250", 10, "O", {
+          "Put/Call": "C",
+          Conid: "50",
+          Strike: "110",
+        }),
+        row("later-put", "OPT", "-1", "200", 1, "O", laterPut),
+        row("later-assignment", "OPT", "1", "0", 11, "A;C", {
+          ...laterPut,
+          PositionActionID: "later",
+          TradePrice: "0",
+          FifoPnlRealized: "200",
+        }),
+        row("later-shares", "STK", "100", "-8000", 11, "A;O", {
+          PositionActionID: "later",
+          IBOrderID: "stock-position",
+          BrokerageOrderID: "stock-position",
+          TradePrice: "80",
+        }),
+      ],
+      "three-assignments.csv",
+    );
+    const cycles = activeProjection(t.store).projection?.lifecycles;
+    const older = cycles?.lifecycles.find((l) =>
+      l.originOpeningExecutionKey?.endsWith(":trade:older"),
+    )?.id;
+    if (!older) throw Error("Missing older lifecycle");
+    const assign = (trade: string, quantity: string) => {
+      const allocation = cycles?.members.find((m) =>
+        m.allocation.executionKey.endsWith(`:trade:${trade}`),
+      )?.allocation;
+      if (!allocation) throw Error("Missing allocation");
+      return { allocation, lifecycleId: older, quantity };
+    };
+    await appendDecision(
+      t.store,
+      {
+        kind: "lifecycle_membership",
+        author: "user",
+        clientRequestId: "repurchased-shares",
+        payload: {
+          assignments: [assign("first", "-80"), assign("repurchase", "100")],
+        },
+      },
+      0,
+    );
+    await rebuild(t.store, input);
+    await appendDecision(
+      t.store,
+      {
+        kind: "lifecycle_membership",
+        author: "user",
+        clientRequestId: "covered",
+        payload: {
+          requireCallCoverage: true,
+          assignments: [assign("call", "-1"), assign("later-shares", "100")],
+        },
+      },
+      1,
+    );
+    await commit(
+      t,
+      [row("final", "STK", "-180", "18000", 12, "C")],
+      "last-sale.csv",
+    );
+    const after = activeProjection(t.store).projection?.lifecycles;
+    expect(after?.issues.map((i) => i.code)).not.toContain(
+      "LIFECYCLE_DECISION_UNRESOLVED",
+    );
+    // 100 shares came from the separate repurchase. Of the 80 taken from
+    // the shared assignment component, 40 used the corrected later opening.
+    const shared = assign("later-shares", "100").allocation.strategyId;
+    expect(
+      after?.members.find(
+        (m) =>
+          m.lifecycleId === older &&
+          m.allocation.strategyId === shared &&
+          m.allocation.executionKey.endsWith(":trade:final"),
+      )?.quantity,
+    ).toBe("-40");
+  } finally {
+    await t.dispose();
+  }
+});
+
+it.each(["lifecycle_membership", "lifecycle_attachment"] as const)(
+  "restores FIFO sale ownership when backfilled trades invalidate a call-only %s",
+  async (kind) => {
+    const t = await createTestStore();
+    try {
+      const contract = { "Put/Call": "C", Conid: "50", Strike: "110" };
+      await commit(
+        t,
+        [
+          ...assignedStockLots(),
+          row("call", "OPT", "-1", "250", 5, "O", contract),
+          row("buyback", "OPT", "1", "-100", 7, "C", contract),
+          row("sale", "STK", "-50", "5250", 7, "C"),
+        ],
+        "pair.csv",
+      );
+      const projection = () => activeProjection(t.store).projection?.lifecycles;
+      const cycles = projection();
+      const id = (trade: string) =>
+        cycles?.lifecycles.find((l) =>
+          l.originOpeningExecutionKey?.endsWith(`:trade:${trade}`),
+        )?.id;
+      const older = id("older"),
+        newer = id("newer");
+      const opening = cycles?.members.find((m) =>
+        m.allocation.executionKey.endsWith(":trade:call"),
+      )?.allocation;
+      if (!older || !newer || !opening)
+        throw Error("Missing call or stock owners");
+      const target = { lifecycleId: newer, quantity: "-1" };
+      await appendDecision(
+        t.store,
+        {
+          kind,
+          author: "user",
+          clientRequestId: "pair",
+          payload:
+            kind === "lifecycle_attachment"
+              ? { opening, targets: [target] }
+              : {
+                  requireCallCoverage: true,
+                  assignments: [{ allocation: opening, ...target }],
+                },
+        },
+        0,
+      );
+      await rebuild(t.store, input);
+      const saleOwner = () =>
+        projection()?.members.find((m) =>
+          m.allocation.executionKey.endsWith(":trade:sale"),
+        )?.lifecycleId;
+      expect(saleOwner()).toBe(newer);
+      await commit(
+        t,
+        [
+          row("earlier", "STK", "-50", "5000", 4, "C"),
+          {
+            LevelOfDetail: "CLOSED_LOT",
+            ClientAccountID: "A",
+            TradeID: "earlier",
+            OpenDateTime: "20261003;120000",
+            Quantity: "-50",
+          },
+        ],
+        "earlier-sale.csv",
+      );
+      expect(projection()?.issues.map((i) => i.code)).toContain(
+        "LIFECYCLE_DECISION_UNRESOLVED",
+      );
+      expect(saleOwner()).toBe(older);
+      expect(projection()?.lifecycles.flatMap((l) => l.reasons)).not.toContain(
+        "IBKR_TAX_LOT_DIFFERS",
+      );
+    } finally {
+      await t.dispose();
+    }
+  },
+);
+
+it("confirms the single origin slice displayed under a merged strategy that did not participate in the sale", async () => {
+  const t = await createTestStore();
+  try {
+    await commit(
+      t,
+      [
+        row("b", "STK", "30", "-2700", 1, "O"),
+        row("c", "STK", "100", "-11000", 2, "O"),
+        row("sale", "STK", "-90", "10800", 3, "C", { FifoPnlRealized: "1500" }),
+        row("a", "STK", "20", "-2000", 4, "O"),
+      ],
+      "singleton.csv",
+    );
+    const initial = activeProjection(t.store).projection;
+    const strategy = (trade: string) =>
+      initial?.allocations.find((a) =>
+        a.executionKey.endsWith(`:trade:${trade}`),
+      )?.strategyId;
+    const a = strategy("a"),
+      b = strategy("b");
+    if (!a || !b) throw Error("Missing strategies");
+    await appendDecision(
+      t.store,
+      groupMergeInput({ chosenStrategyId: a, mergedStrategyIds: [b] }),
+      0,
+    );
+    await rebuild(t.store, input);
+    const sale = () =>
+      activeProjection(t.store).projection?.lifecycles?.members.find(
+        (m) =>
+          m.allocation.strategyId === a &&
+          m.allocation.executionKey.endsWith(":trade:sale"),
+      );
+    const member = sale();
+    if (!member) throw Error("Missing merged sale slice");
+    expect(member.quantity).toBe("-30");
+    await appendDecision(
+      t.store,
+      {
+        kind: "lifecycle_membership",
+        author: "user",
+        clientRequestId: "confirm-one-origin",
+        payload: {
+          assignments: [
+            {
+              allocation: member.allocation,
+              lifecycleId: member.lifecycleId,
+              quantity: member.quantity,
+            },
+          ],
+        },
+      },
+      1,
+    );
+    await rebuild(t.store, input);
+    expect(sale()).toEqual(member);
+    expect(activeProjection(t.store).projection?.lifecycles?.issues).toEqual(
+      [],
+    );
+  } finally {
+    await t.dispose();
+  }
+});

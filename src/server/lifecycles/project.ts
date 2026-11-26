@@ -29,15 +29,19 @@ import {
   applyConnectedLotOwnership,
   connectedCallTargets,
 } from "./connected-lots.js";
-import { applyMembershipChanges } from "./decisions.js";
-import { fifoLotPnl } from "./fifo-pnl.js";
+import { applyMembershipChanges, markUnresolvedDecision } from "./decisions.js";
+import {
+  consumeReportedStockLots,
+  fifoLotPnl,
+  type StockLotHolding,
+} from "./fifo-pnl.js";
 import {
   indexMembersByAllocation,
   partition,
   refKey,
   sum,
 } from "./membership.js";
-import { expandMergedMembership } from "./merged-membership.js";
+import { replayMergedMembership } from "./merged-membership.js";
 
 export { validateMembership } from "./membership.js";
 export const lifecycleId = (a: LifecycleAnchor) =>
@@ -112,6 +116,7 @@ export function projectLifecycles(
   resolveId: (a: LifecycleAnchor) => string = lifecycleId,
   originProjection?: Projection,
   retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
+  decisionHistory: readonly Decision[] = decisions,
 ): LifecycleProjection {
   const inputs = {
     ledger,
@@ -120,8 +125,20 @@ export function projectLifecycles(
     resolveId,
     originProjection,
     retainedAnchors,
+    decisionHistory,
   };
-  return projectWithStockAssignments(inputs);
+  const rejected = new Map<string, Decision>();
+  let stock: ConfirmedStock | undefined;
+  for (;;) {
+    const result = projectWithStockAssignments(inputs, rejected, stock);
+    if ("rejectedMembershipDecision" in result) {
+      const decision = result.rejectedMembershipDecision;
+      rejected.set(decision.id, decision);
+      stock = undefined;
+    } else if ("confirmedStock" in result) {
+      stock = result.confirmedStock;
+    } else return result;
+  }
 }
 
 type LifecycleInputs = {
@@ -129,6 +146,7 @@ type LifecycleInputs = {
   projection: Projection;
   decisions: readonly Decision[];
   resolveId: (a: LifecycleAnchor) => string;
+  decisionHistory: readonly Decision[];
   originProjection: Projection | undefined;
   retainedAnchors: readonly RetainedLifecycleAnchor[];
 };
@@ -136,12 +154,21 @@ type StockAssignments = Map<
   string,
   Array<{ lifecycleId: string; quantity: string }>
 >;
+type ConfirmedStock = {
+  assignments: StockAssignments;
+  decisionIds: Set<string>;
+};
 function projectWithStockAssignments(
   inputs: LifecycleInputs,
-  confirmedStock?: StockAssignments,
-): LifecycleProjection {
+  excluded: ReadonlyMap<string, Decision>,
+  stock?: ConfirmedStock,
+):
+  | LifecycleProjection
+  | { rejectedMembershipDecision: Decision }
+  | { confirmedStock: ConfirmedStock } {
   const { ledger, resolveId, originProjection, retainedAnchors } = inputs;
   let { projection, decisions } = inputs;
+  if (excluded.size) decisions = decisions.filter((d) => !excluded.has(d.id));
   const retained = new Map(
     retainedAnchors.map((anchor, rank) => [
       JSON.stringify([anchor.account, anchor.openingExecutionKey]),
@@ -182,13 +209,14 @@ function projectWithStockAssignments(
     });
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
   const hasMerges =
-    originProjection && decisions.some((d) => d.kind === "group_merge");
+    originProjection &&
+    inputs.decisionHistory.some((d) => d.kind === "group_merge");
   let mergedId = (id: string) => id;
+  const originScopes = new Map<
+    string,
+    { id: string; account: string; currency: string }
+  >();
   if (hasMerges) {
-    const originScopes = new Map<
-      string,
-      { id: string; account: string; currency: string }
-    >();
     for (const a of projection.allocations) {
       const e = exec.get(a.executionKey);
       if (e && !originScopes.has(a.strategyId))
@@ -408,6 +436,7 @@ function projectWithStockAssignments(
         );
       });
     const inventory = new Map<string, Map<string, Decimal>>();
+    const openings = new Map<string, StockLotHolding[]>();
     for (const a of rows) {
       const e = exec.get(a.executionKey);
       if (!e) continue;
@@ -417,7 +446,12 @@ function projectWithStockAssignments(
       let pieces = draft.members.filter(
         (m) => refKey(m.allocation) === refKey(a),
       );
-      const confirmed = confirmedStock?.get(refKey(a));
+      const confirmed = stock?.assignments.get(refKey(a));
+      const explicit = explicitCloseRefs.has(refKey(a));
+      const reported =
+        a.role === "close" && (confirmed || !explicit)
+          ? consumeReportedStockLots(a, openings, book, confirmed)
+          : undefined;
       if (confirmed) {
         pieces = partition(a, confirmed, e.sources);
         draft.members = draft.members.filter(
@@ -438,12 +472,13 @@ function projectWithStockAssignments(
         )
           ownedStockCloses.add(refKey(a));
       } else if (a.role === "close") {
-        const explicit = explicitCloseRefs.has(refKey(a));
         // An explicit partition is replayed below. Before replay, only a
         // uniquely compatible holder can establish a delivery link for it.
         const targets = explicit
           ? uniqueStockOwner(book, a)
-          : fifoTargets(book, a);
+          : a.reportedLots?.length
+            ? reported?.targets
+            : fifoTargets(book, a);
         if (targets) {
           ownedStockCloses.add(refKey(a));
           pieces = fifoLotPnl(
@@ -452,6 +487,7 @@ function projectWithStockAssignments(
             draft.members,
             exec,
             e,
+            reported?.openingCash,
           );
           draft.members = draft.members.filter(
             (m) => refKey(m.allocation) !== refKey(a),
@@ -469,6 +505,15 @@ function projectWithStockAssignments(
             if (l) l.reasons.push("LIFECYCLE_STOCK_CLOSE_AMBIGUOUS");
           }
         }
+      }
+      if (a.role === "open") {
+        openings.set(
+          a.executionKey,
+          pieces.map((opening) => ({
+            opening,
+            remaining: new Decimal(opening.quantity).abs(),
+          })),
+        );
       }
       for (const m of pieces) {
         const held = (book.get(m.lifecycleId) ?? new Decimal(0)).plus(
@@ -644,27 +689,13 @@ function projectWithStockAssignments(
     for (const [key, id] of roots) if (id === from) roots.set(key, to);
   }
   if (hasMerges) {
-    const sources = groupBy(projection.allocations, (a) =>
-      refKey({ ...a, strategyId: mergedId(a.strategyId) }),
+    decisions = replayMergedMembership(
+      decisions,
+      inputs.decisionHistory,
+      originScopes,
+      projection.allocations,
+      draft.members,
     );
-    const members = indexMembersByAllocation(draft.members);
-    decisions = decisions.map((d) => {
-      if (d.kind !== "lifecycle_membership") return d;
-      const parsed = LifecycleMembershipPayloadSchema.safeParse(d.payload);
-      if (!parsed.success) return d;
-      const groups = groupBy(parsed.data.assignments, (a) =>
-        refKey(a.allocation),
-      );
-      return {
-        ...d,
-        payload: {
-          ...d.payload,
-          assignments: [...groups].flatMap(([key, targets]) =>
-            expandMergedMembership(targets, sources.get(key) ?? [], members),
-          ),
-        },
-      };
-    });
   }
   const redirected = redirectLifecycleDecisions(decisions, aliases);
   decisions = redirected.decisions;
@@ -680,37 +711,60 @@ function projectWithStockAssignments(
       severity: "warning",
     });
   }
-  applyMembershipChanges(ledger, projection, draft, decisions);
-  if (!confirmedStock) {
-    // A retained membership decision is atomic and can be rejected on this
-    // build. Only its successfully replayed partitions may change the stock
-    // book used for subsequent disposals and assignment links.
-    const confirmed: StockAssignments = new Map();
-    const rejected = new Set(draft.issues.map((issue) => issue.key));
-    for (const decision of decisions) {
+  let candidateFailure: unknown;
+  applyMembershipChanges(ledger, projection, draft, decisions, (error) => {
+    candidateFailure = error;
+  });
+  const decisionIds = new Set<string>();
+  const confirmed: StockAssignments = new Map();
+  const rejected = new Set(draft.issues.map((issue) => issue.key));
+  const failed: Decision[] = [];
+  for (const decision of decisions) {
+    if (
+      decision.kind !== "lifecycle_membership" &&
+      decision.kind !== "lifecycle_attachment"
+    )
+      continue;
+    // Both decision types can pair a sale before replay. Memberships can
+    // also suppress inferred closes even when they contain only option refs.
+    if (rejected.has(`lifecycle:decision:${decision.id}`)) {
+      failed.push(decision);
+      continue;
+    }
+    if (decision.kind !== "lifecycle_membership") continue;
+    const payload = LifecycleMembershipPayloadSchema.safeParse(
+      decision.payload,
+    );
+    if (!payload.success) continue;
+    for (const [key, assignments] of groupBy(payload.data.assignments, (a) =>
+      refKey(a.allocation),
+    )) {
+      const ref = assignments[0]?.allocation;
       if (
-        decision.kind !== "lifecycle_membership" ||
-        rejected.has(`lifecycle:decision:${decision.id}`)
+        !ref ||
+        !changedStockStrategies.has(ref.strategyId) ||
+        exec.get(ref.executionKey)?.instrument.assetClass !== "STK"
       )
         continue;
-      const payload = LifecycleMembershipPayloadSchema.safeParse(
-        decision.payload,
-      );
-      if (!payload.success) continue;
-      for (const [key, assignments] of groupBy(payload.data.assignments, (a) =>
-        refKey(a.allocation),
-      )) {
-        const ref = assignments[0]?.allocation;
-        if (
-          ref &&
-          changedStockStrategies.has(ref.strategyId) &&
-          exec.get(ref.executionKey)?.instrument.assetClass === "STK"
-        )
-          confirmed.set(key, assignments);
-      }
+      decisionIds.add(decision.id);
+      confirmed.set(key, assignments);
     }
-    if (confirmed.size) return projectWithStockAssignments(inputs, confirmed);
   }
+  // Each retry either adds a newly validated partition to the book or removes
+  // a failed decision from the build. A removed correction can change the
+  // eligibility of later ones, so recheck those before excluding another.
+  failed.sort((a, b) => a.sequence - b.sequence);
+  const lostConfirmation = failed.some((d) => stock?.decisionIds.has(d.id));
+  const gainedConfirmation = [...decisionIds].some(
+    (id) => !stock?.decisionIds.has(id),
+  );
+  if (!lostConfirmation && gainedConfirmation)
+    return { confirmedStock: { assignments: confirmed, decisionIds } };
+  const firstRejected = failed[0];
+  if (firstRejected && firstRejected.id !== "__validate__")
+    return { rejectedMembershipDecision: firstRejected };
+  if (candidateFailure) throw candidateFailure;
+  for (const d of excluded.values()) markUnresolvedDecision(draft, d);
   recomputeLifecycles(ledger, projection, draft, explicitCloseRefs);
   for (const c of draft.campaigns)
     c.lifecycleIds = draft.lifecycles
