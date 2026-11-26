@@ -26,6 +26,7 @@ import {
   acquireDataDirLock,
   type DataDirLock,
   LOCK_FILENAME,
+  OWNER_DB_FILENAME,
   RESTORE_MARKER_FILENAME,
 } from "./lock.js";
 
@@ -66,6 +67,10 @@ function restoreFailed(error: unknown): AppError {
 function isReservedEntry(name: string): boolean {
   return (
     name === LOCK_FILENAME ||
+    name === OWNER_DB_FILENAME ||
+    name === `${OWNER_DB_FILENAME}-journal` ||
+    name === `${OWNER_DB_FILENAME}-wal` ||
+    name === `${OWNER_DB_FILENAME}-shm` ||
     name === RESTORE_MARKER_FILENAME ||
     name.startsWith(STAGING_PREFIX) ||
     name.startsWith(PRE_RESTORE_PREFIX)
@@ -403,7 +408,7 @@ export async function restoreBackup(
   let lock: DataDirLock | undefined;
   let stagingDir: string | undefined;
   try {
-    // The lock lives at <target>/journal.lock and is never moved by the swap.
+    // The owner database and its PID record stay in place throughout the swap.
     lock = acquireDataDirLock(target);
     stagingDir = mkdtempSync(join(target, STAGING_PREFIX));
     await stageArchive(archivePath, stagingDir);

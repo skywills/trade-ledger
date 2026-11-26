@@ -254,6 +254,13 @@ the store.
 
 ## Backup and restore
 
+- Before upgrading, stop every journal server and maintenance command using the
+  same data directory, including containers. If startup reports a legacy lock
+  after you verify they have all stopped, remove the leftover `journal.lock`
+  **file** and retry. Current versions recover their lock directory automatically
+  after a crash. The service account needs write access to the persistent
+  `.journal-owner.sqlite` file.
+
 - Backups pause commits long enough to capture a consistent snapshot, then
   include original files, transcripts and retained decisions with checksums.
   Secrets are excluded.

@@ -1,11 +1,14 @@
+import { Decimal } from "decimal.js";
 import type {
   Allocation,
   Id,
   Projection,
   Strategy,
 } from "../../shared/domain.js";
-import type { Link, MergeInstruction } from "./grouping-common.js";
+import { groupBy } from "../../shared/group-by.js";
+import type { Link } from "./grouping-common.js";
 import type { GroupingContext } from "./grouping-context.js";
+import { presentationMergeResolver } from "./presentation-merges.js";
 import {
   emptyDraft,
   finalizeDraft,
@@ -17,89 +20,33 @@ import {
 
 export function finalizeGrouping(
   context: GroupingContext,
-  merges: readonly MergeInstruction[],
   links: readonly Link[],
 ): Projection {
   const { ledger, drafts, orderedDecisions, issues, addIssue } = context;
-  // 8. User merges change presentation only: every allocation stays unique.
-  const remap = new Map<Id, Id>();
-  for (const { chosen, merged } of merges) {
-    for (const mergedId of merged) {
-      const sourceDraft = drafts.get(mergedId);
-      if (sourceDraft === undefined) continue;
-      const chosenDraft = drafts.get(chosen);
-      if (
-        chosenDraft !== undefined &&
-        (chosenDraft.account !== sourceDraft.account ||
-          chosenDraft.currency !== sourceDraft.currency)
-      ) {
-        const issue = makeIssue(
-          "INCOMPATIBLE_STRATEGY_MERGE",
-          [...sourceDraft.legs, ...chosenDraft.legs].flatMap(
-            (leg) => leg.sources,
-          ),
-          "error",
-          `${chosen}:${mergedId}`,
-        );
-        addIssue(issue);
-        pushDraftIssue(chosenDraft, issue);
-        pushDraftIssue(sourceDraft, issue);
-        continue;
-      }
-      remap.set(mergedId, chosen);
-    }
-  }
-  const finalId = (id: Id): Id => {
-    let current = id;
-    const seen = new Set<Id>();
-    while (remap.has(current) && !seen.has(current)) {
-      seen.add(current);
-      current = remap.get(current) ?? current;
-    }
-    return current;
-  };
-
-  // Validate each transitive merge target before consolidating any amounts.
-  // A retained decision can name a chosen ID that has no current draft, so
-  // checking only the immediate chosen/merged pair is not sufficient.
-  const draftsByMergeTarget = new Map<Id, StrategyDraft[]>();
-  for (const draft of drafts.values()) {
-    const targetId = finalId(draft.id);
-    const group = draftsByMergeTarget.get(targetId) ?? [];
-    group.push(draft);
-    draftsByMergeTarget.set(targetId, group);
-  }
-  const safeTargets = new Map<Id, Id>();
-  for (const [targetId, group] of draftsByMergeTarget) {
-    const dimensions = new Set(
-      group.map((draft) => `${draft.account}\u0000${draft.currency}`),
-    );
-    if (dimensions.size <= 1) {
-      for (const draft of group) safeTargets.set(draft.id, targetId);
-      continue;
-    }
-    const issue = makeIssue(
-      "INCOMPATIBLE_STRATEGY_MERGE",
-      group.flatMap((draft) => draft.legs.flatMap((leg) => leg.sources)),
-      "error",
-      targetId,
-    );
-    addIssue(issue);
-    for (const draft of group) {
-      safeTargets.set(draft.id, draft.id);
-      pushDraftIssue(draft, issue);
-    }
-  }
-  const safeFinalId = (id: Id): Id => safeTargets.get(id) ?? finalId(id);
+  const safeFinalId = presentationMergeResolver(
+    drafts,
+    orderedDecisions,
+    (group, scope) => {
+      const issue = makeIssue(
+        "INCOMPATIBLE_STRATEGY_MERGE",
+        group.flatMap((d) => d.legs.flatMap((l) => l.sources)),
+        "error",
+        scope,
+      );
+      addIssue(issue);
+      for (const draft of group) pushDraftIssue(draft, issue);
+    },
+  );
 
   const consolidated = new Map<Id, StrategyDraft>();
+  const combined = new Set<Id>();
   for (const draft of drafts.values()) {
     const targetId = safeFinalId(draft.id);
     let container = consolidated.get(targetId);
     if (container === undefined) {
       container = emptyDraft(targetId);
       consolidated.set(targetId, container);
-    }
+    } else combined.add(targetId);
     if (container.account === "") container.account = draft.account;
     if (container.currency === "") container.currency = draft.currency;
     container.legs.push(...draft.legs);
@@ -141,8 +88,40 @@ export function finalizeGrouping(
     for (const issue of draft.issues) addIssue(issue);
   }
 
+  // A presentation merge can bring several parts of the same execution
+  // onto one strategy. Persist a single financial allocation for that key.
   const allocations: Allocation[] = [...consolidated.values()]
-    .flatMap((draft) => draft.allocations)
+    .flatMap((draft) => {
+      if (!combined.has(draft.id)) return draft.allocations;
+      const groups = groupBy(draft.allocations, (a) =>
+        JSON.stringify([a.executionKey, a.role]),
+      );
+      return [...groups.values()].flatMap((parts) => {
+        const first = parts[0];
+        if (!first || parts.length === 1) return parts;
+        const sum = (field: "quantity" | "netCash" | "brokerPnl") =>
+          parts
+            .reduce((n, p) => n.plus(p[field] ?? 0), new Decimal(0))
+            .toFixed();
+        const estimated = parts.some((p) => p.pnlEstimated);
+        return [
+          {
+            ...first,
+            quantity: sum("quantity"),
+            netCash: sum("netCash"),
+            brokerPnl: parts.some((p) => p.brokerPnl === null)
+              ? null
+              : sum("brokerPnl"),
+            pnlEstimated: estimated,
+            pnlAttribution: estimated
+              ? ("estimated" as const)
+              : parts.some((p) => p.pnlAttribution === "basis-reconciled")
+                ? ("basis-reconciled" as const)
+                : first.pnlAttribution,
+          },
+        ];
+      });
+    })
     .sort((left, right) =>
       `${left.strategyId}|${left.executionKey}` <
       `${right.strategyId}|${right.executionKey}`

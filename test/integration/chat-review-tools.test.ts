@@ -9,6 +9,7 @@ import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
 import { JobService } from "../../src/server/jobs/service.js";
 import { buildExecutionTable, executionRow } from "../fixtures/scenarios.js";
 import { seedLedger } from "../helpers/chat.js";
+import { toolSession } from "../helpers/chat-tools.js";
 import { createTestStore, type TestStore } from "../helpers/store.js";
 
 const stores: TestStore[] = [];
@@ -43,9 +44,7 @@ async function setup() {
     store: test.store,
     jobs,
     scheduler: new BuildScheduler(test.store, {}, jobs),
-    thread: () => {
-      throw new Error("no thread needed");
-    },
+    session: toolSession,
     turn: {
       current: { turnId: "turn", proposalRunId: null, proposalCount: 0 },
     },

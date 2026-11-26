@@ -30,6 +30,16 @@ export function looksLikeBookedEvent(execution: Execution): boolean {
   return zeroPrice && zeroCash;
 }
 
+export function roleOf(execution: Execution): "open" | "close" {
+  if (execution.event === "unsupported") return "close";
+  if (execution.action === "open") return "open";
+  if (execution.action === "close") return "close";
+  if (execution.action === "mixed") return "close";
+  if (isClosingEvent(execution.event)) return "close";
+  if (looksLikeBookedEvent(execution)) return "close";
+  return "open";
+}
+
 /**
  * Validates contract, event, and share-unit consistency for a lifecycle link.
  * Returns an issue when the pair cannot be linked rather than inventing a
@@ -64,12 +74,9 @@ export function validateLifecycle(
       return inconsistent("error", `${source.key}:legs`);
     }
     const optionUnderlying = option.instrument.underlying;
-    const stockUnderlying = stock.instrument.underlying;
-    if (
-      optionUnderlying !== null &&
-      stockUnderlying !== null &&
-      optionUnderlying !== stockUnderlying
-    ) {
+    const stockUnderlying =
+      stock.instrument.underlying ?? stock.instrument.symbol;
+    if (optionUnderlying === null || optionUnderlying !== stockUnderlying) {
       return inconsistent("error", `${source.key}:underlying`);
     }
     // An adjusted option's premium multiplier is not its share deliverable.
@@ -84,11 +91,20 @@ export function validateLifecycle(
     if (multiplier === null) {
       return inconsistent("warning", `${source.key}:multiplier`);
     }
-    const expected = new Decimal(option.quantity).times(
-      new Decimal(multiplier),
+    if (option.currency !== stock.currency)
+      return inconsistent("error", `${source.key}:currency`);
+    const putCall = option.instrument.putCall;
+    if (putCall !== "P" && putCall !== "C")
+      return inconsistent("warning", `${source.key}:putCall`);
+    // Corrections may reference the original option opening or the booked
+    // close. A short put assignment receives shares; a short call delivers them.
+    const closeQuantity = new Decimal(option.quantity).times(
+      roleOf(option) === "open" ? -1 : 1,
     );
-    const actual = new Decimal(stock.quantity);
-    if (!expected.abs().eq(actual.abs())) {
+    const expected = closeQuantity
+      .times(multiplier)
+      .times(putCall === "C" ? -1 : 1);
+    if (!expected.eq(stock.quantity)) {
       return inconsistent("error", `${source.key}:quantity`);
     }
     return null;

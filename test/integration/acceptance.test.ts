@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -465,28 +459,26 @@ describe("final acceptance: scenarios A-D survive rebuild, backup and restore", 
 
   // A container always runs the app as pid 1, so a lock left by an uncleanly
   // killed process must not look alive after the pid is reused on restart.
-  it.runIf(existsSync("/proc/self/stat"))(
-    "recovers a data-dir lock whose pid was reused across a restart",
-    () => {
-      const dir = trackTemp("ibkr-accept-pid-reuse-");
-      writeFileSync(
-        join(dir, "journal.lock"),
-        JSON.stringify({
-          pid: process.pid,
-          startedAt: new Date(0).toISOString(),
-          pidStart: "definitely-not-this-process",
-        }),
-      );
-      expect(isDataDirLocked(dir)).toBe(false);
-      const lock = acquireDataDirLock(dir);
-      try {
-        expect(isDataDirLocked(dir)).toBe(true);
-      } finally {
-        lock.release();
-      }
-      expect(isDataDirLocked(dir)).toBe(false);
-    },
-  );
+  it("recovers a data-dir lock whose pid was reused across a restart", () => {
+    const dir = trackTemp("ibkr-accept-pid-reuse-");
+    const marker = join(dir, "journal.lock");
+    mkdirSync(marker);
+    writeFileSync(
+      join(marker, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: new Date(0).toISOString(),
+      }),
+    );
+    expect(isDataDirLocked(dir)).toBe(false);
+    const lock = acquireDataDirLock(dir);
+    try {
+      expect(isDataDirLocked(dir)).toBe(true);
+    } finally {
+      lock.release();
+    }
+    expect(isDataDirLocked(dir)).toBe(false);
+  });
 
   it("SIGTERM leaves the active build pointer intact and never activates a partial build", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "ibkr-accept-shutdown-"));

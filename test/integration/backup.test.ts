@@ -449,11 +449,16 @@ describe("consistent backup and offline restore", () => {
     }
   });
 
-  it("recovers a stale lock left by a crashed process", () => {
+  it("recovers an ownership directory left by a crashed process", () => {
     const dir = trackTemp("ibkr-stale-lock-");
+    const marker = join(dir, "journal.lock");
+    mkdirSync(marker);
     writeFileSync(
-      join(dir, "journal.lock"),
-      JSON.stringify({ pid: 2 ** 30, startedAt: new Date(0).toISOString() }),
+      join(marker, "owner.json"),
+      JSON.stringify({
+        pid: 2 ** 30,
+        startedAt: new Date(0).toISOString(),
+      }),
     );
     expect(isDataDirLocked(dir)).toBe(false);
     const lock = acquireDataDirLock(dir);

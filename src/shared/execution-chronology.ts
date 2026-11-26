@@ -4,6 +4,8 @@ import { normalizeTimestamp } from "./timestamps.js";
 const MAX_ZONE_SECONDS = 14 * 60 * 60;
 const UTC_ZONES = new Set(["UTC", "Etc/UTC", "GMT"]);
 
+type TimeSource = Pick<Execution, "rawDateTime" | "timezone" | "sources">;
+
 interface Point {
   second: number;
   nano: number;
@@ -21,11 +23,11 @@ interface TimeEvidence {
 // Parsing is shared by the quadratic grouping comparisons. Executions can be
 // edited, so reuse evidence only while its input values remain unchanged.
 const evidenceCache = new WeakMap<
-  Execution,
+  TimeSource,
   { raw: string; zone: string | null; value: TimeEvidence | null }
 >();
 
-function parseEvidence(execution: Execution): TimeEvidence | null {
+function parseEvidence(execution: TimeSource): TimeEvidence | null {
   const raw = execution.rawDateTime.trim();
   const suffix = /(?:Z|([+-])(\d{2}):?(\d{2}))$/.exec(raw);
   const explicitOffset = suffix !== null;
@@ -71,7 +73,7 @@ function parseEvidence(execution: Execution): TimeEvidence | null {
   };
 }
 
-function evidence(execution: Execution): TimeEvidence | null {
+function evidence(execution: TimeSource): TimeEvidence | null {
   const cached = evidenceCache.get(execution);
   if (
     cached?.raw === execution.rawDateTime &&
@@ -102,8 +104,8 @@ function compareUtcDayToInstant(
 
 /** Only compare times when retained provenance establishes their order. */
 export function compareExecutionTime(
-  a: Execution,
-  b: Execution,
+  a: TimeSource,
+  b: TimeSource,
 ): number | null {
   const x = evidence(a);
   const y = evidence(b);
@@ -142,6 +144,65 @@ export function compareExecutionTime(
   return Math.abs(x.day - y.day) > 2 * 86400000
     ? Math.sign(x.day - y.day)
     : null;
+}
+
+/** Match the precision of a broker's opening reference. Convert an exact
+ * instant into the named report clock without inferring an instant for an
+ * ambiguous local timestamp (including during a daylight-saving fold). */
+export function matchesOpeningTime(
+  opening: Execution,
+  reference: TimeSource,
+): boolean {
+  const a = evidence(opening);
+  const b = evidence(reference);
+  if (!a || !b) return false;
+  if (b.dateOnly) {
+    if (a.instant && reference.timezone) {
+      return (
+        wallClockIn(a.instant, reference.timezone)?.slice(0, 10) === b.date
+      );
+    }
+    return a.date === b.date;
+  }
+  if (compareExecutionTime(opening, reference) === 0) return true;
+  if (a.dateOnly) return false;
+  const instant = b.instant ?? a.instant;
+  const local = b.instant ? a : b;
+  const zone = b.instant ? opening.timezone : reference.timezone;
+  if (!instant || local.instant || !zone || instant.nano !== local.wall.nano)
+    return false;
+  return (
+    wallClockIn(instant, zone) ===
+    new Date(local.wall.second * 1000).toISOString().slice(0, 19)
+  );
+}
+
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+function wallClockIn(instant: Point, zone: string): string | undefined {
+  try {
+    let formatter = zoneFormatters.get(zone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      });
+      zoneFormatters.set(zone, formatter);
+    }
+    const fields = Object.fromEntries(
+      formatter
+        .formatToParts(instant.second * 1000)
+        .map((p) => [p.type, p.value]),
+    );
+    return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}:${fields.second}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Latest possible instant, without interpreting a wall time in the host zone. */

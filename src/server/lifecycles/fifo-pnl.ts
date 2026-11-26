@@ -1,6 +1,7 @@
 import { Decimal } from "decimal.js";
 import type { Execution } from "../../shared/domain.js";
 import type { LifecycleMember } from "../../shared/lifecycles.js";
+import { reconcilesWithin } from "../../shared/money.js";
 
 /**
  * Re-split IBKR's broker P&L for a share close that FIFO divided across
@@ -15,7 +16,7 @@ export function fifoLotPnl(
   brokerPnl: string | null,
   members: readonly LifecycleMember[],
   exec: ReadonlyMap<string, Execution>,
-  instrumentKey: string,
+  close: Execution,
 ): LifecycleMember[] {
   if (pieces.length < 2 || brokerPnl === null) return [...pieces];
   const unitCost = (lifecycleId: string): Decimal | null => {
@@ -24,7 +25,10 @@ export function fifoLotPnl(
     for (const m of members) {
       if (m.lifecycleId !== lifecycleId || m.allocation.role !== "open")
         continue;
-      if (exec.get(m.allocation.executionKey)?.instrument.key !== instrumentKey)
+      if (
+        exec.get(m.allocation.executionKey)?.instrument.key !==
+        close.instrument.key
+      )
         continue;
       cash = cash.plus(m.netCash);
       units = units.plus(new Decimal(m.quantity).abs());
@@ -45,9 +49,10 @@ export function fifoLotPnl(
     (s, p) => s.plus(new Decimal(p.quantity).abs()),
     new Decimal(0),
   );
-  const residual = new Decimal(brokerPnl).minus(
-    raw.reduce((s, v) => s.plus(v), new Decimal(0)),
-  );
+  const rawTotal = raw.reduce((s, v) => s.plus(v), new Decimal(0));
+  if (!reconcilesWithin(rawTotal.toFixed(), brokerPnl, close.currency))
+    return [...pieces];
+  const residual = new Decimal(brokerPnl).minus(rawTotal);
   let assigned = new Decimal(0);
   return pieces.map((piece, i) => {
     const last = i === pieces.length - 1;

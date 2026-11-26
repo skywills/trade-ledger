@@ -4,15 +4,27 @@ import type { ChatToolContext } from "../../src/server/chat/tools/shared.js";
 import { JobService } from "../../src/server/jobs/service.js";
 import type { Store } from "../../src/server/storage/database.js";
 
+import { profileInput } from "./chat.js";
+
+export const toolSession: ChatToolContext["session"] = {
+  sessionId: "test-session",
+  threadId: "test-thread",
+  profileSnapshot: {
+    ...profileInput("test", "http://127.0.0.1:1/v1"),
+    id: "test-profile",
+    revision: 1,
+    enabled: true,
+    pricing: null,
+  },
+};
+
 export function toolContext(store: Store): ChatToolContext {
   const jobs = new JobService(store);
   return {
     store,
     jobs,
     scheduler: new BuildScheduler(store, {}, jobs),
-    thread: () => {
-      throw new Error("No thread in read-tool test");
-    },
+    session: toolSession,
     turn: {
       current: { turnId: "read-test", proposalRunId: null, proposalCount: 0 },
     },

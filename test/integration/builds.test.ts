@@ -268,16 +268,19 @@ describe("versioned builds, atomic activation and rollback", () => {
       expect(built.id).toBeTruthy();
     }));
 
-  it("marks a retained cash-based futures algorithm build stale", async () =>
-    withStore(async (store) => {
-      await commitBytes(store, "spread.csv", fixtures.spread);
-      const built = await rebuild(store, input("full"));
-      store.db
-        .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
-        .run("lifecycles-v13", built.id);
-      expect(activeProjection(store).stale).toBe(true);
-      expect(activeBuildMeta(store).stale).toBe(true);
-    }));
+  it.each(["lifecycles-v13", "lifecycles-v15"])(
+    "marks a retained %s build stale",
+    async (version) =>
+      withStore(async (store) => {
+        await commitBytes(store, "spread.csv", fixtures.spread);
+        const built = await rebuild(store, input("full"));
+        store.db
+          .prepare("UPDATE builds SET algorithm_version = ? WHERE id = ?")
+          .run(version, built.id);
+        expect(activeProjection(store).stale).toBe(true);
+        expect(activeBuildMeta(store).stale).toBe(true);
+      }),
+  );
 
   it("rejects unavailable versions without disturbing the active build", async () =>
     withStore(async (store) => {
@@ -930,7 +933,12 @@ describe("provisional identity wiring", () => {
     }));
 });
 
-it.each([undefined, "contract-lifecycle-v2", "contract-lifecycle-v3"])(
+it.each([
+  undefined,
+  "contract-lifecycle-v2",
+  "contract-lifecycle-v3",
+  "contract-lifecycle-v5-cash-settlements",
+])(
   "requires full normalization for a ledger with old normalization revision %s",
   async (normalizationRevision) =>
     withStore(async (store) => {

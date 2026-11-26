@@ -1,5 +1,6 @@
 import type { Execution, Id, SourceRef } from "../../shared/domain.js";
-import { isClosingEvent, looksLikeBookedEvent } from "./lifecycle.js";
+
+export { roleOf } from "./lifecycle.js";
 
 export type ResolveId = (account: string, keys: string[]) => Id;
 
@@ -8,11 +9,6 @@ export interface Link {
   to: Id;
   type: string;
   sources: SourceRef[];
-}
-
-export interface MergeInstruction {
-  chosen: Id;
-  merged: Id[];
 }
 
 export interface LifecycleInstruction {
@@ -24,16 +20,6 @@ export interface LifecycleInstruction {
 
 export function sourceKey(source: SourceRef): string {
   return `${source.importId}:${source.rowNumber}`;
-}
-
-export function roleOf(execution: Execution): "open" | "close" {
-  if (execution.event === "unsupported") return "close";
-  if (execution.action === "open") return "open";
-  if (execution.action === "close") return "close";
-  if (execution.action === "mixed") return "close";
-  if (isClosingEvent(execution.event)) return "close";
-  if (looksLikeBookedEvent(execution)) return "close";
-  return "open";
 }
 
 function orderKeyOf(execution: Execution): string {

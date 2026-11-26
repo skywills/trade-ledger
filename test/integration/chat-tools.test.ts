@@ -22,6 +22,7 @@ import { JobService } from "../../src/server/jobs/service.js";
 import type { Store } from "../../src/server/storage/database.js";
 import { fixtures } from "../fixtures/scenarios.js";
 import { seedLedger } from "../helpers/chat.js";
+import { toolSession } from "../helpers/chat-tools.js";
 import { createTestStore, type TestStore } from "../helpers/store.js";
 
 const open: TestStore[] = [];
@@ -35,9 +36,7 @@ function toolContext(store: Store): ChatToolContext {
     store,
     jobs,
     scheduler: new BuildScheduler(store, {}, jobs),
-    thread: () => {
-      throw new Error("no thread in this test");
-    },
+    session: toolSession,
     turn: {
       current: { turnId: "turn-1", proposalRunId: null, proposalCount: 0 },
     },
