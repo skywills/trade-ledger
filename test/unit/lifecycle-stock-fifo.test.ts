@@ -122,6 +122,67 @@ it.each([
   },
 );
 
+it.each([true, false])(
+  "tracks a split opening across a confirmed disposal (prior broker lot: %s)",
+  (reportsFirstLot) => {
+    const { f } = twoAssignedLots("-40", "4200");
+    const next = fixture([
+      ["stock-origin", execution("sale2", stock, "-60", "6300", 9, "close")],
+    ]);
+    f.ledger.executions.push(...next.ledger.executions);
+    f.projection.allocations.push(...next.projection.allocations);
+    for (const a of f.projection.allocations.filter(
+      (a) =>
+        a.executionKey === "sale2" ||
+        (reportsFirstLot && a.executionKey === "sale"),
+    )) {
+      a.reportedLots = [{ executionKey: "s-buy2", quantity: a.quantity }];
+    }
+    const allocate = (
+      executionKey: string,
+      role: "open" | "close",
+      lifecycleId: string,
+      quantity: string,
+    ) => ({
+      allocation: { strategyId: "stock-origin", executionKey, role },
+      lifecycleId,
+      quantity,
+    });
+    const decision: Decision = {
+      id: "split-and-sell",
+      sequence: 1,
+      kind: "lifecycle_membership",
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      payload: {
+        assignments: [
+          allocate("s-buy2", "open", "A:p-open", "40"),
+          allocate("s-buy2", "open", "A:p2-open", "60"),
+          allocate("sale", "close", "A:p-open", "-40"),
+        ],
+      },
+    };
+    const p = projectLifecycles(f.ledger, f.projection, [decision], ids);
+    if (reportsFirstLot) {
+      expect(
+        p.members
+          .filter((m) => m.allocation.executionKey === "sale2")
+          .map((m) => [m.lifecycleId, m.quantity]),
+      ).toEqual([["A:p2-open", "-60"]]);
+      expect(p.issues.map((i) => i.code)).not.toContain(
+        "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
+      );
+    } else {
+      // The older owner also holds a separate 100-share opening. The retained
+      // sale alone cannot prove it used the 40-share slice of the newer lot.
+      expect(p.issues.map((i) => i.code)).toContain(
+        "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
+      );
+    }
+  },
+);
+
 it("closes the earliest assigned share lot first", () => {
   const { p, sold } = twoAssignedLots("-100", "10500");
   expect(p.issues).not.toContainEqual(

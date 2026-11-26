@@ -103,12 +103,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
           quantity: part.quantity,
         })),
       );
-      const pnlShares = basisPnlShares(
-        close,
-        basisAllocation,
-        shares,
-        executionByKey,
-      );
+      const pnlShares = basisPnlShares(close, basisAllocation, shares);
       for (const part of basisAllocation) {
         const cash = shares.find((share) => share.strategyId === part.draft.id);
         if (cash === undefined)

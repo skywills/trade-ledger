@@ -13,7 +13,6 @@ export function basisPnlShares(
   close: Execution,
   parts: readonly BasisAllocation[],
   cashShares: readonly SplitResult[],
-  executionByKey: ReadonlyMap<string, Execution>,
 ): Map<string, string> | null {
   if (close.brokerPnl === null || close.basis === null || parts.length < 2)
     return null;
@@ -28,28 +27,8 @@ export function basisPnlShares(
   let totalPnl = new Decimal(0);
   for (const part of ordered) {
     const proceeds = cash.get(part.draft.id);
-    if (
-      part.lots === undefined ||
-      part.lots.length === 0 ||
-      proceeds === undefined
-    )
-      return null;
-    let basis = new Decimal(0);
-    let quantity = new Decimal(0);
-    for (const lot of part.lots) {
-      const opening = executionByKey.get(lot.executionKey);
-      if (opening === undefined || opening.basis === null) return null;
-      quantity = quantity.plus(lot.quantity);
-      // Close quantity carries the sign of the basis released: negative for
-      // long openings and positive for shorts. Never weight by P&L magnitude.
-      basis = basis.plus(
-        new Decimal(opening.basis)
-          .abs()
-          .times(lot.quantity)
-          .div(new Decimal(opening.quantity).abs()),
-      );
-    }
-    if (!quantity.eq(part.quantity)) return null;
+    const basis = part.releasedBasis;
+    if (basis === undefined || proceeds === undefined) return null;
     const pnl = new Decimal(proceeds).plus(basis);
     amounts.set(part.draft.id, pnl.toFixed());
     totalBasis = totalBasis.plus(basis);

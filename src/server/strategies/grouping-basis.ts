@@ -13,6 +13,50 @@ export interface BasisAllocation {
   quantity: string;
   /** Absent when strategy attribution is unique but fill provenance is not. */
   lots: Array<{ executionKey: string; quantity: string }> | undefined;
+  /** Signed basis released by this owner when its economic allocation is proven. */
+  releasedBasis: Decimal | undefined;
+}
+
+interface OpeningPart {
+  opening: Execution;
+  capacity: number;
+}
+
+/** Earliest and latest possible FIFO ranks bound the quantity consumed
+ * from each equal-basis fill. A tied boundary leaves fill identity unknown. */
+function equalBasisFills(
+  parts: OpeningPart[],
+  units: number,
+  sign: number,
+): BasisAllocation["lots"] {
+  const slices: NonNullable<BasisAllocation["lots"]> = [];
+  const total = parts.reduce((sum, part) => sum + part.capacity, 0);
+  if (units === total)
+    return parts.map((part) => ({
+      executionKey: part.opening.key,
+      quantity: String(sign * part.capacity),
+    }));
+  for (const part of parts) {
+    let earlier = 0;
+    let unordered = 0;
+    for (const other of parts) {
+      if (other === part) continue;
+      const order = compareExecutionTime(other.opening, part.opening);
+      if (order === -1) earlier += other.capacity;
+      if (order === null || order === 0) unordered += other.capacity;
+    }
+    const take = Math.max(0, Math.min(part.capacity, units - earlier));
+    if (
+      take !== Math.max(0, Math.min(part.capacity, units - earlier - unordered))
+    )
+      return undefined;
+    if (take)
+      slices.push({
+        executionKey: part.opening.key,
+        quantity: String(take * sign),
+      });
+  }
+  return slices;
 }
 
 const MAX_LOTS = 12;
@@ -53,8 +97,9 @@ export function basisCloseAllocation(
     draft: StrategyDraft;
     opening: Execution;
     capacity: number;
+    openingBasis: Decimal;
     unitBasis: Decimal;
-    parts: Array<{ executionKey: string; capacity: number }>;
+    parts: OpeningPart[];
   }[] = [];
   const draftCapacity = new Map<StrategyDraft, number>();
   for (const draft of singleOwner
@@ -117,14 +162,14 @@ export function basisCloseAllocation(
         .minus(consumed.get(opening.key) ?? 0);
       const available = Decimal.min(remaining, capacity, quantity.abs());
       if (available.lte(0)) continue;
+      const openingBasis = new Decimal(opening.basis).abs();
       lots.push({
         draft,
         opening,
         capacity: available.toNumber(),
-        parts: [{ executionKey: opening.key, capacity: available.toNumber() }],
-        unitBasis: new Decimal(opening.basis)
-          .abs()
-          .div(new Decimal(opening.quantity).abs()),
+        parts: [{ opening, capacity: available.toNumber() }],
+        openingBasis,
+        unitBasis: openingBasis.div(new Decimal(opening.quantity).abs()),
       });
     }
   }
@@ -140,7 +185,7 @@ export function basisCloseAllocation(
   lots.sort((a, b) => a.opening.key.localeCompare(b.opening.key));
   // Equal-basis fills in the same strategy are interchangeable. Searching
   // them separately creates false ambiguity at fill level and can hide the
-  // unique strategy allocation. Keep their provenance in stable key order.
+  // unique strategy allocation. Resolve FIFO within each proven basis group.
   for (let index = 0; index < lots.length; index++) {
     const lot = lots[index];
     if (lot === undefined) continue;
@@ -250,25 +295,28 @@ export function basisCloseAllocation(
       draft: lot.draft,
       quantity: "0",
       lots: [],
+      releasedBasis: new Decimal(0),
     };
     entry.quantity = new Decimal(entry.quantity).plus(signed).toFixed();
-    let remaining = units;
-    for (const part of lot.parts) {
-      const take = Math.min(remaining, part.capacity);
-      if (take > 0)
-        entry.lots?.push({
-          executionKey: part.executionKey,
-          quantity: new Decimal(take)
-            .times(quantity.isNegative() ? -1 : 1)
-            .toFixed(),
-        });
-      remaining -= take;
-      if (remaining === 0) break;
-    }
+    entry.releasedBasis = entry.releasedBasis?.plus(
+      lot.openingBasis
+        .times(signed)
+        .div(new Decimal(lot.opening.quantity).abs()),
+    );
+    const fills = equalBasisFills(
+      lot.parts,
+      units,
+      quantity.isNegative() ? -1 : 1,
+    );
+    if (fills) entry.lots?.push(...fills);
+    else entry.lots = undefined;
     byDraft.set(lot.draft, entry);
   });
   for (const entry of byDraft.values()) {
-    if (uncertainProvenance.has(entry.draft)) entry.lots = undefined;
+    if (uncertainProvenance.has(entry.draft)) {
+      entry.lots = undefined;
+      entry.releasedBasis = undefined;
+    }
   }
   return [...byDraft.values()];
 }

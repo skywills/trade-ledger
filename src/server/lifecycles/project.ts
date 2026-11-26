@@ -30,7 +30,11 @@ import {
   connectedCallTargets,
 } from "./connected-lots.js";
 import { applyMembershipChanges, markUnresolvedDecision } from "./decisions.js";
-import { fifoLotPnl, reportedStockLots } from "./fifo-pnl.js";
+import {
+  consumeReportedStockLots,
+  fifoLotPnl,
+  type StockLotHolding,
+} from "./fifo-pnl.js";
 import {
   indexMembersByAllocation,
   partition,
@@ -432,6 +436,7 @@ function projectWithStockAssignments(
         );
       });
     const inventory = new Map<string, Map<string, Decimal>>();
+    const openings = new Map<string, StockLotHolding[]>();
     for (const a of rows) {
       const e = exec.get(a.executionKey);
       if (!e) continue;
@@ -442,6 +447,11 @@ function projectWithStockAssignments(
         (m) => refKey(m.allocation) === refKey(a),
       );
       const confirmed = stock?.assignments.get(refKey(a));
+      const explicit = explicitCloseRefs.has(refKey(a));
+      const reported =
+        a.role === "close" && (confirmed || !explicit)
+          ? consumeReportedStockLots(a, openings, book, confirmed)
+          : undefined;
       if (confirmed) {
         pieces = partition(a, confirmed, e.sources);
         draft.members = draft.members.filter(
@@ -462,10 +472,6 @@ function projectWithStockAssignments(
         )
           ownedStockCloses.add(refKey(a));
       } else if (a.role === "close") {
-        const explicit = explicitCloseRefs.has(refKey(a));
-        const reported = explicit
-          ? undefined
-          : reportedStockLots(a, draft.members, book);
         // An explicit partition is replayed below. Before replay, only a
         // uniquely compatible holder can establish a delivery link for it.
         const targets = explicit
@@ -499,6 +505,15 @@ function projectWithStockAssignments(
             if (l) l.reasons.push("LIFECYCLE_STOCK_CLOSE_AMBIGUOUS");
           }
         }
+      }
+      if (a.role === "open") {
+        openings.set(
+          a.executionKey,
+          pieces.map((opening) => ({
+            opening,
+            remaining: new Decimal(opening.quantity).abs(),
+          })),
+        );
       }
       for (const m of pieces) {
         const held = (book.get(m.lifecycleId) ?? new Decimal(0)).plus(

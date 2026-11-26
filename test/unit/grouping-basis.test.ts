@@ -2,6 +2,9 @@ import { Decimal } from "decimal.js";
 import { describe, expect, it } from "vitest";
 import { accountProjection } from "../../src/server/strategies/accounting.js";
 import { groupStrategies } from "../../src/server/strategies/grouping.js";
+import { basisCloseAllocation } from "../../src/server/strategies/grouping-basis.js";
+import { createGroupingContext } from "../../src/server/strategies/grouping-context.js";
+import { groupOpenings } from "../../src/server/strategies/grouping-openings.js";
 import type { Execution, LedgerSnapshot } from "../../src/shared/domain.js";
 import { execution, put } from "../fixtures/lifecycles.js";
 
@@ -36,6 +39,79 @@ function fill(
 }
 
 describe("basis-supported close allocation", () => {
+  it("releases the full opening basis when its per-contract cost repeats", () => {
+    const close = fill("close", "-12", "-10", 2, "close");
+    close.netCash = "4";
+    close.brokerPnl = "-6";
+    const result = groupStrategies(
+      ledger([
+        fill("a", "3", "1", 1, "open"),
+        fill("b", "9", "9", 1, "open"),
+        close,
+      ]),
+      [],
+      resolveId,
+    );
+    expect(
+      result.allocations
+        .filter((a) => a.role === "close")
+        .map((a) => a.brokerPnl),
+    ).toEqual(["0", "-6"]);
+  });
+  it("uses chronological FIFO among equal-basis option fills and preserves the later reported lot", () => {
+    const older = fill("z-first", "1", "100", 1, "open");
+    const newer = fill("a-second", "1", "100", 2, "open");
+    older.brokerIds = newer.brokerIds = { IBOrderID: "one" };
+    const first = fill("sale", "-1", "-100", 3, "close");
+    const last = fill("last", "-1", "-100", 4, "close");
+    last.brokerIds = { TradeID: "last" };
+    const input = ledger([older, newer, first, last]);
+    input.lots.push({
+      kind: "lot",
+      rowNumber: 1,
+      issues: [],
+      section: null,
+      fields: {
+        ClientAccountID: "A",
+        TradeID: "last",
+        OpenDateTime: newer.rawDateTime,
+        Quantity: "-1",
+      },
+    });
+    expect(
+      groupStrategies(input, [], resolveId).strategies.map((s) => s.status),
+    ).toEqual(["closed"]);
+  });
+
+  it.each(["tied", "incomparable"])(
+    "retains the proven strategy P&L without choosing a %s equal-basis fill",
+    (chronology) => {
+      const a = fill("a", "1", "10", 1, "open");
+      const a2 = fill("a2", "1", "10", 1, "open");
+      a.brokerIds = a2.brokerIds = { IBOrderID: "one" };
+      if (chronology === "incomparable") {
+        a2.rawDateTime = a2.date;
+      }
+      const other = fill("b", "1", "20", 1, "open");
+      const close = fill("close", "-2", "-30", 5, "close");
+      close.brokerPnl = "70";
+      const input = ledger([a, a2, other, close]);
+      const context = createGroupingContext(input, [], resolveId);
+      groupOpenings(context);
+      const part = basisCloseAllocation(context, close, close.quantity)?.find(
+        (p) => p.draft.id === "A:a+a2",
+      );
+      expect(part).toMatchObject({ quantity: "-1", lots: undefined });
+      expect(
+        groupStrategies(input, [], resolveId)
+          .allocations.filter((a) => a.role === "close")
+          .map((a) => [a.strategyId, a.brokerPnl, a.pnlAttribution]),
+      ).toEqual([
+        ["A:a+a2", "40", "basis-reconciled"],
+        ["A:b", "30", "basis-reconciled"],
+      ]);
+    },
+  );
   it("uses a unique basis match with source rounding to select a short opening", () => {
     const a = fill("a", "-1", "-101.0000004", 1, "open");
     const b = fill("b", "-1", "-120.2", 1, "open");

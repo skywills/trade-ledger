@@ -1,43 +1,51 @@
 import { Decimal } from "decimal.js";
 import type { Allocation, Execution } from "../../shared/domain.js";
-import { groupBy } from "../../shared/group-by.js";
 import type { LifecycleMember } from "../../shared/lifecycles.js";
 import { reconcilesWithin } from "../../shared/money.js";
 
-/** Follow each reported opening fill to its lifecycle. A prior ownership
- * decision may already have used the shares, so check the live inventory. */
-export function reportedStockLots(
+export interface StockLotHolding {
+  opening: LifecycleMember;
+  remaining: Decimal;
+}
+
+/** Debit the reported opening slices only after the complete sale reconciles
+ * with the live holdings and any confirmed membership. */
+export function consumeReportedStockLots(
   close: Allocation,
-  members: readonly LifecycleMember[],
+  openings: ReadonlyMap<string, StockLotHolding[]>,
   book: ReadonlyMap<string, Decimal>,
+  confirmed?: readonly { lifecycleId: string; quantity: string }[],
 ) {
   if (!close.reportedLots?.length) return undefined;
-  const openings = groupBy(
-    members.filter(
-      (m) =>
-        m.allocation.strategyId === close.strategyId &&
-        m.allocation.role === "open",
-    ),
-    (m) => m.allocation.executionKey,
-  );
+  const confirmedUnits =
+    confirmed &&
+    new Map(
+      confirmed.map((t) => [t.lifecycleId, new Decimal(t.quantity).abs()]),
+    );
+  const debits = new Map<StockLotHolding, Decimal>();
   const openingCash = new Map<string, Decimal>();
   const quantities = new Map<string, Decimal>();
   for (const lot of close.reportedLots) {
     const quantity = new Decimal(lot.quantity);
     const holders = (openings.get(lot.executionKey) ?? []).flatMap(
-      (opening) => {
-        const held = book.get(opening.lifecycleId);
+      (holding) => {
+        const owner = holding.opening.lifecycleId;
+        const held = book.get(owner);
         if (
           !held ||
           held.isZero() ||
           held.isNegative() === quantity.isNegative()
         )
           return [];
+        const assigned = quantities.get(owner)?.abs() ?? new Decimal(0);
+        const allowed = confirmedUnits
+          ? (confirmedUnits.get(owner) ?? new Decimal(0))
+          : held.abs();
         const capacity = Decimal.min(
-          held.abs(),
-          new Decimal(opening.quantity).abs(),
+          holding.remaining.minus(debits.get(holding) ?? 0),
+          Decimal.min(allowed, held.abs()).minus(assigned),
         );
-        return [{ opening, capacity }];
+        return capacity.gt(0) ? [{ holding, capacity }] : [];
       },
     );
     const capacity = holders.reduce(
@@ -51,8 +59,10 @@ export function reportedStockLots(
       (holders.length > 1 && !capacity.eq(quantity.abs()))
     )
       return undefined;
-    for (const { opening, capacity } of holders) {
+    for (const { holding, capacity } of holders) {
+      const opening = holding.opening;
       const units = Decimal.min(quantity.abs(), capacity);
+      debits.set(holding, (debits.get(holding) ?? new Decimal(0)).plus(units));
       const signed = quantity.isNegative() ? units.negated() : units;
       quantities.set(
         opening.lifecycleId,
@@ -67,17 +77,12 @@ export function reportedStockLots(
       );
     }
   }
-  const targets = [];
-  for (const [lifecycleId, quantity] of quantities) {
-    const held = book.get(lifecycleId);
-    if (
-      !held ||
-      held.isNegative() === quantity.isNegative() ||
-      held.abs().lt(quantity.abs())
-    )
-      return undefined;
-    targets.push({ lifecycleId, quantity: quantity.toFixed() });
-  }
+  for (const [holding, units] of debits)
+    holding.remaining = holding.remaining.minus(units);
+  const targets = [...quantities].map(([lifecycleId, quantity]) => ({
+    lifecycleId,
+    quantity: quantity.toFixed(),
+  }));
   return { targets, openingCash };
 }
 
