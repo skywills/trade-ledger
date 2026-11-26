@@ -31,11 +31,38 @@ import {
 function invalid(message: string): never {
   throw new AppError("INVALID_LIFECYCLE_MEMBERSHIP", message, 409);
 }
+export function markUnresolvedDecision(
+  draft: LifecycleProjection,
+  d: Decision,
+) {
+  draft.issues.push({
+    key: `lifecycle:decision:${d.id}`,
+    code: "LIFECYCLE_DECISION_UNRESOLVED",
+    sources: d.sources,
+    severity: "warning",
+  });
+  const payload = JSON.stringify(d.payload);
+  for (const l of draft.lifecycles)
+    if (
+      draft.members.some(
+        (m) =>
+          m.lifecycleId === l.id &&
+          (d.strategyIds.includes(m.allocation.strategyId) ||
+            payload.includes(l.id) ||
+            payload.includes(m.allocation.strategyId) ||
+            payload.includes(m.allocation.executionKey)),
+      )
+    )
+      l.reasons.push("LIFECYCLE_DECISION_UNRESOLVED");
+}
 export function applyMembershipChanges(
   ledger: LedgerSnapshot,
   projection: Projection,
   draft: LifecycleProjection,
   decisions: readonly Decision[],
+  onCandidateFailure: (error: unknown) => void = (error) => {
+    throw error;
+  },
 ): LifecycleProjection {
   const exec = new Map(ledger.executions.map((e) => [e.key, e]));
   const validateTarget = (id: string, e: Execution) => {
@@ -407,25 +434,8 @@ export function applyMembershipChanges(
       }
     } catch (error) {
       restoreDecisionState(draft, before);
-      if (d.id === "__validate__") throw error;
-      draft.issues.push({
-        key: `lifecycle:decision:${d.id}`,
-        code: "LIFECYCLE_DECISION_UNRESOLVED",
-        sources: d.sources,
-        severity: "warning",
-      });
-      for (const l of draft.lifecycles)
-        if (
-          draft.members.some(
-            (m) =>
-              m.lifecycleId === l.id &&
-              (d.strategyIds.includes(m.allocation.strategyId) ||
-                JSON.stringify(d.payload).includes(l.id) ||
-                JSON.stringify(d.payload).includes(m.allocation.strategyId) ||
-                JSON.stringify(d.payload).includes(m.allocation.executionKey)),
-          )
-        )
-          l.reasons.push("LIFECYCLE_DECISION_UNRESOLVED");
+      if (d.id === "__validate__") onCandidateFailure(error);
+      markUnresolvedDecision(draft, d);
     }
   }
   for (const c of draft.campaigns)

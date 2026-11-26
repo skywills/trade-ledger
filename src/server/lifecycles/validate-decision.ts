@@ -24,6 +24,7 @@ export function validateLifecycleDecision(
   candidate: Decision,
   origins?: Projection,
   retainedAnchors: readonly RetainedLifecycleAnchor[] = [],
+  decisionHistory: readonly Decision[] = decisions,
 ): void {
   const connections = coveredConnectionAssignments(candidate);
   if (connections.length) {
@@ -34,6 +35,7 @@ export function validateLifecycleDecision(
       undefined,
       origins,
       retainedAnchors,
+      decisionHistory,
     );
     assertConnectionOrder(ledger, current, connections);
   }
@@ -106,6 +108,7 @@ export function validateLifecycleDecision(
       undefined,
       origins,
       retainedAnchors,
+      decisionHistory,
     );
     const suggestion = draft.suggestions.find(
       (s) => refKey(s.callOpening) === refKey(p.callOpening),
@@ -131,6 +134,7 @@ export function validateLifecycleDecision(
     undefined,
     origins,
     retainedAnchors,
+    decisionHistory,
   );
   if (validateMembership(ledger, projection, draft.members).length)
     throw new AppError(

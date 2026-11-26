@@ -60,8 +60,67 @@ function twoAssignedLots(saleQuantity: string, saleCash: string) {
           m.allocation.executionKey === "sale" && m.lifecycleId === lifecycleId,
       )
       .map((m) => m.quantity);
-  return { p, sold };
+  return { f, p, sold };
 }
+
+it.each([
+  [
+    "100",
+    [
+      ["A:p-open", "-40"],
+      ["A:p2-open", "-60"],
+    ],
+  ],
+  ["50", undefined],
+] as const)(
+  "respects the confirmed owners of a broker lot selling %s shares",
+  (units, expected) => {
+    const { f } = twoAssignedLots(`-${units}`, `${units}00`);
+    const sale = f.projection.allocations.find(
+      (a) => a.executionKey === "sale",
+    );
+    if (!sale) throw Error("Missing sale");
+    sale.reportedLots = [{ executionKey: "s-buy2", quantity: sale.quantity }];
+    const split: Decision = {
+      id: "split",
+      sequence: 1,
+      kind: "lifecycle_membership",
+      sources: [],
+      strategyIds: [],
+      supersedesId: null,
+      payload: {
+        assignments: [
+          ["A:p-open", "40"],
+          ["A:p2-open", "60"],
+        ].map(([lifecycleId, quantity]) => ({
+          allocation: {
+            strategyId: "stock-origin",
+            executionKey: "s-buy2",
+            role: "open",
+          },
+          lifecycleId,
+          quantity,
+        })),
+      },
+    };
+    const p = projectLifecycles(f.ledger, f.projection, [split], ids);
+    expect(p.issues.map((i) => i.code)).not.toContain(
+      "LIFECYCLE_DECISION_UNRESOLVED",
+    );
+    if (expected) {
+      expect(
+        p.members
+          .filter((m) => m.allocation.executionKey === "sale")
+          .map((m) => [m.lifecycleId, m.quantity])
+          .sort(),
+      ).toEqual(expected);
+    } else {
+      expect(p.issues.map((i) => i.code)).toContain(
+        "LIFECYCLE_STOCK_CLOSE_AMBIGUOUS",
+      );
+    }
+  },
+);
 
 it("closes the earliest assigned share lot first", () => {
   const { p, sold } = twoAssignedLots("-100", "10500");

@@ -107,6 +107,13 @@ export function finalizeGrouping(
         return [
           {
             ...first,
+            ...(parts.some((p) => p.reportedLots)
+              ? {
+                  reportedLots: parts.every((p) => p.reportedLots)
+                    ? parts.flatMap((p) => p.reportedLots ?? [])
+                    : undefined,
+                }
+              : {}),
             quantity: sum("quantity"),
             netCash: sum("netCash"),
             brokerPnl: parts.some((p) => p.brokerPnl === null)

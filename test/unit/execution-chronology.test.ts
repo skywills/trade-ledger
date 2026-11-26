@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compareLifecycleTime } from "../../src/server/lifecycles/chronology.js";
 import { latestExecutionBound } from "../../src/server/lifecycles/valuation.js";
 import type { Execution } from "../../src/shared/domain.js";
+import { matchesOpeningTime } from "../../src/shared/execution-chronology.js";
 import { execution, stock } from "../fixtures/lifecycles.js";
 
 function timed(
@@ -19,6 +20,59 @@ function timed(
 }
 
 describe("execution chronology", () => {
+  it.each([
+    ["2026-10-01T23:30:00", "America/New_York", "20261002", "UTC", true],
+    ["2026-10-02T23:30:00", "America/New_York", "20261002", "UTC", false],
+    ["2026-10-02", "Etc/UTC", "20261002", "UTC", true],
+    ["2026-10-02", "US/Eastern", "20261002", "America/New_York", true],
+    [
+      "2026-10-02T10:00:00.123456789",
+      "America/New_York",
+      "2026-10-02T15:00:00.123456789",
+      "Europe/London",
+      true,
+    ],
+    [
+      "2026-10-02T10:00:00.123456789",
+      "America/New_York",
+      "2026-10-02T15:00:00.123456780",
+      "Europe/London",
+      false,
+    ],
+    // Both occurrences of a repeated clock time remain candidates for the lot.
+    [
+      "2026-11-01T05:30:00",
+      "Europe/London",
+      "2026-11-01T01:30:00",
+      "America/New_York",
+      true,
+    ],
+    [
+      "2026-11-01T06:30:00",
+      "Europe/London",
+      "2026-11-01T01:30:00",
+      "America/New_York",
+      true,
+    ],
+    [
+      "2026-03-08T02:30:00",
+      "America/New_York",
+      "2026-03-08T07:30:00",
+      "Europe/London",
+      false,
+    ],
+  ] as const)(
+    "matches opening %s (%s) against lot %s (%s)",
+    (raw, zone, lot, lotZone, expected) => {
+      expect(
+        matchesOpeningTime(
+          timed(raw, zone, "trades"),
+          timed(lot, lotZone, "lots"),
+        ),
+      ).toBe(expected);
+    },
+  );
+
   it.each([
     ["2026-10-02T12:00:00+08:00", null, "2026-10-02T05:00:00Z", null, -1],
     ["2026-10-02 12:00:00+0800", null, "2026-10-02T04:00:00Z", null, 0],

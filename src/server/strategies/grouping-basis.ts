@@ -33,6 +33,7 @@ export function basisCloseAllocation(
   context: GroupingContext,
   close: Execution,
   closeQuantity: string,
+  singleOwner?: StrategyDraft,
 ): BasisAllocation[] | null | undefined {
   const quantity = new Decimal(closeQuantity);
   if (
@@ -56,7 +57,9 @@ export function basisCloseAllocation(
     parts: Array<{ executionKey: string; capacity: number }>;
   }[] = [];
   const draftCapacity = new Map<StrategyDraft, number>();
-  for (const draft of draftsHolding(context, close.instrument)) {
+  for (const draft of singleOwner
+    ? [singleOwner]
+    : draftsHolding(context, close.instrument)) {
     const exposure = closingExposure(context, draft, close);
     if (exposure.isZero() || exposure.isNegative() === quantity.isNegative())
       continue;
@@ -64,19 +67,23 @@ export function basisCloseAllocation(
       draft.unresolved ||
       draft.blocking ||
       draft.issues.length > 0 ||
-      draft.legs.some(
-        (part) => !sameInstrument(part.instrument, close.instrument),
-      )
+      (!singleOwner &&
+        draft.legs.some(
+          (part) => !sameInstrument(part.instrument, close.instrument),
+        ))
     )
       return undefined;
     const capacity = Decimal.min(exposure.abs(), quantity.abs()).toNumber();
     draftCapacity.set(draft, capacity);
     const consumed = new Map<string, Decimal>();
+    const openings = draft.openingLegs.filter((leg) =>
+      sameInstrument(leg.instrument, close.instrument),
+    );
     for (const part of draft.legs.filter((part) => part.role === "close")) {
+      if (!sameInstrument(part.instrument, close.instrument)) continue;
       // A preassigned/manual close spanning several opening fills does not
       // establish which basis lots remain. Do not guess that distribution.
-      if (draft.openingLegs.length > 1 && part.basisLots === undefined)
-        return undefined;
+      if (openings.length > 1 && part.basisLots === undefined) return undefined;
       for (const lot of part.basisLots ?? [])
         consumed.set(
           lot.executionKey,
@@ -85,7 +92,7 @@ export function basisCloseAllocation(
           ),
         );
     }
-    for (const leg of draft.openingLegs) {
+    for (const leg of openings) {
       const opening = context.executionByKey.get(leg.executionKey);
       if (
         opening === undefined ||

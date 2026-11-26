@@ -126,14 +126,7 @@ export function compareExecutionTime(
   // Named zones retain wall-clock comparability without guessing an IANA
   // offset. An explicit offset belongs to its own clock frame, however.
   const sameClock =
-    !x.explicitOffset &&
-    !y.explicitOffset &&
-    ((a.timezone !== null && a.timezone === b.timezone) ||
-      (a.timezone === null &&
-        b.timezone === null &&
-        a.sources.some((s) =>
-          b.sources.some((t) => t.importId === s.importId),
-        )));
+    !x.explicitOffset && !y.explicitOffset && sameReportClock(a, b);
   if (sameClock) {
     if (x.date === y.date && (x.dateOnly || y.dateOnly)) return null;
     return comparePoints(x.wall, y.wall);
@@ -146,9 +139,39 @@ export function compareExecutionTime(
     : null;
 }
 
-/** Match the precision of a broker's opening reference. Convert an exact
- * instant into the named report clock without inferring an instant for an
- * ambiguous local timestamp (including during a daylight-saving fold). */
+function sameReportClock(a: TimeSource, b: TimeSource): boolean {
+  if (a.timezone !== null || b.timezone !== null)
+    return a.timezone === b.timezone;
+  return a.sources.some((s) =>
+    b.sources.some((t) => t.importId === s.importId),
+  );
+}
+
+const zonedSeconds = new WeakMap<TimeEvidence, number[]>();
+
+/** Round-trip the offsets on either side of a possible clock change. A gap
+ * has no matching instant and a fold can have two. Keep both for lot matching. */
+function possibleSeconds(value: TimeEvidence, zone: string | null): number[] {
+  if (value.instant) return [value.instant.second];
+  if (!zone) return [];
+  const cached = zonedSeconds.get(value);
+  if (cached) return cached;
+  const wall = value.wall.second;
+  const expected = new Date(wall * 1000).toISOString().slice(0, 19);
+  const candidates = new Set<number>();
+  for (const probe of [wall - 86400, wall + 86400]) {
+    const local = wallClockIn(probe, zone);
+    if (!local) continue;
+    const offset = Date.parse(`${local}Z`) / 1000 - probe;
+    const candidate = wall - offset;
+    if (wallClockIn(candidate, zone) === expected) candidates.add(candidate);
+  }
+  const result = [...candidates];
+  zonedSeconds.set(value, result);
+  return result;
+}
+
+/** Compare a fill at the precision and in the clock of the broker's reference. */
 export function matchesOpeningTime(
   opening: Execution,
   reference: TimeSource,
@@ -156,53 +179,68 @@ export function matchesOpeningTime(
   const a = evidence(opening);
   const b = evidence(reference);
   if (!a || !b) return false;
-  if (b.dateOnly) {
-    if (a.instant && reference.timezone) {
-      return (
-        wallClockIn(a.instant, reference.timezone)?.slice(0, 10) === b.date
-      );
-    }
-    return a.date === b.date;
+  if (!b.dateOnly && (a.dateOnly || a.wall.nano !== b.wall.nano)) return false;
+  if (a.instant && b.instant) return comparePoints(a.instant, b.instant) === 0;
+  if (
+    !a.explicitOffset &&
+    !b.explicitOffset &&
+    sameReportClock(opening, reference)
+  ) {
+    return b.dateOnly ? a.date === b.date : a.wall.second === b.wall.second;
   }
-  if (compareExecutionTime(opening, reference) === 0) return true;
-  if (a.dateOnly) return false;
-  const instant = b.instant ?? a.instant;
-  const local = b.instant ? a : b;
-  const zone = b.instant ? opening.timezone : reference.timezone;
-  if (!instant || local.instant || !zone || instant.nano !== local.wall.nano)
-    return false;
-  return (
-    wallClockIn(instant, zone) ===
-    new Date(local.wall.second * 1000).toISOString().slice(0, 19)
-  );
+  if (a.dateOnly) {
+    if (a.date !== b.date || !opening.timezone || !reference.timezone)
+      return false;
+    const zone = formatterFor(opening.timezone)?.resolvedOptions().timeZone;
+    return (
+      zone !== undefined &&
+      zone === formatterFor(reference.timezone)?.resolvedOptions().timeZone
+    );
+  }
+  if (b.instant && opening.timezone) {
+    return (
+      wallClockIn(b.instant.second, opening.timezone) ===
+      new Date(a.wall.second * 1000).toISOString().slice(0, 19)
+    );
+  }
+  const reportZone = reference.timezone;
+  if (!reportZone) return false;
+  const expected = new Date(b.wall.second * 1000).toISOString().slice(0, 19);
+  return possibleSeconds(a, opening.timezone).some((second) => {
+    const local = wallClockIn(second, reportZone);
+    return b.dateOnly ? local?.slice(0, 10) === b.date : local === expected;
+  });
 }
 
 const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
-function wallClockIn(instant: Point, zone: string): string | undefined {
+function formatterFor(zone: string): Intl.DateTimeFormat | undefined {
+  const existing = zoneFormatters.get(zone);
+  if (existing) return existing;
   try {
-    let formatter = zoneFormatters.get(zone);
-    if (!formatter) {
-      formatter = new Intl.DateTimeFormat("en-US", {
-        timeZone: zone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23",
-      });
-      zoneFormatters.set(zone, formatter);
-    }
-    const fields = Object.fromEntries(
-      formatter
-        .formatToParts(instant.second * 1000)
-        .map((p) => [p.type, p.value]),
-    );
-    return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}:${fields.second}`;
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    zoneFormatters.set(zone, formatter);
+    return formatter;
   } catch {
     return undefined;
   }
+}
+
+function wallClockIn(second: number, zone: string): string | undefined {
+  const formatter = formatterFor(zone);
+  if (!formatter) return undefined;
+  const fields = Object.fromEntries(
+    formatter.formatToParts(second * 1000).map((p) => [p.type, p.value]),
+  );
+  return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}:${fields.second}`;
 }
 
 /** Latest possible instant, without interpreting a wall time in the host zone. */

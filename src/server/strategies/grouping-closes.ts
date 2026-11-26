@@ -15,7 +15,7 @@ import { draftsHolding } from "./grouping-draft-index.js";
 import {
   fifoCloseAllocation,
   fifoLegAmounts,
-  reportedLotAllocation,
+  reportedLegAmounts,
 } from "./grouping-fifo.js";
 import { sameInstrument, signOf } from "./matching.js";
 import { addLeg, legOf, makeIssue } from "./projection.js";
@@ -75,15 +75,23 @@ export function matchCloses(context: GroupingContext): Execution[] {
           )
         : undefined;
     if (equivalent !== undefined) candidates = [equivalent];
-    // A single compatible strategy with enough exposure is already a unique
-    // strategy match. Do not invent a fill-level basis assignment inside it.
-    // If other strategies are eligible, even only partially, basis must still
-    // distinguish all supported cross-strategy allocations before matching.
+    // Even when strategy ownership is certain, basis can identify which
+    // option fill remains available for the next close.
+    const singleOwner =
+      exposureCandidates.length === 1 ? exposureCandidates[0] : undefined;
+    const singleOwnerBasis =
+      singleOwner !== undefined &&
+      close.instrument.assetClass === "OPT" &&
+      close.basis !== null &&
+      signOf(close.basis) !== 0 &&
+      singleOwner.openingLegs.length > 1;
     const needsBasisChoice =
-      exposureCandidates.length > 1 || candidates.length !== 1;
+      singleOwnerBasis ||
+      exposureCandidates.length > 1 ||
+      candidates.length !== 1;
     const basisAllocation =
       lots.length === 0 && equivalent === undefined && needsBasisChoice
-        ? basisCloseAllocation(context, close, closeQuantity)
+        ? basisCloseAllocation(context, close, closeQuantity, singleOwner)
         : undefined;
     if (basisAllocation !== undefined && basisAllocation !== null) {
       const netCash = residualNetCash(close);
@@ -146,7 +154,7 @@ export function matchCloses(context: GroupingContext): Execution[] {
     if (
       lots.length === 0 &&
       candidates.length === 1 &&
-      basisAllocation !== null &&
+      (basisAllocation !== null || singleOwnerBasis) &&
       (equivalent !== undefined ||
         exposureCandidates.length <= 1 ||
         singleOpening)
@@ -155,9 +163,10 @@ export function matchCloses(context: GroupingContext): Execution[] {
       if (target !== undefined) {
         const netCash = residualNetCash(close);
         const brokerPnl = residualBrokerPnl(close);
-        const fills = fifoCloseAllocation(context, close, closeQuantity, [
-          target,
-        ])?.[0]?.lots;
+        const fills = singleOwnerBasis
+          ? undefined
+          : fifoCloseAllocation(context, close, closeQuantity, [target])?.[0]
+              ?.lots;
         addLeg(
           target,
           legOf(close, "close", {
@@ -174,42 +183,41 @@ export function matchCloses(context: GroupingContext): Execution[] {
 
     // Older partial holdings participate even if a newer holding could cover
     // the entire close.
-    const fifo =
-      lots.length > 0
-        ? reportedLotAllocation(
-            context,
-            close,
-            closeQuantity,
-            exposureCandidates,
-            lots,
-          )
-        : fifoCloseAllocation(
-            context,
-            close,
-            closeQuantity,
-            exposureCandidates.length > 1 ? exposureCandidates : candidates,
-          );
-    if (fifo !== undefined) {
-      const netCash = residualNetCash(close);
-      const brokerPnl = residualBrokerPnl(close);
-      for (const part of fifoLegAmounts(
-        context,
-        close,
-        fifo,
-        netCash,
-        brokerPnl,
-      )) {
+    const netCash = residualNetCash(close);
+    const brokerPnl = residualBrokerPnl(close);
+    const fifo = lots.length
+      ? undefined
+      : fifoCloseAllocation(
+          context,
+          close,
+          closeQuantity,
+          exposureCandidates.length > 1 ? exposureCandidates : candidates,
+        );
+    const amounts = lots.length
+      ? reportedLegAmounts(
+          context,
+          close,
+          closeQuantity,
+          lots,
+          netCash,
+          brokerPnl,
+        )
+      : fifo && fifoLegAmounts(context, close, fifo, netCash, brokerPnl);
+    if (amounts !== undefined) {
+      for (const part of amounts) {
         addLeg(
           part.draft,
           legOf(close, "close", {
             quantity: part.quantity,
             basisLots: part.lots,
+            ...(lots.length ? { reportedLots: part.lots } : {}),
             netCash: part.netCash,
             brokerPnl: part.brokerPnl,
             ...(part.pnlEstimated
               ? { pnlEstimated: true, pnlAttribution: "estimated" as const }
               : {}),
           }),
+          part.retained,
         );
       }
       recordConsumption(close, closeQuantity, netCash, brokerPnl);
@@ -232,8 +240,6 @@ export function matchCloses(context: GroupingContext): Execution[] {
     }
     const id = resolveId(close.account, [close.key]);
     const draft = draftFor(id, close.account, close.currency, close.sources);
-    const netCash = residualNetCash(close);
-    const brokerPnl = residualBrokerPnl(close);
     addLeg(
       draft,
       legOf(close, "close", { quantity: closeQuantity, netCash, brokerPnl }),

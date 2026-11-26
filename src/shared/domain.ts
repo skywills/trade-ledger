@@ -118,6 +118,10 @@ export interface Allocation {
   brokerPnl: DecimalText | null;
   pnlEstimated: boolean;
   pnlAttribution?: PnlAttribution | undefined;
+  /** Opening fills identified by broker lot rows during this projection build. */
+  reportedLots?:
+    | Array<{ executionKey: string; quantity: DecimalText }>
+    | undefined;
   role: "open" | "close";
 }
 

@@ -27,6 +27,7 @@ export interface LegRecord {
   sources: SourceRef[];
   /** In-build provenance for basis-supported closes spanning opening fills. */
   basisLots?: Array<{ executionKey: string; quantity: string }>;
+  reportedLots?: Allocation["reportedLots"];
 }
 
 /**
@@ -94,6 +95,7 @@ export interface LegOverrides {
   pnlEstimated?: boolean;
   pnlAttribution?: PnlAttribution;
   basisLots?: Array<{ executionKey: string; quantity: string }>;
+  reportedLots?: Allocation["reportedLots"];
 }
 
 export function legOf(
@@ -122,6 +124,7 @@ export function legOf(
     ...(overrides.basisLots === undefined
       ? {}
       : { basisLots: overrides.basisLots }),
+    ...(overrides.reportedLots ? { reportedLots: overrides.reportedLots } : {}),
   };
 }
 
@@ -132,9 +135,12 @@ export function legWriteCount(): number {
   return legWrites;
 }
 
-export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
+export function addLeg(
+  draft: StrategyDraft,
+  leg: LegRecord,
+  retainedClose?: LegRecord,
+): void {
   legWrites += 1;
-  draft.legs.push(leg);
   if (leg.role === "open") draft.openingLegs.push(leg);
   if (
     leg.role === "open" &&
@@ -142,7 +148,7 @@ export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
   ) {
     draft.openingDate = leg.date;
   }
-  draft.allocations.push({
+  const allocation: Allocation = {
     strategyId: draft.id,
     executionKey: leg.executionKey,
     quantity: leg.quantity,
@@ -153,7 +159,22 @@ export function addLeg(draft: StrategyDraft, leg: LegRecord): void {
       ? {}
       : { pnlAttribution: leg.pnlAttribution }),
     role: leg.role,
-  });
+    ...(leg.reportedLots ? { reportedLots: leg.reportedLots } : {}),
+  };
+  if (retainedClose) {
+    const index = draft.legs.indexOf(retainedClose);
+    const previous = draft.allocations[index];
+    if (
+      previous?.executionKey !== leg.executionKey ||
+      previous.role !== "close"
+    )
+      throw new Error("Missing retained close allocation");
+    draft.legs[index] = leg;
+    draft.allocations[index] = allocation;
+  } else {
+    draft.legs.push(leg);
+    draft.allocations.push(allocation);
+  }
   if (leg.multiplier === null && isDerivative(leg.instrument)) {
     pushDraftIssue(
       draft,
