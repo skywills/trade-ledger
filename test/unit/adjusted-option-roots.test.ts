@@ -64,6 +64,19 @@ describe("adjusted option roots (SQQQ -> SQQQ2 after a reverse split)", () => {
     expect(rows[1]?.instrument).toEqual(base);
   });
 
+  it.each([{ account: "U2" }, { currency: "CAD" }])(
+    "ignores later base-contract trades in another scope %o",
+    (scope) => {
+      const rows = [
+        row("r1", base, "1", "2025-11-06T11:07:19", "open"),
+        row("r2", adjusted, "-1", "2025-11-20T16:20:00", "close", "expiry"),
+        { ...row("r3", base, "1", "2025-11-21T11:00:00", "open"), ...scope },
+      ];
+      expect(resolveAdjustedOptionRoots(rows)).toEqual(["r2"]);
+      expect(rows[1]?.instrument).toEqual(base);
+    },
+  );
+
   it("leaves a contract that opened under its own symbol alone", () => {
     const rows = [
       row("r1", base, "2", "2025-11-06T11:07:19", "open"),

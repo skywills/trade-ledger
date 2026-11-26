@@ -36,16 +36,16 @@ export function resolveAdjustedOptionRoots(executions: Execution[]): string[] {
       e.instrument.putCall !== null,
   );
   const byInstrument = new Map<string, Execution[]>();
-  for (const e of options) {
-    const rows = byInstrument.get(e.instrument.key) ?? [];
-    rows.push(e);
-    byInstrument.set(e.instrument.key, rows);
-  }
   const baseContracts = new Map<string, Set<string>>();
   for (const e of options) {
+    const key = JSON.stringify([e.account, e.currency, e.instrument.key]);
+    const rows = byInstrument.get(key) ?? [];
+    rows.push(e);
+    byInstrument.set(key, rows);
+
     const id = contractOf(e, e.instrument.underlying ?? "");
     const keys = baseContracts.get(id) ?? new Set<string>();
-    keys.add(e.instrument.key);
+    keys.add(key);
     baseContracts.set(id, keys);
   }
   const mapped: string[] = [];

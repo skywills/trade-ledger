@@ -268,7 +268,7 @@ describe("versioned builds, atomic activation and rollback", () => {
       expect(built.id).toBeTruthy();
     }));
 
-  it.each(["lifecycles-v13", "lifecycles-v15"])(
+  it.each(["lifecycles-v13", "lifecycles-v15", "lifecycles-v16"])(
     "marks a retained %s build stale",
     async (version) =>
       withStore(async (store) => {
@@ -938,6 +938,7 @@ it.each([
   "contract-lifecycle-v2",
   "contract-lifecycle-v3",
   "contract-lifecycle-v5-cash-settlements",
+  "contract-lifecycle-v6-corrections-and-settlements",
 ])(
   "requires full normalization for a ledger with old normalization revision %s",
   async (normalizationRevision) =>

@@ -57,12 +57,13 @@ export function buildGroupingLinks(
   for (const execution of ledger.executions) {
     const actionId = execution.brokerIds.PositionActionID;
     if (actionId === undefined) continue;
-    const group = byAction.get(actionId) ?? [];
+    const key = JSON.stringify([execution.account, actionId]);
+    const group = byAction.get(key) ?? [];
     group.push(execution);
-    byAction.set(actionId, group);
+    byAction.set(key, group);
   }
-  for (const actionId of [...byAction.keys()].sort()) {
-    const group = sortedByKey(byAction.get(actionId) ?? []);
+  for (const key of [...byAction.keys()].sort()) {
+    const group = sortedByKey(byAction.get(key) ?? []);
     const option = group.find((execution) =>
       isDerivative(execution.instrument),
     );

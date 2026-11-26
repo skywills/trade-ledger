@@ -83,6 +83,152 @@ async function commit(
   await commitImport(t.store, p.id);
   await rebuild(t.store, input);
 }
+it("keeps an adjusted expiry on its original contract when another account trades the adjusted option", async () => {
+  const t = await createTestStore();
+  const adjusted = { Symbol: "XYZ2", UnderlyingSymbol: "XYZ2", Conid: "22" };
+  try {
+    await commit(
+      t,
+      [
+        row("original", "OPT", "1", "-100", 2, "O"),
+        row("expiry", "OPT", "-1", "0", 16, "C;Ep", {
+          ...adjusted,
+          TradePrice: "0",
+        }),
+      ],
+      "a.csv",
+    );
+    function checkExpiry() {
+      const { ledger, projection } = readAnalyticsSnapshot(t.store);
+      const expiry = ledger?.executions.find(
+        (e) => e.brokerIds.TradeID === "expiry",
+      );
+      expect(expiry?.instrument.key).toBe("conid:2");
+      const owner = projection?.allocations.find(
+        (a) => a.executionKey === expiry?.key,
+      );
+      expect(
+        projection?.strategies.find((s) => s.id === owner?.strategyId)?.status,
+      ).toBe("closed");
+    }
+    checkExpiry();
+    await commit(
+      t,
+      [
+        row("other", "OPT", "1", "-100", 1, "O", {
+          ...adjusted,
+          ClientAccountID: "B",
+        }),
+      ],
+      "b.csv",
+    );
+    checkExpiry();
+    const { ledger, projection } = readAnalyticsSnapshot(t.store);
+    expect(
+      ledger?.executions.find((e) => e.brokerIds.TradeID === "other"),
+    ).toMatchObject({
+      account: "B",
+      instrument: { key: "conid:22" },
+    });
+    expect(projection?.lifecycles?.lifecycles).toContainEqual(
+      expect.objectContaining({
+        account: "B",
+        status: "open",
+        positions: [{ instrumentKey: "conid:22", quantity: "1" }],
+      }),
+    );
+  } finally {
+    await t.dispose();
+  }
+});
+
+function assignmentRows(account: string, actionId: string) {
+  const ids = { ClientAccountID: account, PositionActionID: actionId };
+  return [
+    row(account + "-put", "OPT", "-1", "200", 1, "O", {
+      ClientAccountID: account,
+    }),
+    row(account + "-close", "OPT", "1", "0", 2, "C;A", ids),
+    row(account + "-shares", "STK", "100", "-10000", 2, "O;A", ids),
+  ];
+}
+
+it.each([
+  ["A alone", [["A", "action"]]],
+  ["B alone", [["B", "action"]]],
+  [
+    "distinct IDs",
+    [
+      ["A", "first"],
+      ["B", "second"],
+    ],
+  ],
+  [
+    "reused ID",
+    [
+      ["A", "action"],
+      ["B", "action"],
+    ],
+  ],
+] as const)(
+  "persists one assignment per account with %s",
+  async (_, accounts) => {
+    const t = await createTestStore();
+    try {
+      await commit(
+        t,
+        accounts.flatMap(([account, id]) => assignmentRows(account, id)),
+        "assignments.csv",
+      );
+      const p = activeProjection(t.store).projection;
+      if (!p?.lifecycles) throw Error("Missing lifecycle projection");
+      const links = p.links.filter((l) => l.type === "assignment");
+      expect(links).toHaveLength(accounts.length);
+      expect(p.lifecycles.lifecycles).toHaveLength(accounts.length);
+      for (const [account] of accounts) {
+        const owner = (trade: string) =>
+          p.allocations.find((a) =>
+            a.executionKey.endsWith(`:trade:${account}-${trade}`),
+          )?.strategyId;
+        expect(links).toContainEqual(
+          expect.objectContaining({
+            from: owner("close"),
+            to: owner("shares"),
+          }),
+        );
+        expect(
+          p.lifecycles.lifecycles.find((c) => c.account === account),
+        ).toMatchObject({
+          stage: "assigned_stock",
+        });
+      }
+    } finally {
+      await t.dispose();
+    }
+  },
+);
+
+it("keeps an option separate from a lone stock delivery in another account with the same action ID", async () => {
+  const t = await createTestStore();
+  try {
+    await commit(
+      t,
+      [
+        ...assignmentRows("A", "action").slice(0, 2),
+        ...assignmentRows("B", "action").slice(2),
+      ],
+      "unpaired.csv",
+    );
+    const p = activeProjection(t.store).projection;
+    expect(p?.links).toEqual([]);
+    expect(p?.issues.map((i) => i.code)).not.toContain(
+      "LIFECYCLE_INCONSISTENT",
+    );
+  } finally {
+    await t.dispose();
+  }
+});
+
 it("imports assignment, attaches a call before close import, and reports one completed wheel cycle", async () => {
   const t = await createTestStore();
   try {
